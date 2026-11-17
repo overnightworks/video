@@ -1,0 +1,8 @@
+claim_id = "48178000533546e3990b37263518a4ab"
+agent = "Claude 21fd863e-01fb-442b-a634-e988b43fd9d7"
+role = "builder"
+base = "1bee91ba72d35bc08007df1c62a3ff9e318b55ae"
+branch = "claude/issue-2-p1a-skeleton-health-looks"
+scope = ["docs", "packages", "providers", "src", "tests"]
+opened_commit = "772605b99eb7d46c3e77f17dea46320ef40434d2"
+whole_reason = "One coherent first slice of an empty repository: skeleton, health and looks with the fake provider."
