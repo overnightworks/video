@@ -60,6 +60,8 @@ class StandInApp:
     alter: Callable[[httpx2.Response], Response] | None = None
     answer_gate: asyncio.Event = field(default_factory=asyncio.Event)
     posted: asyncio.Event = field(default_factory=asyncio.Event)
+    deleted: asyncio.Event = field(default_factory=asyncio.Event)
+    delete_statuses: list[int] = field(default_factory=list)
     credentials: dict[str, str] = field(default_factory=valid_headers)
 
     def __post_init__(self) -> None:
@@ -97,6 +99,8 @@ class StandInApp:
             viewer_path(self.session.session_id, request.path_params["viewer"]),
             headers=self.credentials,
         )
+        self.delete_statuses.append(relayed.status_code)
+        self.deleted.set()
         return Response(status_code=relayed.status_code)
 
     @staticmethod

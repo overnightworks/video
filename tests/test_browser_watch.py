@@ -178,6 +178,26 @@ def test_stop_sends_the_delete_to_the_routes_location_and_the_service_ends_the_v
     live_in_browser(scenario)
 
 
+def test_two_stops_in_one_tick_delete_the_viewer_before_its_peer_closes(
+    live_in_browser: Callable[..., None], tmp_path: Path
+) -> None:
+    async def scenario(service: Service) -> None:
+        session = await service.open_session()
+        async with stage(service, session, tmp_path / "profile") as page:
+            await page.begin()
+            await page.until("seen.states.includes('drawn')")
+
+            await page.page.evaluate("stage.stop(); stage.stop()")
+            await page.app.deleted.wait()
+            await service.logged.wait_for("viewer.ended")
+
+            assert page.app.delete_statuses == [HTTPStatus.OK]
+            assert service.viewer_ends() == [ViewerEnd.DELETED]
+            assert await page.states() == ["loading", "drawn", "ended"]
+
+    live_in_browser(scenario)
+
+
 def test_a_stop_before_the_post_has_answered_ends_at_once_and_deletes_after_the_answer(
     live_in_browser: Callable[..., None], tmp_path: Path
 ) -> None:

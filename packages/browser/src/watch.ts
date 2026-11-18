@@ -49,10 +49,12 @@ export function watch(
   };
   // Once the route has answered, the peer stays up until the delete has gone out, so the
   // service ends the viewer by it; before the answer, the peer closes at once and the
-  // delete follows the answer.
+  // delete follows the answer. A second end, a `stop()` from `show` included, waits for
+  // the first one's delete instead of closing the peer ahead of it.
+  let finished: Promise<void> | undefined;
   const finish = (): void => {
     end();
-    void release().finally(() => peer?.close());
+    finished ??= release().finally(() => peer?.close());
   };
 
   const begin = async (): Promise<void> => {
