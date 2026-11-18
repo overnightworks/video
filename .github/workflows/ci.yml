@@ -88,7 +88,16 @@ jobs:
         run: pnpm run check
 
       - name: Pack the tarball and install it into an empty project
-        run: node scripts/pack-release.js "$RUNNER_TEMP/release-files"
+        env:
+          MCR_LCOV_FILE: coverage-browser-pack.lcov
+        run: pnpm exec mcr -c mcr.config.js node scripts/pack-release.js "$RUNNER_TEMP/release-files"
+
+      - name: Upload the pack script's coverage report
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-browser-pack
+          path: packages/browser/coverage-scripts/coverage-browser-pack.lcov
+          if-no-files-found: error
 
   browser-layer:
     name: "Video: browser layer"
@@ -152,7 +161,8 @@ jobs:
         working-directory: packages/browser
         env:
           VIDEO_BROWSER_COVERAGE_DIR: ${{ runner.temp }}/browser-coverage-raw
-        run: node scripts/page-coverage-report.js "${VIDEO_BROWSER_COVERAGE_DIR}"
+          MCR_LCOV_FILE: coverage-browser-report.lcov
+        run: pnpm exec mcr -c mcr.config.js node scripts/page-coverage-report.js "${VIDEO_BROWSER_COVERAGE_DIR}"
 
       - name: Upload the coverage report
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -161,10 +171,18 @@ jobs:
           path: packages/browser/coverage/coverage-browser.lcov
           if-no-files-found: error
 
+      - name: Upload the report script's coverage report
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-browser-report
+          path: packages/browser/coverage-scripts/coverage-browser-report.lcov
+          if-no-files-found: error
+
   coverage:
     name: coverage
     needs:
       - video
+      - browser-package
       - browser-layer
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -182,6 +200,8 @@ jobs:
           path: |
             coverage-root.xml
             coverage-browser.lcov
+            coverage-browser-pack.lcov
+            coverage-browser-report.lcov
           if-no-files-found: error
 
   quality:

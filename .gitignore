@@ -8,4 +8,5 @@ coverage-*.xml
 node_modules/
 packages/browser/dist/
 packages/browser/coverage/
+packages/browser/coverage-scripts/
 coverage-*.lcov

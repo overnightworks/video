@@ -24,7 +24,7 @@ Run each from the repository root.
 - A new root entry is declared in `quality/config.toml` with a reason, or lives in its owner's directory.
 - `sonar-project.properties` carries only the keys the quality gate allows.
 - `packages/browser` receives no token and has no runtime dependency; the app's route relays the offer (`docs/wire.md`, WIRE-14).
-- The browser layer's lcov is `coverage-browser.lcov`, with paths from the repository root; the CI `coverage` job merges it with `coverage-root.xml` for the gate.
+- The browser layer's lcov is `coverage-browser.lcov`, with paths from the repository root; the CI `coverage` job merges it with `coverage-root.xml` for the gate. The two scripts in `packages/browser/scripts` are measured where CI runs them, as `pnpm exec mcr -c mcr.config.js node scripts/<script>.js …` with `MCR_LCOV_FILE` naming the lcov (`coverage-browser-pack.lcov`, `coverage-browser-report.lcov`), and no coverage exclusion hides them.
 - Coverage reports are `coverage-<job>.xml`, written without `relative_files`: its `<source>` is the checkout's absolute path, which SonarCloud's module per uv workspace member resolves each file against; a relative `<source>` leaves the other packages' files unresolved.
 
 ## Owners
