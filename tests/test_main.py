@@ -7,7 +7,8 @@ import json
 import os
 import signal
 import socket
-import threading
+import subprocess
+import sys
 import time
 from typing import TYPE_CHECKING
 
@@ -113,11 +114,10 @@ def test_a_port_that_is_taken_ends_the_process_nonzero(
     assert result == 1
 
 
-def test_main_serves_the_configured_looks_and_stops_on_a_signal(
+def test_the_process_serves_the_configured_looks_and_stops_on_a_signal(
     source: LookServer,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
 ) -> None:
     shown = source.host("mozart.png", picture().data)
     looks_file = tmp_path / "looks.toml"
@@ -129,25 +129,25 @@ def test_main_serves_the_configured_looks_and_stops_on_a_signal(
     monkeypatch.setenv("VIDEO_PORT", str(port))
     monkeypatch.setenv("VIDEO_LOOKS_FILE", str(looks_file))
     monkeypatch.setenv("VIDEO_LOOK_SOURCES", json.dumps([source.base_url]))
-    seen: list[Health | None] = []
 
-    def ask_then_terminate() -> None:
-        seen.append(_ready_health(port))
-        os.kill(os.getpid(), signal.SIGTERM)
+    with subprocess.Popen(
+        [sys.executable, "-m", "video_service"],
+        stdout=subprocess.PIPE,
+        text=True,
+    ) as process:
+        try:
+            health = _ready_health(port)
+            process.send_signal(signal.SIGTERM)
+            output, _ = process.communicate(timeout=READY_WITHIN_SECONDS)
+        finally:
+            process.kill()
 
-    asker = threading.Thread(target=ask_then_terminate)
-    asker.start()
-    with pytest.raises(SystemExit) as exited:
-        main()
-    asker.join()
-
-    (health,) = seen
-    assert exited.value.code == 0
     assert health is not None
     assert health.looks["mozart"].ready
+    assert process.returncode == 0
     events = {
         json.loads(line)["event"]
-        for line in capsys.readouterr().out.splitlines()
+        for line in output.splitlines()
         if line.startswith("{")
     }
     assert {"process.started", "process.ready", "look_preparation.ended"} <= events
