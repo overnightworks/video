@@ -43,6 +43,8 @@ async function recordSound(video) {
     const output = context.getOutputTimestamp();
     heard.push(output.performanceTime + (contextTime - output.contextTime) * 1000);
   };
+  // Chromium gives a MediaElementAudioSourceNode only silence for a MediaStream source, so
+  // the onset node taps the stream the element plays and passes it on to the speakers.
   context.createMediaStreamSource(video.srcObject).connect(onset).connect(context.destination);
 }
 
