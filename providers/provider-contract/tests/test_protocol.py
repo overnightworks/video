@@ -16,8 +16,8 @@ from video_provider_contract import (
 )
 from video_provider_contract.protocol import (
     ANSWER_KINDS,
+    BYTES_PER_PIXEL,
     MAX_CONTROL_BYTES,
-    MAX_LOOK_BYTES,
     MAX_PCM_BYTES,
     MAX_PICTURE_BYTES,
     MAX_PICTURES_PER_ANSWER,
@@ -145,19 +145,18 @@ def test_a_frame_longer_than_its_kind_allows_is_refused_from_its_header(
 
 
 @pytest.mark.parametrize(
-    ("kind", "limits", "length"),
+    ("kind", "limits"),
     [
-        (FrameKind.FRAMES, _LIMITS, 4 + MAX_PICTURES_PER_ANSWER * _PICTURE + 1),
-        (FrameKind.FRAMES, FrameLimits(), 5),
-        (FrameKind.PREPARE, _LIMITS, 2 + MAX_LOOK_BYTES + 8 + _LIMITS.image_bytes + 1),
-        (FrameKind.PCM, _LIMITS, 8 + MAX_PCM_BYTES + 1),
+        pytest.param(FrameKind.FRAMES, _LIMITS, id="too many pictures"),
+        pytest.param(FrameKind.FRAMES, FrameLimits(), id="a picture before ready"),
+        pytest.param(FrameKind.PREPARE, _LIMITS, id="an image"),
+        pytest.param(FrameKind.PCM, _LIMITS, id="audio"),
     ],
-    ids=["too many pictures", "a picture before ready", "an image", "audio"],
 )
 def test_the_caps_follow_the_picture_the_image_and_the_audio(
-    kind: FrameKind, limits: FrameLimits, length: int
+    kind: FrameKind, limits: FrameLimits
 ) -> None:
-    header_only = io.BytesIO(_HEADER.pack(kind, length))
+    header_only = io.BytesIO(_HEADER.pack(kind, limits.payload_cap(kind) + 1))
     every_kind = frozenset(FrameKind)
 
     with pytest.raises(ProtocolError):
@@ -211,10 +210,13 @@ def test_a_ready_that_reports_nothing_usable_is_refused(payload: bytes) -> None:
         decode_ready(payload)
 
 
-def test_the_largest_picture_is_a_whole_number_of_pixels_within_its_cap() -> None:
-    video = ProviderVideoFormat(width=4096, height=4096, frame_rate=25)
+def test_a_ready_reporting_a_picture_above_the_cap_is_refused() -> None:
+    width = 4096
+    too_tall = MAX_PICTURE_BYTES // (width * BYTES_PER_PIXEL) + 1
 
-    assert picture_bytes(video) <= MAX_PICTURE_BYTES
+    assert decode_ready(struct.pack("!III", width, width, 25))
+    with pytest.raises(ProtocolError):
+        decode_ready(struct.pack("!III", width, too_tall, 25))
 
 
 @pytest.mark.parametrize(

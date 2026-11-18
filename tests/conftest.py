@@ -26,7 +26,7 @@ from support.runtime_support import (
     BuildRuntime,
 )
 from support.viewer_support import Service, run_live
-from support.worker_support import CALL_SECONDS, SHORT_BOUNDS, install_worker, is_gone
+from support.worker_support import CALL_SECONDS, install_worker, is_gone
 from video_service.app import create_app
 from video_service.looks import LookLimits, LookSource
 from video_service.provider_process import (
@@ -189,7 +189,7 @@ def make_provider(stub_environment: Path, tmp_path: Path) -> Iterator[MakeProvid
 
     def build(
         body: str | None = None,
-        bounds: ProcessBounds = SHORT_BOUNDS,
+        bounds: ProcessBounds | None = None,
         call_seconds: float = CALL_SECONDS,
     ) -> ProcessProvider:
         executable = (
@@ -199,7 +199,7 @@ def make_provider(stub_environment: Path, tmp_path: Path) -> Iterator[MakeProvid
         )
         provider = ProcessProvider(
             ProviderLaunch(executable=executable, max_image_pixels=1_000_000),
-            bounds,
+            bounds or ProcessBounds(),
             call_seconds,
         )
         made.append(provider)

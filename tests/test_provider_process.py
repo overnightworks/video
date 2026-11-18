@@ -167,8 +167,10 @@ def _exercise(provider: ProcessProvider) -> None:
 
 
 def _failure(
-    body: str, reason: ProcessFailure, bounds: ProcessBounds = SHORT_BOUNDS
+    body: str, reason: ProcessFailure, bounds: ProcessBounds | None = None
 ) -> ParameterSet:
+    if bounds is None:
+        bounds = SHORT_BOUNDS if reason is ProcessFailure.TIMEOUT else ProcessBounds()
     return pytest.param(body, reason, bounds, id=body)
 
 
@@ -262,7 +264,9 @@ def test_a_worker_that_cannot_run_fails_the_start(
     if executable == "not-executable":
         path.write_text("#!/bin/sh\n", encoding="utf-8")
     provider = ProcessProvider(
-        ProviderLaunch(executable=path, max_image_pixels=1), SHORT_BOUNDS, CALL_SECONDS
+        ProviderLaunch(executable=path, max_image_pixels=1),
+        ProcessBounds(),
+        CALL_SECONDS,
     )
 
     with caplog.at_level(logging.WARNING), pytest.raises(ProviderFailedError):
@@ -377,23 +381,38 @@ def test_a_sentence_in_one_binary_message_of_any_length_plays_to_its_end(
     assert stopped.audio_end_ms == _LONG_MESSAGE_MS
 
 
-def test_a_provider_that_is_closed_does_not_start_and_serves_no_session(
-    make_provider: MakeProvider,
-) -> None:
-    unstarted = make_provider(bounds=ProcessBounds())
-    started = make_provider(bounds=ProcessBounds())
-    started.start()
-    session = started.open_session(_MOZART)
+def test_a_closed_session_serves_no_frame(make_provider: MakeProvider) -> None:
+    provider = make_provider(bounds=ProcessBounds())
+    provider.start()
+    session = provider.open_session(_MOZART)
 
-    unstarted.close()
     session.close()
+
     with pytest.raises(ProviderFailedError):
         session.idle_frame()
+
+
+def test_a_closed_provider_that_never_started_does_not_start(
+    make_provider: MakeProvider,
+) -> None:
+    provider = make_provider(bounds=ProcessBounds())
+
+    provider.close()
+
     with pytest.raises(ProviderFailedError):
-        unstarted.start()
-    started.close()
+        provider.start()
+
+
+def test_a_closed_provider_that_started_does_not_start_again(
+    make_provider: MakeProvider,
+) -> None:
+    provider = make_provider(bounds=ProcessBounds())
+    provider.start()
+
+    provider.close()
+
     with pytest.raises(ProviderFailedError):
-        started.start()
+        provider.start()
 
 
 def test_a_second_close_kills_no_process_group(

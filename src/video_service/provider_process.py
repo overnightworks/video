@@ -383,7 +383,9 @@ class ProcessProvider:
             return
         if child is not None:
             self._reap(child)
-        if not self._closing:
+        with self._lock:
+            closing = self._closing
+        if not closing:
             self._log_failure(reason, child)
         with self._lock:
             self._failure = reason

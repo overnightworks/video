@@ -55,6 +55,10 @@ jobs:
         env:
           PYTHONPATH: providers/provider-contract/src
         run: |
+          # the hashed requirements carry the pytest the workspace lock pins, so a bump of
+          # the lock that leaves them behind fails here
+          locked=$(uv export --locked --no-build --no-hashes | grep '^pytest==')
+          grep -q "^$locked " providers/provider-contract/requirements-test.txt
           uv venv --python 3.10 "$RUNNER_TEMP/contract-env"
           uv pip install --python "$RUNNER_TEMP/contract-env" --no-build --require-hashes -r providers/provider-contract/requirements-test.txt
           # pytest-workers: a few dozen tests in under a second, and xdist is not installed there
