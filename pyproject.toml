@@ -39,6 +39,17 @@ packages = ["src/video_service"]
 [tool.uv.workspace]
 members = ["packages/client", "providers/*"]
 
+[tool.uv]
+# --no-build installs every other package as a wheel; a named package overrides it,
+# and these are built from this checkout or from the logline tag the lock pins.
+no-binary-package = [
+    "overnightworks-logline",
+    "overnightworks-video-client",
+    "overnightworks-video-provider-contract",
+    "overnightworks-video-provider-fake",
+    "overnightworks-video-service",
+]
+
 [tool.uv.sources]
 overnightworks-video-client = { workspace = true }
 overnightworks-video-provider-contract = { workspace = true }

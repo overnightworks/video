@@ -6,7 +6,7 @@ Run each from the repository root.
 
 - `uv sync --locked --all-groups`: installs the workspace. After a new package directory or module appears, add `--reinstall-package <distribution>`, or its editable install stays empty.
 - `uv run --locked ruff check` and `uv run --locked ruff format --check`: lint and format.
-- `uv run --locked pytest -q <named tests>`: targeted tests; CI adds `-n auto --cov`.
+- `uv run --locked pytest -q <named tests>`: targeted tests; CI adds `-n auto --cov`, and `--no-build` to every uv command, so only the packages `[tool.uv] no-binary-package` names are built from source.
 - `uv run --locked python scripts/check_release.py [X.Y.Z]`: every `pyproject.toml` stands at one version, the given one if named.
 - `quality check`: the shared static check. Run it after `git add` (it reads the index); `quality check --fix` records the debt baseline.
 

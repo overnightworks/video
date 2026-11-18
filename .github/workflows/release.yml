@@ -67,12 +67,25 @@ jobs:
 
       - name: Install the client by its Git pin into an empty project
         run: |
-          python_version=$(cat "$GITHUB_WORKSPACE/.python-version")
           host="$RUNNER_TEMP/host-client"
-          uv init --bare --no-workspace --python "$python_version" "$host"
+          mkdir "$host"
+          cp "$GITHUB_WORKSPACE/.python-version" "$host/"
+          pin="overnightworks-video-client @ git+https://github.com/$GITHUB_REPOSITORY@$COMMIT#subdirectory=packages/client"
+          printf '%s\n' \
+            '[project]' \
+            'name = "host-client"' \
+            'version = "0"' \
+            'requires-python = ">=3.14"' \
+            "dependencies = [\"$pin\"]" \
+            '' \
+            '[tool.uv]' \
+            'package = false' \
+            'no-binary-package = ["overnightworks-video-client"]' \
+            > "$host/pyproject.toml"
           cd "$host"
-          uv add "overnightworks-video-client @ git+https://github.com/$GITHUB_REPOSITORY@$COMMIT#subdirectory=packages/client"
-          uv run python -c "import video_client"
+          uv lock
+          uv sync --locked --no-build
+          uv run --locked --no-build python -c "import video_client"
 
       - name: Write the notes
         id: notes

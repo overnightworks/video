@@ -37,16 +37,16 @@ jobs:
         run: uv lock --check
 
       - name: Install locked dependencies
-        run: uv sync --locked --all-groups
+        run: uv sync --locked --all-groups --no-build
 
       - name: Check source
-        run: uv run --locked ruff check
+        run: uv run --locked --no-build ruff check
 
       - name: Check formatting
-        run: uv run --locked ruff format --check
+        run: uv run --locked --no-build ruff format --check
 
       - name: Test
-        run: uv run --locked pytest -q -n auto --cov --cov-report=xml:coverage-root.xml
+        run: uv run --locked --no-build pytest -q -n auto --cov --cov-report=xml:coverage-root.xml
 
       - name: Upload the coverage report
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
