@@ -51,9 +51,9 @@ jobs:
       # A provider's environment may be older than the service's, so the contract's
       # own tests run on the oldest Python it supports, apart from the workspace.
       - name: Test the provider contract on Python 3.10
-        # pytest-workers: a few dozen tests in under a second, and xdist is not installed there
         env:
           PYTHONPATH: providers/provider-contract/src
+        # pytest-workers: a few dozen tests in under a second, and xdist is not installed there
         run: uv run --no-build --no-project --isolated --python 3.10 --with pytest==9.2.0 pytest -q -p no:cacheprovider -c providers/provider-contract/pyproject.toml providers/provider-contract/tests
 
       - name: Upload the coverage report
