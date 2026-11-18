@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack
 from typing import TYPE_CHECKING
@@ -25,16 +26,24 @@ from support.runtime_support import (
     BuildRuntime,
 )
 from support.viewer_support import Service, run_live
+from support.worker_support import CALL_SECONDS, install_worker, is_gone
 from video_service.app import create_app
 from video_service.looks import LookLimits, LookSource
-from video_service.providers import ProviderName
+from video_service.provider_process import (
+    ProcessBounds,
+    ProcessProvider,
+    ProviderLaunch,
+)
+from video_service.providers import ProviderName, worker_executable
 from video_service.runtime import REAL_TIME, Pacing, Runtime, SessionLimits
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Iterator, Mapping
+    from pathlib import Path
 
     from video_provider_contract import Provider
 
+    from support.worker_support import MakeProvider
     from video_service.media import PeerFactory
 
 
@@ -56,6 +65,7 @@ def build_runtime(source: LookServer) -> BuildRuntime:
         looks: Mapping[str, LookSource],
         *,
         provider: Provider | None = None,
+        provider_failed: Callable[[], bool] = lambda: False,
         sources: tuple[str, ...] | None = None,
         max_pixels: int = MAX_PIXELS,
         max_sessions: int = MAX_SESSIONS,
@@ -68,6 +78,7 @@ def build_runtime(source: LookServer) -> BuildRuntime:
         return Runtime(
             provider_name=ProviderName.FAKE,
             provider=provider or FakeProvider(),
+            provider_failed=provider_failed,
             looks=looks,
             limits=LookLimits(
                 sources=(source.base_url,) if sources is None else sources,
@@ -107,8 +118,10 @@ def live(source: LookServer, build_runtime: BuildRuntime) -> Callable[..., None]
 
 
 @pytest.fixture
-def live_in_browser(live: Callable[..., None]) -> Callable[..., None]:
-    """Run a scenario as `live` does, on a thread of its own.
+def live_in_browser(
+    live: Callable[..., None], make_provider: MakeProvider
+) -> Callable[..., None]:
+    """Run a scenario as `live` does, on a thread of its own, over the fake child.
 
     aioice binds the lock of its mDNS resolver to the first event loop that contends
     for it, on that thread, and Chromium's candidates are mDNS names; a thread for
@@ -116,8 +129,15 @@ def live_in_browser(live: Callable[..., None]) -> Callable[..., None]:
     """
 
     def run(scenario: Callable[[Service], Awaitable[None]], **limits: object) -> None:
+        provider = make_provider(bounds=ProcessBounds())
         with ThreadPoolExecutor(max_workers=1) as thread:
-            thread.submit(live, scenario, **limits).result()
+            thread.submit(
+                live,
+                scenario,
+                provider=provider,
+                provider_failed=lambda: provider.failed,
+                **limits,
+            ).result()
 
     return run
 
@@ -149,3 +169,44 @@ def started(source: LookServer, build_runtime: BuildRuntime) -> Callable[..., Ru
         return runtime
 
     return start
+
+
+@pytest.fixture
+def stub_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """The pid file and the pipe a scripted worker reports through; the pid file."""
+    pidfile = tmp_path / "worker.pid"
+    fifo = tmp_path / "worker.fifo"
+    os.mkfifo(fifo)
+    monkeypatch.setenv("STUB_PIDFILE", str(pidfile))
+    monkeypatch.setenv("STUB_FIFO", str(fifo))
+    return pidfile
+
+
+@pytest.fixture
+def make_provider(stub_environment: Path, tmp_path: Path) -> Iterator[MakeProvider]:
+    """Build a provider; at the end each is closed and no worker of it is left."""
+    made: list[ProcessProvider] = []
+
+    def build(
+        body: str | None = None,
+        bounds: ProcessBounds | None = None,
+        call_seconds: float = CALL_SECONDS,
+    ) -> ProcessProvider:
+        executable = (
+            worker_executable(ProviderName.FAKE, None)
+            if body is None
+            else install_worker(tmp_path / "root", body)
+        )
+        provider = ProcessProvider(
+            ProviderLaunch(executable=executable, max_image_pixels=1_000_000),
+            bounds or ProcessBounds(),
+            call_seconds,
+        )
+        made.append(provider)
+        return provider
+
+    yield build
+    for provider in made:
+        provider.close()
+    if stub_environment.exists():
+        assert is_gone(int(stub_environment.read_text(encoding="utf-8")))

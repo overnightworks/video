@@ -2,7 +2,8 @@
 
 The face at rest is dark; a sentence's frame is bright when its frame period of
 audio holds a loud sample, so a test sees the idle between sentences and a beep.
-It serves the service's own tests and a run from source; no image installs it.
+It serves the service's own tests and a run from source, in a process of its own
+like every provider (`video-fake-worker`); no image installs it.
 """
 
 from __future__ import annotations
@@ -18,9 +19,9 @@ from video_provider_contract import (
     ProviderFailedError,
     ProviderInfo,
     ProviderSession,
+    ProviderVerb,
+    ProviderVideoFormat,
 )
-
-from video_client.wire import Verb, VideoFormat
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Collection, Iterator
@@ -173,8 +174,8 @@ class FakeProvider:
             message = "the fake provider was told to fail"
             raise ProviderFailedError(message)
         return ProviderInfo(
-            plays=(Verb.SPEAK, Verb.CLEAR),
-            video=VideoFormat(
+            plays=(ProviderVerb.SPEAK, ProviderVerb.CLEAR),
+            video=ProviderVideoFormat(
                 width=_WIDTH, height=_HEIGHT, frame_rate=self._frame_rate
             ),
         )

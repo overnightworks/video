@@ -6,7 +6,7 @@ receives one live stream of picture and sound, with the model behind it chosen b
 setting. The operator starts and configures it; an app developer reads the wire.
 
 What runs today: one process that runs the provider `VIDEO_PROVIDER` names (only
-`fake` exists), fetches each look's image once at start, answers `GET /health` with
+`fake` exists) in a child process of its own, fetches each look's image once at start, answers `GET /health` with
 the provider's readiness, what it plays and each look's readiness, and serves
 sessions over `WS /v1/sessions`: an app opens one on a look with two tokens, queues
 sentences of audio, clears them, and reads when each starts and stops. The session's
@@ -89,6 +89,7 @@ holds the settings that shape the wire.
 | Setting | Default | Meaning |
 |---|---|---|
 | `VIDEO_PROVIDER` | required | The provider this instance runs: `fake`. |
+| `VIDEO_PROVIDER_ROOT` | unset | The absolute path of the directory that holds each provider's own environment. The provider runs as `<root>/<provider>/.venv/bin/video-<provider>-worker`; unset, it runs as `video-<provider>-worker` beside the service's interpreter. No other location is searched, and a worker that is missing or not executable makes the provider fail to start. |
 | `VIDEO_HOST` | `127.0.0.1` | The address to listen on. |
 | `VIDEO_PORT` | `8080` | The port to listen on. |
 | `VIDEO_LOOKS_FILE` | unset | The absolute path of the look file; unset offers no look. |
@@ -103,7 +104,14 @@ holds the settings that shape the wire.
 | `VIDEO_DRAIN_SECONDS` | `30` | The longest from the stop to the exit, the cut of the sessions left included. |
 
 The `fake` provider is a development dependency (`uv sync --all-groups` installs
-it) that no image installs.
+it, and its `video-fake-worker` runs beside the interpreter) that no image installs.
+
+A provider runs as a child process of the service, with its own interpreter and
+packages, so a model may pin a Python and libraries the service does not. A child
+that dies, hangs past a bound or breaks the private frame protocol makes the provider
+failed until the service restarts: health shows `provider.ready` false, every look
+not ready, and every open session ends `unavailable`. A killed service closes the
+child's pipe, and the child ends.
 
 ## Install the client
 

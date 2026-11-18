@@ -24,6 +24,7 @@ from video_service.toml_file import read_toml_file
 
 _LOOKS_FILE_ERROR: Final = "VIDEO_LOOKS_FILE must be an absolute path"
 _SOURCES_ERROR: Final = "must be a JSON list of source prefixes"
+_PROVIDER_ROOT_ERROR: Final = "VIDEO_PROVIDER_ROOT must be an absolute path"
 _CONFIG_FILE_ERROR: Final = "VIDEO_CONFIG_FILE must be an absolute path"
 _KEY_SET_URL_ERROR: Final = "jwks_url must be an https URL"
 _SERVICE_GROUP_ERROR: Final = (
@@ -44,6 +45,7 @@ class Settings(BaseSettings):
     host: str = "127.0.0.1"
     port: int = Field(default=8080, ge=1, le=65535)
     provider: ProviderName
+    provider_root: Path | None = None
     looks_file: Path | None = None
     look_sources: Annotated[tuple[SourcePrefix, ...], NoDecode] = ()
     look_max_bytes: int = Field(default=_DEFAULT_LOOK_MAX_BYTES, ge=1)
@@ -70,6 +72,13 @@ class Settings(BaseSettings):
     def _looks_file_is_absolute(cls, path: Path | None) -> Path | None:
         if path is not None and not path.is_absolute():
             raise ValueError(_LOOKS_FILE_ERROR)
+        return path
+
+    @field_validator("provider_root")
+    @classmethod
+    def _provider_root_is_absolute(cls, path: Path | None) -> Path | None:
+        if path is not None and not path.is_absolute():
+            raise ValueError(_PROVIDER_ROOT_ERROR)
         return path
 
     @field_validator("config_file")

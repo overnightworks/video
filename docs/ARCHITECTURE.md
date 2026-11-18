@@ -10,8 +10,9 @@ audio into video, and offers the looks the operator's look file names. An app op
 a session on a look and the service plays the app's sentences on the provider's
 frame clock, and the opener's viewers watch the result as one WebRTC stream.
 [`README.md`](../README.md) starts it, [`wire.md`](wire.md) holds the wire.
-Providers sit behind one narrow port, so a new model never touches the service's
-code. The service is built after speech: the same layout, tooling and wire
+Providers sit behind one narrow port and run in processes of their own, so a new
+model never touches the service's code, and its Python and libraries need not be
+the service's. The service is built after speech: the same layout, tooling and wire
 conventions, with media as the part that differs.
 
 ## Context
@@ -22,7 +23,7 @@ flowchart LR
     viewer[Browser] -->|offer, DELETE via the app's route| app
     listener --> service[video_service]
     service -->|SRTP via TURN| viewer
-    service -->|port| provider[Provider]
+    service -->|frame protocol on pipes| provider[Provider process]
     service -->|fetch once at start| source[Look source]
     service -->|key set| issuer[Issuer]
     file[Look file] --> service
@@ -40,8 +41,10 @@ flowchart LR
   `callers.py` proves the two tokens; `runtime.py` holds the provider, the looks,
   the one readiness they share and the places of the open sessions; `looks.py`
   reads the look file and fetches, checks and decodes an image; `providers.py` is
-  the closed catalogue `VIDEO_PROVIDER` picks from; `config.py` reads the settings
-  and the caller file; `card.py` reads the card's memory in use.
+  the closed catalogue `VIDEO_PROVIDER` picks from and where its worker is;
+  `provider_process.py` is the one `Provider` the service builds: it runs the
+  worker as a child process and speaks the frame protocol; `config.py` reads the
+  settings and the caller file; `card.py` reads the card's memory in use.
 - `packages/client` (`overnightworks-video-client`): the one owner of the wire's
   types (health, refusals, the session's events) and the bounded health fetch. The
   service and its callers import them.
@@ -50,14 +53,62 @@ flowchart LR
   the app's own route, a `<video>` in the page and one signal, `loading`, `drawn`
   or `ended`, with every failure `ended`. It holds no token and has no runtime
   dependency: the app relays the offer ([WIRE-14](wire.md#the-apps-route)).
-- `providers/provider-contract`: the port. A provider reports what it plays and
-  draws when it starts, prepares each look from a decoded image and opens a session
-  on a look, which takes sentence audio and returns frames; the service fetches,
-  checks and decodes every image, so a provider never touches the network or an
-  untrusted file, and it paces the frames, so a provider never keeps time.
+- `providers/provider-contract`: the port and the protocol. A provider reports what
+  it plays and draws when it starts, prepares each look from a decoded image and
+  opens a session on a look, which takes sentence audio and returns frames; the
+  service fetches, checks and decodes every image, so a provider never touches the
+  network or an untrusted file, and it paces the frames, so a provider never keeps
+  time. The package also owns the private frame protocol and the worker loop a
+  provider's script runs, depends on no other package and runs on Python 3.10 and
+  up, since a provider's environment may be older than the service's.
 - `providers/fake`: a provider that holds no model. It draws blank frames on the
-  audio's timeline and serves the service's tests and a run from source; it is a
-  development dependency no image installs.
+  audio's timeline and serves the service's tests and a run from source; its
+  `video-fake-worker` runs it as a child like every provider. It is a development
+  dependency no image installs.
+
+## Provider process
+
+A provider is a child process started from its own executable, `<provider
+root>/<provider>/.venv/bin/video-<provider>-worker`, or beside the service's
+interpreter when no root is set; no other location is searched. The child leads a
+process group of its own and inherits the service's environment. The service and the
+child speak the frame protocol on the child's stdin and stdout, which the child moves
+off fd 1 so a library's `print` cannot corrupt it:
+
+```mermaid
+sequenceDiagram
+    participant S as Service
+    participant P as Provider process
+    P->>S: READY (plays, video)
+    S->>P: PREPARE (look, image)
+    P->>S: PREPARED
+    S->>P: OPEN (session, look)
+    P->>S: OPENED
+    S->>P: IDLE, PCM or SENTENCE_END (session)
+    P->>S: FRAMES (session, pictures)
+    S->>P: CLEAR (session)
+    P->>S: CLEARED
+    S->>P: CLOSE (session)
+```
+
+A request is one call of the port, and its answer comes in request order per session,
+so one child serves every open session. A CLEAR fences out the answers to the
+requests sent before it. Every frame is capped from its header, before its payload
+is read: the pictures from the size READY reported, an image from
+`VIDEO_LOOK_MAX_PIXELS`, everything else by a small fixed bound; an unknown kind, an
+oversized or truncated frame or an answer to no request is a provider failure. A
+failure reaches the service as a FAILED frame with a closed code, never a message,
+or as the child's exit. The child's stderr is read bounded and dropped before READY
+and goes to `/dev/null` after it; it is never logged as text.
+
+The start, a look's preparation and opening a session each have a time bound, and a
+session call has `VIDEO_MAX_LAG_MS`. A bound that runs out, a child that dies or a
+frame the protocol does not allow ends the child and makes the provider failed until
+the service restarts; there is no restart. Health then shows the provider not ready
+and every look not ready, new sessions are refused `unavailable`, and each open
+session ends `unavailable`. A stop during the load ends the child without waiting for
+it. The child reads its stdin on a thread of its own and ends the process on the end
+of input even while the model computes, so a service that dies leaves no child.
 
 ## Media
 
@@ -112,11 +163,12 @@ dropped, so no event follows its `cleared`.
 
 ## Failure isolation
 
-A failed look makes that look not ready; a failed provider makes every look not
-ready while health keeps answering; a provider that raises something other than
-`ProviderFailedError`, or a listener that cannot bind, ends the process with a
-nonzero exit. A provider that fails inside a session ends that session
-`unavailable` and no other.
+A failed look makes that look not ready; a failed provider (a child that died, hung
+or broke the protocol, at any time) makes every look not ready while health keeps
+answering; a listener that cannot bind, or a defect in the service itself, ends the
+process with a nonzero exit. A provider that raises anything inside its child fails
+that provider and nothing else. A provider that fails one request of a session ends
+that session `unavailable` and no other.
 
 ## Trust
 
@@ -129,6 +181,10 @@ nonzero exit. A provider that fails inside a session ends that session
   refused; the person must be in exactly the service group and the app's group, and
   the app must be registered. The issuer's keys are fetched over https on demand;
   an issuer that cannot be reached refuses every session `unavailable`.
+- The provider's code, and so any third party's, runs only in the child process, which
+  holds no token and receives only decoded images and sentence audio over its pipes.
+  The child inherits the service's environment; what confines it further is judged
+  with each real provider.
 - `GET /health` needs no token and reveals the offered look names, the provider's
   name and the card's memory in use.
 - Bounded input from a caller: event JSON (closed types, bounded strings, at most

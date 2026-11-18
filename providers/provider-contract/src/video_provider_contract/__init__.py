@@ -9,25 +9,45 @@ A session is one open look: sentence audio goes in and frames come out on the
 audio's timeline, at the frame rate the provider reported. The service calls a
 session from one thread at a time, and paces the frames it gets; the provider
 never sleeps to keep time.
+
+A provider runs in a process of its own: `protocol` is the private frame protocol
+between that process and the service, and `worker` the loop that serves a
+`Provider` over it. This package depends on no other package and runs on Python
+3.10 and up, since a provider's environment may be older than the service's.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import Enum
 from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-    from video_client.wire import Verb, VideoFormat
+
+class ProviderVerb(str, Enum):
+    """What a provider can play on a session."""
+
+    SPEAK = "speak"
+    CLEAR = "clear"
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderVideoFormat:
+    """The picture a provider draws."""
+
+    width: int
+    height: int
+    frame_rate: int
 
 
 @dataclass(frozen=True, slots=True)
 class ProviderInfo:
     """What a started provider plays and draws."""
 
-    plays: tuple[Verb, ...]
-    video: VideoFormat
+    plays: tuple[ProviderVerb, ...]
+    video: ProviderVideoFormat
 
 
 @dataclass(frozen=True, slots=True)
