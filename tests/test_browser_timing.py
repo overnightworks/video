@@ -16,7 +16,9 @@ if TYPE_CHECKING:
 
 pytestmark = pytest.mark.browser
 
-# ITU-R BT.1359-1: sound may lead the picture by 45 ms and lag it by 125 ms.
+# ITU-R BT.1359-1: sound may lead the picture by 45 ms and lag it by 125 ms. A beep is
+# heard once the page's AudioContext has played it out, `outputLatency` included; the
+# device's own output latency beyond `outputLatency` is a gap the page cannot measure.
 EARLIEST_MS = -45
 LATEST_MS = 125
 PAIRS = 50

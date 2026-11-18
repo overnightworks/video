@@ -39,9 +39,10 @@ async function recordSound(video) {
   const context = new AudioContext();
   await context.audioWorklet.addModule("/onset-worklet.js");
   const onset = new AudioWorkletNode(context, "onset");
+  // A beep is heard once it has passed the output path the page can see, `outputLatency`.
   onset.port.onmessage = ({ data: contextTime }) => {
     const output = context.getOutputTimestamp();
-    heard.push(output.performanceTime + (contextTime - output.contextTime) * 1000);
+    heard.push(output.performanceTime + (contextTime - output.contextTime + context.outputLatency) * 1000);
   };
   // Chromium gives a MediaElementAudioSourceNode only silence for a MediaStream source, so
   // the onset node taps the stream the element plays and passes it on to the speakers.
