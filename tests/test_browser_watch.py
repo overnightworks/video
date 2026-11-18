@@ -17,7 +17,7 @@ from support.browser_support import (
 from support.identity_support import valid_headers
 from support.service_support import free_port
 from support.viewer_support import Service, beep
-from video_client.wire import LOCATION_HEADER, SDP_CONTENT_TYPE
+from video_client.wire import LOCATION_HEADER, SDP_CONTENT_TYPE, Refusal, RefusalCode
 from video_service.media import ViewerEnd
 
 if TYPE_CHECKING:
@@ -114,14 +114,13 @@ def _to_a_route_that_does_not_listen(_page: Stage) -> str:
 @pytest.mark.parametrize(
     "arrange",
     [
-        _refused_with(HTTPStatus.TOO_MANY_REQUESTS),
         _refused_with(HTTPStatus.SERVICE_UNAVAILABLE),
         _refused_with(HTTPStatus.FORBIDDEN),
         _to_a_route_that_does_not_listen,
         _answered_without_a_location,
         _answered_with_what_does_not_set,
     ],
-    ids=["429", "503", "403", "no route", "no location", "answer that does not set"],
+    ids=["503", "403", "no route", "no location", "answer that does not set"],
 )
 def test_a_route_that_does_not_give_a_viewer_reports_ended_and_throws_nothing(
     live_in_browser: Callable[..., None],
@@ -139,6 +138,28 @@ def test_a_route_that_does_not_give_a_viewer_reports_ended_and_throws_nothing(
             assert seen.thrown == []
 
     live_in_browser(scenario)
+
+
+def test_the_services_viewer_cap_reaches_the_page_through_the_route_as_its_refusal(
+    live_in_browser: Callable[..., None], tmp_path: Path
+) -> None:
+    async def scenario(service: Service) -> None:
+        session = await service.open_session()
+        await service.watch(session)
+        async with stage(service, session, tmp_path / "profile") as page:
+            async with page.page.expect_response(f"**{VIEWERS_PATH}") as answered:
+                await page.begin()
+            response = await answered.value
+            await page.until("seen.states.includes('ended')")
+
+            assert response.status == HTTPStatus.TOO_MANY_REQUESTS
+            refusal = Refusal.model_validate_json(await response.body())
+            assert refusal.error.code is RefusalCode.BUSY
+            seen = await page.read()
+            assert seen.states == ["loading", "ended"]
+            assert seen.thrown == []
+
+    live_in_browser(scenario, max_viewers=1)
 
 
 def test_an_answer_that_does_not_set_deletes_the_viewer_and_a_later_stop_shows_nothing(

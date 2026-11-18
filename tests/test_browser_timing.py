@@ -24,7 +24,6 @@ LATEST_MS = 125
 PAIRS = 50
 _TONE_MS = 80
 _SENTENCE_MS = 400
-_FIRST_PAIR_LEAD_MS = 3_000
 
 
 def test_sound_stays_inside_the_detectability_window_over_fifty_flash_and_beep_pairs(

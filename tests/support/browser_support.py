@@ -15,6 +15,7 @@ import signal
 import socket
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
+from http import HTTPStatus
 from pathlib import Path
 from typing import TYPE_CHECKING, Final
 from uuid import uuid4
@@ -34,6 +35,7 @@ if TYPE_CHECKING:
 
     import httpx2
     from playwright.async_api import CDPSession, Page
+    from playwright.async_api import Request as PlaywrightRequest
     from starlette.requests import Request
 
     from support.viewer_support import OpenSession, Service
@@ -87,6 +89,12 @@ class StandInApp:
         await self.answer_gate.wait()
         if self.alter is not None:
             return self.alter(relayed)
+        if relayed.status_code != HTTPStatus.CREATED:
+            return Response(
+                relayed.content,
+                status_code=relayed.status_code,
+                media_type=relayed.headers.get("content-type"),
+            )
         return Response(
             relayed.content,
             status_code=relayed.status_code,
@@ -259,12 +267,17 @@ async def stage(
             page = await context.new_page()
             await coverage.start(page)
             watched = Stage(page, app, profile, address)
-            page.on(
-                "request",
-                lambda r: watched.requests.append(
-                    PageRequest(r.url, r.headers, r.post_data_buffer or b"")
-                ),
-            )
+
+            async def record(request: PlaywrightRequest) -> None:
+                watched.requests.append(
+                    PageRequest(
+                        request.url,
+                        await request.all_headers(),
+                        request.post_data_buffer or b"",
+                    )
+                )
+
+            page.on("request", record)
             await page.goto(address)
             yield watched
             if not watched.killed:
