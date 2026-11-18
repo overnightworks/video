@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 
     from video_service.runtime import Runtime
 
-_VERSION_PREFIX: Final = re.compile(r"/v([0-9]+)(?:/|$)")
+_VERSION_PREFIX: Final = re.compile(r"/v(\d+)(?:/|$)", re.ASCII)
 
 
 def _refused(request: Request, _error: Exception) -> JSONResponse:
