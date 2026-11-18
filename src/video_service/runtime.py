@@ -16,8 +16,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
+import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
 from logline import StepTimer
 from video_provider_contract import ProviderFailedError
@@ -41,7 +42,7 @@ from video_service.looks import (
 from video_service.providers import provider_for
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping
+    from collections.abc import Awaitable, Callable, Mapping
 
     from video_provider_contract import Provider, ProviderInfo, ProviderSession
 
@@ -60,14 +61,27 @@ class SessionLimits:
     max_lag_ms: int
 
 
+@dataclass(frozen=True, slots=True)
+class Pacing:
+    """The clock a session paces its frames on, and how it waits for a frame's time."""
+
+    now: Callable[[], float] = time.perf_counter
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep
+
+
+REAL_TIME: Final = Pacing()
+
+
 class Place:
     """A session's place: its provider session, until `release`."""
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 - the parts the runtime hands each session
         self,
+        *,
         session: ProviderSession,
         video: VideoFormat,
         limits: SessionLimits,
+        pacing: Pacing,
         draining: asyncio.Event,
         release: Callable[[], None],
     ) -> None:
@@ -75,6 +89,7 @@ class Place:
         self.session = session
         self.video = video
         self.limits = limits
+        self.pacing = pacing
         self.draining = draining
         self._release = release
 
@@ -95,6 +110,7 @@ class Runtime:
         limits: LookLimits,
         max_sessions: int,
         session_limits: SessionLimits,
+        pacing: Pacing = REAL_TIME,
         memory_probe: Callable[[], int] = card_memory_mb,
     ) -> None:
         """Offer the keys of `looks`, none of them ready until `load` ends."""
@@ -104,6 +120,7 @@ class Runtime:
         self._limits = limits
         self._max_sessions = max_sessions
         self._session_limits = session_limits
+        self._pacing = pacing
         self._memory_probe = memory_probe
         self._lock = threading.Lock()
         self._provider_info: ProviderInfo | None = None
@@ -189,11 +206,12 @@ class Runtime:
             self._give_back()
             return RefusalCode.UNAVAILABLE
         return Place(
-            session,
-            admitted,
-            self._session_limits,
-            self._drain_begun,
-            self._give_back,
+            session=session,
+            video=admitted,
+            limits=self._session_limits,
+            pacing=self._pacing,
+            draining=self._drain_begun,
+            release=self._give_back,
         )
 
     def begin_drain(self) -> None:

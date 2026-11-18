@@ -23,7 +23,7 @@ from support.runtime_support import (
 from video_service.app import create_app
 from video_service.looks import LookLimits, LookSource
 from video_service.providers import ProviderName
-from video_service.runtime import Runtime, SessionLimits
+from video_service.runtime import REAL_TIME, Pacing, Runtime, SessionLimits
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator, Mapping
@@ -51,6 +51,7 @@ def build_runtime(source: LookServer) -> BuildRuntime:
         max_sessions: int = MAX_SESSIONS,
         max_lag_ms: int = MAX_LAG_MS,
         max_queued_audio_seconds: float = MAX_QUEUED_AUDIO_SECONDS,
+        pacing: Pacing = REAL_TIME,
     ) -> Runtime:
         return Runtime(
             provider_name=ProviderName.FAKE,
@@ -66,6 +67,7 @@ def build_runtime(source: LookServer) -> BuildRuntime:
                 max_queued_audio_seconds=max_queued_audio_seconds,
                 max_lag_ms=max_lag_ms,
             ),
+            pacing=pacing,
             memory_probe=lambda: CARD_MEMORY_MB,
         )
 
@@ -91,7 +93,7 @@ def wire(key_set: KeySet) -> Iterator[Callable[[Runtime], TestClient]]:
 def started(source: LookServer, build_runtime: BuildRuntime) -> Callable[..., Runtime]:
     """Compose a runtime offering the look `mozart` and run its start."""
 
-    def start(provider: Provider | None = None, **limits: float) -> Runtime:
+    def start(provider: Provider | None = None, **limits: object) -> Runtime:
         runtime = build_runtime(
             {"mozart": hosted_picture(source)}, provider=provider, **limits
         )

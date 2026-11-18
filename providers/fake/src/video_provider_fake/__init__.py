@@ -20,7 +20,7 @@ from video_provider_contract import (
 from video_client.wire import Verb, VideoFormat
 
 if TYPE_CHECKING:
-    from collections.abc import Collection, Iterator
+    from collections.abc import Callable, Collection, Iterator
 
 _WIDTH = 256
 _HEIGHT = 256
@@ -38,8 +38,9 @@ class FakeSession:
         *,
         fails_to_draw: bool,
         finish_gate: threading.Event | None,
+        sleep: Callable[[float], None],
     ) -> None:
-        """Draw at `frame_rate`, taking `render_seconds` for each frame.
+        """Draw at `frame_rate`, taking `render_seconds` of `sleep` for each frame.
 
         A `finish_gate` holds the last frames of a sentence until it is set; `finishing`
         is set once a sentence's last frames are asked for.
@@ -48,6 +49,7 @@ class FakeSession:
         self._render_seconds = render_seconds
         self._fails_to_draw = fails_to_draw
         self._finish_gate = finish_gate
+        self._sleep = sleep
         self._frame = Frame(bytes(_WIDTH * _HEIGHT * _BYTES_PER_PIXEL))
         self._samples = 0
         self._rate = 1
@@ -91,7 +93,7 @@ class FakeSession:
 
     def _until(self, total: int) -> Iterator[Frame]:
         while self._drawn < total:
-            time.sleep(self._render_seconds)
+            self._sleep(self._render_seconds)
             self._drawn += 1
             yield self._frame
 
@@ -113,8 +115,12 @@ class FakeProvider:
         fails_to_open: bool = False,
         fails_to_draw: bool = False,
         finish_gate: threading.Event | None = None,
+        sleep: Callable[[float], None] = time.sleep,
     ) -> None:
-        """Fail or lag as told; `refuses` names the looks `prepare` fails for."""
+        """Fail or lag as told; `refuses` names the looks `prepare` fails for.
+
+        A frame takes `render_seconds` of `sleep`, which a test hands its own clock's.
+        """
         self._fails_to_start = fails_to_start
         self._refuses = frozenset(refuses)
         self._frame_rate = frame_rate
@@ -122,6 +128,7 @@ class FakeProvider:
         self._fails_to_open = fails_to_open
         self._fails_to_draw = fails_to_draw
         self._finish_gate = finish_gate
+        self._sleep = sleep
         self.prepared: dict[str, DecodedImage] = {}
         self.sessions: list[FakeSession] = []
         self.closed = False
@@ -156,6 +163,7 @@ class FakeProvider:
             self._render_seconds,
             fails_to_draw=self._fails_to_draw,
             finish_gate=self._finish_gate,
+            sleep=self._sleep,
         )
         self.sessions.append(session)
         return session

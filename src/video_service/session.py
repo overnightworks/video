@@ -272,6 +272,7 @@ class Session:
         if sentence is None or len(pcm) % _BYTES_PER_SAMPLE:
             raise _Failure(RefusalCode.INVALID_REQUEST, _PARAM_AUDIO)
         if sentence.samples == 0:
+            # logline reads the start of the sentence's line off its own clock.
             sentence.first_audio_at = time.perf_counter()
         sentence.chunks.append(pcm)
         sentence.samples += len(pcm) // _BYTES_PER_SAMPLE
@@ -340,7 +341,7 @@ class Session:
         while not sentence.dropped:
             if sentence.chunks:
                 # A chunk that arrives after the last frame's time restarts the clock.
-                self._playhead = max(self._playhead, time.perf_counter())
+                self._playhead = max(self._playhead, self._place.pacing.now())
                 return sentence.chunks.popleft()
             if sentence.ended:
                 return None
@@ -376,13 +377,13 @@ class Session:
             and await self._call(partial(next, frames, None)) is not None
         ):
             due = self._playhead
-            behind = time.perf_counter() - due
+            behind = self._place.pacing.now() - due
             if behind > limit:
                 raise _Failure(RefusalCode.UNAVAILABLE)
             if behind > 0:
                 sentence.late_frames += 1
             else:
-                await asyncio.sleep(-behind)
+                await self._place.pacing.sleep(-behind)
             await self._leave(sentence, step)
             self._playhead = due + 1 / self._frame_rate
 

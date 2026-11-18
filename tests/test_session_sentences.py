@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import time
 from typing import TYPE_CHECKING
 
 import pytest
 from starlette.websockets import WebSocketDisconnect
 from video_provider_fake import FakeProvider
 
+from support.clock_support import FakeClock
 from support.session_support import (
     failure_of,
     next_error,
@@ -33,7 +33,7 @@ if TYPE_CHECKING:
     from video_service.runtime import Runtime
 
 _SHORT_MS = 80
-_STALL_SECONDS = 0.15
+_STALL_SECONDS = 1.0
 _CHUNK_MS = 40
 
 
@@ -113,14 +113,15 @@ def test_sentences_play_in_order_back_to_back(client: TestClient) -> None:
 def test_a_sentence_whose_audio_comes_late_is_not_a_provider_lag(
     started: Callable[..., Runtime], wire: Callable[[Runtime], TestClient]
 ) -> None:
-    client = wire(started(max_lag_ms=50))
+    clock = FakeClock()
+    client = wire(started(max_lag_ms=500, pacing=clock.pacing))
     with opened(client) as session:
         start, end = sentence_events("s1")
         session.send_json(start)
         session.send_bytes(pcm(_CHUNK_MS))
         assert isinstance(receive(session), OutputAudioBufferStarted)
         # The client's audio stalls for longer than the lag the service bounds.
-        time.sleep(_STALL_SECONDS)
+        clock.advance(_STALL_SECONDS)
         session.send_bytes(pcm(_CHUNK_MS))
         session.send_json(end)
 
@@ -271,7 +272,9 @@ def test_a_provider_that_falls_behind_or_fails_ends_the_session_unavailable(
     wire: Callable[[Runtime], TestClient],
     fails: dict[str, object],
 ) -> None:
-    client = wire(started(FakeProvider(**fails), max_lag_ms=50, max_sessions=1))
+    clock = FakeClock()
+    provider = FakeProvider(**fails, sleep=clock.advance)
+    client = wire(started(provider, max_lag_ms=50, max_sessions=1, pacing=clock.pacing))
     with opened(client) as session:
         _speak(session, "a", _SHORT_MS)
         error = failure_of(receive(session))
