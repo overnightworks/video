@@ -2,7 +2,7 @@
 
 Both calls prove the tokens and that the caller is the session's opener first. A
 viewer's `viewer.ended` line is written when the viewer ends, in the trace of the
-POST that admitted it, or at once when the POST is refused.
+POST that admitted it, or at once when the POST is refused or fails.
 """
 
 from __future__ import annotations
@@ -63,7 +63,12 @@ class _ViewerRoute:
             step.add(**{_ENDED_BY: reason.value})
             step.end()
 
-        admitted = await self._admit(request, session_id, viewer_ended)
+        try:
+            admitted = await self._admit(request, session_id, viewer_ended)
+        except BaseException as error:
+            # The step's own exit names the outcome: failed, or cancelled.
+            step.__exit__(type(error), error, error.__traceback__)
+            raise
         if isinstance(admitted, RefusalCode):
             step.refuse(admitted.value)
             step.end()

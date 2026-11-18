@@ -7,6 +7,8 @@ import re
 from http import HTTPStatus
 from typing import TYPE_CHECKING
 
+import httpx2
+import pytest
 from logline import Outcome
 from logline.testing import configured
 
@@ -16,13 +18,12 @@ from support.viewer_support import Service, Watcher, offer_of
 from video_client.wire import RefusalCode
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-
-    import pytest
+    from collections.abc import AsyncIterator, Callable
 
 _DELETED_TRACE = "0af7651916cd43dd8448eb211c80319c"
 _ENDED_TRACE = "4bf92f3577b34da6a3ce929d0e0e4736"
 _REFUSED_TRACE = "5bf92f3577b34da6a3ce929d0e0e4737"
+_ABORTED_TRACE = "6bf92f3577b34da6a3ce929d0e0e4738"
 
 
 def _traced(trace_id: str) -> dict[str, str]:
@@ -61,6 +62,34 @@ def test_each_post_writes_one_viewer_line_in_its_own_trace_and_the_session_count
     assert viewers[_REFUSED_TRACE]["reason"] == RefusalCode.INVALID_REQUEST
     (session_line,) = written(out, "session.ended")
     assert session_line["viewer_count"] == 2  # noqa: PLR2004 - the two admitted POSTs
+
+
+class _ClientAbortedError(Exception):
+    """The client gives up on its body after the first chunk."""
+
+
+def test_a_post_whose_client_drops_its_body_still_writes_its_viewer_line(
+    live: Callable[..., None], capsys: pytest.CaptureFixture[str]
+) -> None:
+    async def scenario(service: Service) -> None:
+        session = await service.open_session()
+
+        async def first_chunk_only() -> AsyncIterator[bytes]:
+            yield b"v=0\r\n"
+            raise _ClientAbortedError
+
+        with pytest.raises((_ClientAbortedError, httpx2.TransportError)):
+            await service.post(
+                session, first_chunk_only(), headers=_traced(_ABORTED_TRACE)
+            )
+        await service.logged.wait_for("viewer.ended")
+
+    with configured("video"):
+        live(scenario)
+
+    (line,) = written(capsys.readouterr().out, "viewer.ended")
+    assert line["trace_id"] == _ABORTED_TRACE
+    assert line["outcome"] != Outcome.OK
 
 
 def _candidate_addresses(sdp: str) -> set[str]:
