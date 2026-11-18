@@ -503,10 +503,14 @@ class Session:
             for entry in self._buffer
         )
 
+    def _is_current(self, generation: int) -> bool:
+        """Whether no interruption has begun a newer generation since `generation`."""
+        return generation == self._generation
+
     async def _draw_idle(self) -> None:
         generation, arrived_at = self._generation, self._input_at
         frame = await self._call(self._place.session.idle_frame)
-        if generation == self._generation:
+        if self._is_current(generation):
             self._buffer.append(_Drawn(generation, frame, None, arrived_at))
             self._drawn.set()
 
