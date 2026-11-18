@@ -10,7 +10,6 @@ from __future__ import annotations
 import hashlib
 import io
 import re
-import tomllib
 import urllib.request
 from dataclasses import dataclass
 from enum import StrEnum
@@ -25,11 +24,11 @@ from pydantic import (
     ConfigDict,
     StringConstraints,
     TypeAdapter,
-    ValidationError,
 )
 from video_provider_contract import DecodedImage
 
 from video_client.wire import LookName
+from video_service.toml_file import read_toml_file
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -48,7 +47,6 @@ _SOURCE_ERROR = (
     "no query or fragment, and a path that starts and ends with / and holds only "
     "ASCII letters, digits and -._~/, with no empty, . or .. segment"
 )
-_LOOK_FILE_ERROR = "VIDEO_LOOKS_FILE must name a readable TOML file of looks"
 
 
 def _has_dot_segment(path: str) -> bool:
@@ -90,19 +88,9 @@ _LOOK_FILE = TypeAdapter(
 
 def read_look_file(path: Path) -> dict[str, LookSource]:
     """Each look the file names with its image source; a bad file echoes no value."""
-    try:
-        document = tomllib.loads(path.read_text(encoding="utf-8"))
-    except OSError, UnicodeDecodeError, tomllib.TOMLDecodeError:
-        raise ValueError(_LOOK_FILE_ERROR) from None
-    try:
-        return _LOOK_FILE.validate_python(document)
-    except ValidationError as error:
-        faults = "; ".join(
-            f"{'.'.join(map(str, fault['loc']))}: {fault['msg']}"
-            for fault in error.errors(include_input=False, include_url=False)
-        )
-        message = f"VIDEO_LOOKS_FILE breaks the look file form ({faults})"
-        raise ValueError(message) from None
+    return read_toml_file(
+        path, _LOOK_FILE, variable="VIDEO_LOOKS_FILE", form="the look file form"
+    )
 
 
 class LookFailure(StrEnum):

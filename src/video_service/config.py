@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import tomllib
 from pathlib import Path
 from typing import Annotated, Final, Self
 
@@ -11,6 +10,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    TypeAdapter,
     ValidationError,
     field_validator,
     model_validator,
@@ -20,13 +20,11 @@ from webauth.https_client import is_https_url
 
 from video_service.looks import SourcePrefix
 from video_service.providers import ProviderName
+from video_service.toml_file import read_toml_file
 
 _LOOKS_FILE_ERROR: Final = "VIDEO_LOOKS_FILE must be an absolute path"
 _SOURCES_ERROR: Final = "must be a JSON list of source prefixes"
 _CONFIG_FILE_ERROR: Final = "VIDEO_CONFIG_FILE must be an absolute path"
-_CONFIG_FILE_UNREADABLE_ERROR: Final = (
-    "VIDEO_CONFIG_FILE must name a readable TOML file"
-)
 _KEY_SET_URL_ERROR: Final = "jwks_url must be an https URL"
 _SERVICE_GROUP_ERROR: Final = (
     "service_group must be a group path such as /services/name"
@@ -153,18 +151,14 @@ class CallerConfig(_FileModel):
         return self
 
 
+_CALLER_CONFIG = TypeAdapter(CallerConfig)
+
+
 def load_caller_config(path: Path) -> CallerConfig:
     """Read the caller configuration; a bad file fails naming a field, not a value."""
-    try:
-        document = tomllib.loads(path.read_text(encoding="utf-8"))
-    except OSError, UnicodeDecodeError, tomllib.TOMLDecodeError:
-        raise ValueError(_CONFIG_FILE_UNREADABLE_ERROR) from None
-    try:
-        return CallerConfig.model_validate(document)
-    except ValidationError as error:
-        faults = "; ".join(
-            f"{'.'.join(map(str, fault['loc']))}: {fault['msg']}"
-            for fault in error.errors(include_input=False, include_url=False)
-        )
-        message = f"VIDEO_CONFIG_FILE breaks the caller configuration ({faults})"
-        raise ValueError(message) from None
+    return read_toml_file(
+        path,
+        _CALLER_CONFIG,
+        variable="VIDEO_CONFIG_FILE",
+        form="the caller configuration",
+    )
