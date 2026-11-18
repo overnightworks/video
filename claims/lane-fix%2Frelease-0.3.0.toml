@@ -1,8 +1,0 @@
-claim_id = "3c96247b7a694938ab922dc16ed43b6f"
-agent = "Claude 21fd863e-01fb-442b-a634-e988b43fd9d7"
-role = "builder"
-base = "1b0d26560415d518e9ae59fd4707ce4770dfc51d"
-branch = "fix/release-0.3.0"
-scope = ["packages/browser/package.json", "packages/browser/pnpm-lock.yaml", "packages/client/pyproject.toml", "providers/fake/pyproject.toml", "providers/provider-contract/pyproject.toml", "pyproject.toml", "uv.lock"]
-opened_commit = "515799b65118e9975d9ece3d71da3ac8fe349718"
-whole_reason = "Every version owner stands at one version (scripts/check_release.py), so the release bump touches all of them plus the lock files"
