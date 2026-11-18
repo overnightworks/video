@@ -54,6 +54,7 @@ def test_a_missing_provider_names_its_setting() -> None:
         ("VIDEO_PORT", "0"),
         ("VIDEO_PORT", "not-a-port"),
         ("VIDEO_MAX_SESSIONS", "0"),
+        ("VIDEO_MAX_VIEWERS", "0"),
         ("VIDEO_MAX_QUEUED_AUDIO_SECONDS", "-1"),
         ("VIDEO_MAX_QUEUED_AUDIO_SECONDS", "nan"),
         ("VIDEO_MAX_LAG_MS", "0"),

@@ -1,10 +1,13 @@
-"""A provider that holds no model: it draws a blank picture on the audio's timeline.
+"""A provider that holds no model: it draws a picture on the audio's timeline.
 
+The face at rest is dark; a sentence's frame is bright when its frame period of
+audio holds a loud sample, so a test sees the idle between sentences and a beep.
 It serves the service's own tests and a run from source; no image installs it.
 """
 
 from __future__ import annotations
 
+import struct
 import threading
 import time
 from typing import TYPE_CHECKING
@@ -26,32 +29,39 @@ _WIDTH = 256
 _HEIGHT = 256
 _BYTES_PER_PIXEL = 3
 _BYTES_PER_SAMPLE = 2
+_LOUD_SAMPLE = 8192
 
 
 class FakeSession:
-    """Draws one blank frame per frame period of the audio it is fed."""
+    """Draws one frame per frame period of the audio it is fed."""
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 - one switch for each way a test makes it fail or lag
         self,
         frame_rate: int,
         render_seconds: float,
         *,
+        idle_render_seconds: float = 0.0,
         fails_to_draw: bool,
         finish_gate: threading.Event | None,
         sleep: Callable[[float], None],
     ) -> None:
         """Draw at `frame_rate`, taking `render_seconds` of `sleep` for each frame.
 
-        A `finish_gate` holds the last frames of a sentence until it is set; `finishing`
-        is set once a sentence's last frames are asked for.
+        An idle frame takes `idle_render_seconds`. A `finish_gate` holds the last
+        frames of a sentence until it is set; `finishing` is set once a sentence's
+        last frames are asked for.
         """
         self._frame_rate = frame_rate
         self._render_seconds = render_seconds
+        self._idle_render_seconds = idle_render_seconds
         self._fails_to_draw = fails_to_draw
         self._finish_gate = finish_gate
         self._sleep = sleep
-        self._frame = Frame(bytes(_WIDTH * _HEIGHT * _BYTES_PER_PIXEL))
+        self._dark = Frame(bytes(_WIDTH * _HEIGHT * _BYTES_PER_PIXEL))
+        self._bright = Frame(b"\xff" * (_WIDTH * _HEIGHT * _BYTES_PER_PIXEL))
+        self._audio = bytearray()
         self._samples = 0
+        self._taken = 0
         self._rate = 1
         self._drawn = 0
         self.finishing = threading.Event()
@@ -62,13 +72,16 @@ class FakeSession:
     def idle_frame(self) -> Frame:
         """Draw the face at rest."""
         self.idle_frames += 1
-        return self._frame
+        if self._idle_render_seconds:
+            self._sleep(self._idle_render_seconds)
+        return self._dark
 
     def feed(self, pcm: bytes, rate: int) -> Iterator[Frame]:
         """Count the audio; its whole frame periods come out."""
         if self._fails_to_draw:
             message = "the fake provider was told to fail to draw"
             raise ProviderFailedError(message)
+        self._audio += pcm
         self._samples += len(pcm) // _BYTES_PER_SAMPLE
         self._rate = rate
         return self._until(self._samples * self._frame_rate // rate)
@@ -88,17 +101,35 @@ class FakeSession:
         self._reset()
 
     def close(self) -> None:
-        """Note that the service closed the session."""
+        """Note that the service closed the session, and forget its audio."""
         self.closed = True
+        self._reset()
 
     def _until(self, total: int) -> Iterator[Frame]:
         while self._drawn < total:
             self._sleep(self._render_seconds)
+            period = self._take_period()
             self._drawn += 1
-            yield self._frame
+            yield self._bright if self._is_loud(period) else self._dark
+
+    def _take_period(self) -> bytes:
+        """Take out the next period's audio, which may be short at a sentence's end."""
+        last = (self._drawn + 1) * self._rate // self._frame_rate
+        size = (last - self._taken) * _BYTES_PER_SAMPLE
+        period = bytes(self._audio[:size])
+        self._audio = self._audio[size:]
+        self._taken += len(period) // _BYTES_PER_SAMPLE
+        return period
+
+    @staticmethod
+    def _is_loud(period: bytes) -> bool:
+        samples = struct.unpack(f"<{len(period) // _BYTES_PER_SAMPLE}h", period)
+        return any(abs(sample) >= _LOUD_SAMPLE for sample in samples)
 
     def _reset(self) -> None:
+        self._audio = bytearray()
         self._samples = 0
+        self._taken = 0
         self._drawn = 0
 
 
@@ -112,6 +143,7 @@ class FakeProvider:
         refuses: Collection[str] = (),
         frame_rate: int = 25,
         render_seconds: float = 0.0,
+        idle_render_seconds: float = 0.0,
         fails_to_open: bool = False,
         fails_to_draw: bool = False,
         finish_gate: threading.Event | None = None,
@@ -119,12 +151,14 @@ class FakeProvider:
     ) -> None:
         """Fail or lag as told; `refuses` names the looks `prepare` fails for.
 
-        A frame takes `render_seconds` of `sleep`, which a test hands its own clock's.
+        A frame takes `render_seconds` of `sleep`, an idle frame `idle_render_seconds`;
+        a test hands the sleep of its own clock.
         """
         self._fails_to_start = fails_to_start
         self._refuses = frozenset(refuses)
         self._frame_rate = frame_rate
         self._render_seconds = render_seconds
+        self._idle_render_seconds = idle_render_seconds
         self._fails_to_open = fails_to_open
         self._fails_to_draw = fails_to_draw
         self._finish_gate = finish_gate
@@ -161,6 +195,7 @@ class FakeProvider:
         session = FakeSession(
             self._frame_rate,
             self._render_seconds,
+            idle_render_seconds=self._idle_render_seconds,
             fails_to_draw=self._fails_to_draw,
             finish_gate=self._finish_gate,
             sleep=self._sleep,

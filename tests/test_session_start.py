@@ -64,19 +64,6 @@ def test_every_server_event_and_session_gets_a_fresh_id(client: TestClient) -> N
     assert events[0].event_id != events[1].event_id
 
 
-def test_the_session_is_updated_once_the_provider_drew_the_idle_frame(
-    client: TestClient, provider: FakeProvider
-) -> None:
-    with connect(client) as session:
-        receive(session)
-        session.send_json(update_event())
-        updated = receive(session)
-        idle_frames = provider.sessions[0].idle_frames
-
-    assert isinstance(updated, SessionUpdated)
-    assert idle_frames == 1
-
-
 @pytest.mark.parametrize("policy", ["relay", "all"])
 def test_the_session_takes_the_ice_servers_in_the_webrtc_shape(
     client: TestClient, policy: str

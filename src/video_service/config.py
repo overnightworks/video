@@ -49,6 +49,7 @@ class Settings(BaseSettings):
     look_max_bytes: int = Field(default=_DEFAULT_LOOK_MAX_BYTES, ge=1)
     look_max_pixels: int = Field(default=_DEFAULT_LOOK_MAX_PIXELS, ge=1)
     max_sessions: int = Field(default=1, ge=1)
+    max_viewers: int = Field(default=5, ge=1)
     max_queued_audio_seconds: float = Field(default=30.0, gt=0, allow_inf_nan=False)
     max_lag_ms: int = Field(default=500, ge=1)
     drain_seconds: float = Field(default=30.0, gt=0, allow_inf_nan=False)

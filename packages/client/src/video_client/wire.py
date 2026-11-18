@@ -1,9 +1,9 @@
 """The wire between an app and the video service.
 
-This module is the one owner of the paths, the caller headers, the `GET /health`
-answer and the closed list of refusals with their statuses, messages and OpenAI-form
-body. `video_client.session_wire` owns the session's events. The service, its
-providers and its callers import these types and copy none of them.
+This module is the one owner of the paths (a session's viewers included), the caller
+headers, the `GET /health` answer and the closed list of refusals with their statuses,
+messages and OpenAI-form body. `video_client.session_wire` owns the session's events.
+The service, its providers and its callers import these types and copy none of them.
 """
 
 from __future__ import annotations
@@ -17,6 +17,13 @@ from pydantic import BaseModel, Field, StrictBool, StrictInt, StringConstraints
 HEALTH_PATH: Final = "/health"
 API_VERSION: Final = 1
 SESSIONS_PATH: Final = f"/v{API_VERSION}/sessions"
+SESSION_ID_PARAM: Final = "session_id"
+VIEWER_ID_PARAM: Final = "viewer_id"
+VIEWERS_ROUTE: Final = f"{SESSIONS_PATH}/{{{SESSION_ID_PARAM}}}/viewers"
+VIEWER_ROUTE: Final = f"{VIEWERS_ROUTE}/{{{VIEWER_ID_PARAM}}}"
+SDP_CONTENT_TYPE: Final = "application/sdp"
+MAX_OFFER_BYTES: Final = 16 * 1024
+LOCATION_HEADER: Final = "Location"
 LOOK_PARAM: Final = "look"
 RETRY_AFTER_HEADER: Final = "Retry-After"
 BUSY_RETRY_AFTER_SECONDS: Final = 5
@@ -27,6 +34,18 @@ WORKLOAD_TOKEN_HEADER: Final = "Video-Workload-Token"  # noqa: S105 - a header n
 
 LOOK_NAME_PATTERN: Final = r"^[A-Za-z0-9._-]{1,64}$"
 LookName = Annotated[str, StringConstraints(pattern=LOOK_NAME_PATTERN)]
+
+
+def viewers_path(session_id: str) -> str:
+    """The path a viewer's offer is posted to."""
+    return VIEWERS_ROUTE.format(**{SESSION_ID_PARAM: session_id})
+
+
+def viewer_path(session_id: str, viewer_id: str) -> str:
+    """The path of a viewer, which `DELETE` ends."""
+    return VIEWER_ROUTE.format(
+        **{SESSION_ID_PARAM: session_id, VIEWER_ID_PARAM: viewer_id}
+    )
 
 
 def caller_headers(*, workload_token: str, person_token: str) -> dict[str, str]:

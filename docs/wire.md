@@ -1,10 +1,10 @@
 # The video wire
 
-Audience: an app developer who asks the video service what it offers and opens a
-session on a look.
+Audience: an app developer who asks the video service what it offers, opens a
+session on a look and lets a browser watch it.
 
 `video_client.wire` (the `overnightworks-video-client` distribution) owns the
-paths, the caller headers, the `GET /health` answer and the refusal list;
+paths (the viewer paths and the offer cap included), the caller headers, the `GET /health` answer and the refusal list;
 `video_client.session_wire` owns the session's events; read them through those.
 `video_client.health.fetch_health` makes the health call within a total deadline
 and a byte cap and answers with a typed outcome; its module documents them.
@@ -117,8 +117,8 @@ queued audio is the audio received of the queued sentences that has not yet left
 frames, the playing sentence's included.
 
 **WIRE-6** `output_audio_buffer.clear` drops the playing sentence and every queued
-one, the sentence still open included, and the provider returns the face to idle by
-its own idle rendering on silent audio. The playing sentence gets
+one, the sentence still open included, and the face returns to idle: the idle
+frame on silence follows (WIRE-10). The playing sentence gets
 `output_audio_buffer.cleared` `{response_id, audio_end_ms}` with the milliseconds of
 its audio whose frames had left, in whole frames, and each other dropped sentence one
 with `audio_end_ms` 0, in the order the sentences were queued. A dropped sentence
@@ -134,10 +134,12 @@ audio as `audio_end_ms`. A failure sends `error`
 refusal list, `param` the field at fault or `null`, and `event_id` the client event's
 own id or `null`, and closes the session with `1000`. A provider that falls behind
 real time by more than `VIDEO_MAX_LAG_MS`, or that fails to draw, ends it with
-`unavailable`. The lag is how far a frame is produced after its time on the audio's
-clock; a client whose audio arrives late restarts the clock and is not a lag, while
-audio already queued keeps the lag the frames before it built up, and the time a
-client takes to end a sentence is none either. A provider call that has not returned
+`unavailable`. The lag is how far a frame is produced after its time on the frame clock,
+which a sentence's audio sets while it plays and which runs on its own while the
+face is idle: a late idle frame counts like a sentence's, so a session can end
+`unavailable` during silence. A client whose audio arrives late restarts the clock
+and is not a lag, while audio already queued keeps the lag the frames before it built
+up, and the time a client takes to end a sentence is none either. A provider call that has not returned
 within `VIDEO_MAX_LAG_MS` ends the session with `unavailable` too. A client that disconnects gets no event.
 
 **Trace.** The session's lines (`session.ended`) are written in the trace of
@@ -147,17 +149,72 @@ its first audio to its first frame) in the trace of its `sentence.start`'s
 `traceparent`; a missing or malformed `traceparent` starts a trace of its own. HopIn
 sends the trace of the turn that spoke, so the service's lines join it.
 
+## Viewers and media
+
+**WIRE-9** `POST /v1/sessions/{id}/viewers` adds a viewer to the session `{id}`
+(`session.created` names it) by the WHEP exchange: the body is a recvonly SDP offer
+with exactly one audio and one video section, `Content-Type: application/sdp`, at
+most `MAX_OFFER_BYTES` (16 KiB) in `video_client.wire`. It answers 201 with the
+`application/sdp` answer, which holds every candidate (no trickle), and `Location`,
+the viewer's path (`viewer_path`). The request carries the same two tokens as the
+session's upgrade (WIRE-2), relayed by the app; the caller must be the session's
+opener, the same app's client and the same person. It is refused, in this order, for
+the first of:
+
+1. the tokens (WIRE-2), checked before anything else of the request is read;
+2. the session id is unknown or the session has ended: `not_found`;
+3. the caller is not the session's opener, whether another person or another
+   registered app: `forbidden`;
+4. the service is draining (WIRE-11), or the session has not yet received its
+   `session.update` and so has no ICE configuration (WIRE-4), or its ICE servers
+   cannot be parsed into a peer: `unavailable`;
+5. `Content-Type` other than `application/sdp`: `invalid_request`;
+6. a body over `MAX_OFFER_BYTES`: `too_large`; the body is never read past the cap;
+7. a body that is not SDP, an offer that is not recvonly, that has other than one
+   audio and one video section, that offers no Opus or no VP8, or that the peer
+   cannot take: `invalid_request`;
+8. the session already has `VIDEO_MAX_VIEWERS` viewers: `busy` with `Retry-After: 5`.
+
+`DELETE` on `Location`, with the same two tokens and the same opener check, ends the
+viewer and answers 200; an unknown or ended viewer is `not_found`. PATCH, like any
+other method a path does not offer, is `not_found` (WIRE-1). A viewer also ends when
+its peer closes (DTLS close or ICE failure), and with its session, whatever ends
+the session. ICE consent expiry ends a viewer through the ICE failure it causes, as
+WHEP requires of a server; its timing is the ICE library's.
+
+**WIRE-10** A viewer receives one Opus audio track and one VP8 video track in one
+stream with one CNAME, so the browser keeps sound and picture together (RFC 3550,
+section 6). The answer offers only Opus and VP8, whatever the offer lists first. Both
+tracks are stamped from the session's frame count: video timestamps advance by one
+frame period per frame, and the audio of each frame period goes out with its frame.
+Between sentences the stream shows the provider's idle frame on silence, for as long
+as the session is open and whether or not a viewer watches. Each viewer's peer is
+configured with exactly the session's `ice_servers` and `ice_transport_policy`
+(WIRE-4): an empty list stays empty, and no default STUN server is added, so the
+service reaches the network only through the TURN servers the app hands over. The
+media is DTLS-SRTP.
+
+**Trace.** A viewer's line, `viewer.ended`, is written once for each POST, in the
+trace of the POST's `traceparent`: when the viewer ends, with outcome `ok` and
+`ended_by` `deleted`, `peer_closed` or `session_ended`, or at once when the POST is
+refused, with outcome `refused` and the refusal's code as `reason`. The session's
+line carries `viewer_count`, the viewers admitted over its life. The offer, the
+answer, the candidates, the ICE credentials and the tokens are never logged, at any
+`LOG_LEVEL`.
+
 ## Drain
 
 **WIRE-11** On SIGTERM or SIGINT the service reports `ready` false at once, refuses
-every new session as `unavailable` (WIRE-3), lets the playing sentence of each open
+every new session and every new viewer as `unavailable` (WIRE-3, WIRE-9), lets the
+playing sentence of each open
 session finish, then closes the session with `1012` (Service Restart,
 `DRAIN_CLOSE_CODE` in `video_client.wire`) and no `error`. A sentence still queued is
 dropped without events; a session with no sentence playing closes at once; a clear
 during the drain ends the session after its `cleared`. The process exits when the
 last session has ended, or `VIDEO_DRAIN_SECONDS` after the signal at the latest; the
 sessions still open then, one stuck in a provider call included, are closed with
-`1012` by the stop, which starts at most one second before that time.
+`1012` by the stop, which starts at most one second before that time. A session's
+viewers end with it.
 
 ## Health
 
@@ -202,6 +259,7 @@ The looks are what the operator's look file names.
 | Setting | Default | Meaning |
 |---|---|---|
 | `VIDEO_MAX_SESSIONS` | `1` | `sessions.limit`, at least 1; one more is `busy` (WIRE-3). |
+| `VIDEO_MAX_VIEWERS` | `5` | The most viewers a session admits, at least 1; one more is `busy` (WIRE-9). |
 | `VIDEO_MAX_QUEUED_AUDIO_SECONDS` | `30` | The most queued audio a session holds, above 0 (WIRE-5). |
 | `VIDEO_MAX_LAG_MS` | `500` | The most a frame may be late, and the longest a provider call may take, before the session ends `unavailable`, at least 1 (WIRE-7). |
 | `VIDEO_DRAIN_SECONDS` | `30` | The longest from the stop to the exit, the cut of the sessions left included, above 0 (WIRE-11). |

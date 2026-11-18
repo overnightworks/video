@@ -8,7 +8,7 @@ what it trusts.
 One process runs one provider, a model that turns a decoded picture and sentence
 audio into video, and offers the looks the operator's look file names. An app opens
 a session on a look and the service plays the app's sentences on the provider's
-frame clock; the media path to viewers is not built yet.
+frame clock, and the opener's viewers watch the result as one WebRTC stream.
 [`README.md`](../README.md) starts it, [`wire.md`](wire.md) holds the wire.
 Providers sit behind one narrow port, so a new model never touches the service's
 code. The service is built after speech: the same layout, tooling and wire
@@ -18,8 +18,9 @@ conventions, with media as the part that differs.
 
 ```mermaid
 flowchart LR
-    app[App] -->|GET /health, WS /v1/sessions| listener[TCP listener]
+    app[App] -->|GET /health, WS /v1/sessions, POST viewers| listener[TCP listener]
     listener --> service[video_service]
+    service -->|SRTP via TURN| viewer[Browser]
     service -->|port| provider[Provider]
     service -->|fetch once at start| source[Look source]
     service -->|key set| issuer[Issuer]
@@ -33,6 +34,8 @@ flowchart LR
   health at once, loads on a daemon thread and drains on a stop; `app.py` holds the
   routes and `refusals.py` the HTTP form of a refusal; `session_route.py` refuses
   or accepts a session upgrade and `session.py` is one session's state machine;
+  `viewer_route.py` refuses or admits a viewer and ends one, and `media.py` holds a
+  session's viewers: one aiortc peer with an Opus and a VP8 track each;
   `callers.py` proves the two tokens; `runtime.py` holds the provider, the looks,
   the one readiness they share and the places of the open sessions; `looks.py`
   reads the look file and fetches, checks and decodes an image; `providers.py` is
@@ -49,6 +52,20 @@ flowchart LR
 - `providers/fake`: a provider that holds no model. It draws blank frames on the
   audio's timeline and serves the service's tests and a run from source; it is a
   development dependency no image installs.
+
+## Media
+
+A session owns a `Media`: the viewers its opener admitted and the frames they are fed.
+Each frame the player lets leave (a sentence's, or the face at rest on silence)
+reaches every connected viewer together with the PCM of its frame period, resampled
+to 48 kHz; each viewer's peer encodes for itself with its own encoder, so a slow
+viewer holds back no other, and a viewer whose encoder stalls loses its oldest
+frames, not memory. Both tracks of a viewer leave in one stream under one CNAME and are
+stamped from the frame count, so the browser keeps lips and sound together. The
+answer offers only Opus and VP8 (libvpx is royalty-free, and VP8 costs about 0.67
+cores at five viewers where H.264 costs 1.54), holds every candidate, and a viewer's
+peer is built with exactly the session's ICE servers, none by default. A viewer ends
+on its DELETE, on its peer's close and with its session.
 
 ## Looks
 
@@ -70,9 +87,12 @@ ends. The service keeps no image; what a provider prepares stays inside it.
 route accepts the upgrade on it. `session.py` then runs three tasks and ends with
 the first that ends: the receive loop (events and audio in, queue and clear), the
 player (the queued sentences, one at a time, on the frame clock) and the drain
-watcher. The frame clock is the audio's: a frame is due one frame period after the
-one before, input the client sent after the last frame had left restarts it, and a frame
-produced more than `VIDEO_MAX_LAG_MS` after its time ends the session `unavailable`.
+watcher. The frame clock is one grid of frame periods: a sentence's audio sets it
+while it plays and the player draws the provider's idle frame on it while no sentence
+has audio, so the stream never stops. A frame is due one frame period after the one
+before, input the client sent after the last frame had left restarts the clock, and a
+frame (idle ones too) produced more than `VIDEO_MAX_LAG_MS` after its time ends the
+session `unavailable`.
 
 The opening of a provider session and every call into it run on a daemon thread of
 the session's own, so the provider is never entered twice and a call that never
@@ -80,7 +100,7 @@ returns holds back neither the session's end nor the process's exit: a call not 
 within `VIDEO_MAX_LAG_MS` ends the session `unavailable`, and the session gives up its
 place once the close of the provider session has taken that long. A session cut at
 the process's exit queues the close and gives up its place without waiting for it.
-A clear lets the call in flight finish before it asks the provider to return to idle. A sentence's `started`, `stopped`
+A clear lets the call in flight finish before it asks the provider to drop the sentence. A sentence's `started`, `stopped`
 and `cleared` are sent under one lock that also decides whether the sentence was
 dropped, so no event follows its `cleared`.
 
@@ -108,10 +128,16 @@ nonzero exit. A provider that fails inside a session ends that session
 - Bounded input from a caller: event JSON (closed types, bounded strings, at most
   64 KiB), PCM at a rate from a closed set, queued audio capped per session, the
   open sessions capped. A caller that breaks a bound ends its own session.
-- Egress: the service reaches the look sources at start and the issuer's key set
-  when it checks tokens, and nothing else.
+- A viewer's POST carries the session opener's two tokens, relayed by the app; the
+  service runs the same check and then requires the caller's client and subject to be
+  the opener's. The media is DTLS-SRTP, and an offer is bounded input (16 KiB, recvonly,
+  one Opus and one VP8 section).
+- Egress: the service reaches the look sources at start, the issuer's key set when it
+  checks tokens and, for a viewer, the TURN servers the app hands over, and nothing
+  else; the pod opens no inbound port.
 - Logs carry closed codes and look names, never a URL, an image, a token, an ICE
-  credential or a setting's value. A session's lines join the trace its client
+  credential, an SDP, a candidate address or a setting's value; the `aioice` and
+  `aiortc` loggers are capped above the level at which they write candidates. A session's lines join the trace its client
   events carry.
 
 ## Delivery
@@ -127,5 +153,6 @@ Behaviour tests drive the HTTP and WebSocket boundary of the real app over a
 runtime composed with the fake provider, a real look source on a loopback port and
 a throwaway issuer that signs real tokens; the process tests start `main` and stop
 it with a signal, and `serve` under a real server with a WebSocket client for the
-drain. The client's tests drive `fetch_health` against a raw listener and parse the
+drain; the viewer tests start `serve` on a loopback port and receive the stream with
+aiortc recvonly peers, deterministic by frame timestamps. The client's tests drive `fetch_health` against a raw listener and parse the
 session's events.

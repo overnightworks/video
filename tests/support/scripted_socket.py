@@ -40,6 +40,8 @@ class ScriptedSocket:
         self._script = deque(script)
         self._sentences_left = sentences
         self._all_stopped = asyncio.Event()
+        if not sentences:
+            self._all_stopped.set()
 
     async def receive(self) -> Message:
         """The next scripted message, which waits only for the steps before it."""
