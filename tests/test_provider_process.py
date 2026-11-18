@@ -8,6 +8,7 @@ import select
 import subprocess
 import sys
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING
 
@@ -20,6 +21,7 @@ from support.worker_support import (
     SHORT_BOUNDS,
     MakeProvider,
     install_worker,
+    is_gone,
 )
 from video_client.session_wire import ErrorEvent
 from video_client.wire import RefusalCode
@@ -382,3 +384,24 @@ def test_a_second_close_kills_no_process_group(
     provider.close()
 
     assert killed == []
+
+
+def test_a_worker_that_exits_takes_its_descendants_with_it(
+    make_provider: MakeProvider, tmp_path: Path
+) -> None:
+    pidfile = tmp_path / "descendant.pid"
+    provider = make_provider(
+        "import subprocess; "
+        "helper = subprocess.Popen(['sleep', '60'], stdin=subprocess.DEVNULL, "
+        "stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL); "
+        f"open({str(pidfile)!r}, 'w').write(str(helper.pid)); os._exit(1)"
+    )
+
+    with pytest.raises(ProviderFailedError):
+        provider.start()
+
+    descendant = int(pidfile.read_text(encoding="utf-8"))
+    deadline = time.monotonic() + _WAIT_SECONDS
+    while not is_gone(descendant) and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert is_gone(descendant)

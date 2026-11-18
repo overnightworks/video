@@ -401,10 +401,11 @@ class ProcessProvider:
         """Kill the worker's process group, reap it and close its input.
 
         A child already reaped is not killed again: its pid may belong to another
-        process by now. Its output pipes close in the threads that read them, which
-        end at the end of the output.
+        process by now. A child that exited but is not reaped is a zombie, so its
+        pid is still its own and its group is killed. Its output pipes close in the
+        threads that read them, which end at the end of the output.
         """
-        if child.poll() is None:
+        if child.returncode is None:
             with suppress(ProcessLookupError):
                 os.killpg(child.pid, signal.SIGKILL)
         child.wait()
