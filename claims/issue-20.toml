@@ -1,8 +1,0 @@
-claim_id = "9846b24b3c324d8f966eb905bee4879b"
-agent = "Claude 9dc12da3-ab64-4985-bb01-3681b1c64c09"
-role = "builder"
-base = "f3146062683ba9421b224a909e93f33c413f1865"
-branch = "claude/issue-20-p3b1-pipelined-player"
-scope = ["README.md", "docs/ARCHITECTURE.md", "providers/fake", "providers/provider-contract", "src/video_service", "tests"]
-opened_commit = "c8850ba2c14bb199dcb9488f95c196344aa63e08"
-whole_reason = "The producer, the pacer, the one-request feed and the fake's chunk mode prove one player change together."
