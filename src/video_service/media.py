@@ -314,9 +314,10 @@ class Media:
         if speech is None:
             return bytes(wanted)
         pcm, rate = speech
-        resampler = self._resamplers.setdefault(
-            rate, AudioResampler(format="s16", layout="mono", rate=_AUDIO_RATE)
-        )
+        resampler = self._resamplers.get(rate)
+        if resampler is None:
+            resampler = AudioResampler(format="s16", layout="mono", rate=_AUDIO_RATE)
+            self._resamplers[rate] = resampler
         incoming = AudioFrame(
             format="s16", layout="mono", samples=len(pcm) // _BYTES_PER_SAMPLE
         )
