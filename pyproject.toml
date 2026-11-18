@@ -12,9 +12,11 @@ dependencies = [
     "overnightworks-logline @ git+https://github.com/overnightworks/logline@v0.8.0",
     "overnightworks-video-client",
     "overnightworks-video-provider-contract",
+    "overnightworks-webauth @ git+https://github.com/overnightworks/webauth@v0.40.1",
     "pillow==13.0.0",
     "pydantic-settings==2.16.2",
     "uvicorn==0.54.0",
+    "websockets==17.4",
 ]
 
 [project.scripts]
@@ -22,8 +24,10 @@ video-service = "video_service.__main__:main"
 
 [dependency-groups]
 dev = [
+    "cryptography==50.0.2",
     "httpx2==2.16.0",
     "overnightworks-video-provider-fake",
+    "pyjwt[crypto]==2.15.1",
     "pytest==9.2.0",
     "pytest-cov==7.1.0",
     "pytest-xdist==3.8.0",
@@ -48,6 +52,7 @@ no-binary-package = [
     "overnightworks-video-provider-contract",
     "overnightworks-video-provider-fake",
     "overnightworks-video-service",
+    "overnightworks-webauth",
 ]
 
 [tool.uv.sources]

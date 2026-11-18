@@ -1,47 +1,32 @@
-"""The HTTP app: health and the refusals of every other path."""
+"""The HTTP app: health, the session upgrade, and the refusals of every other path."""
 
 from __future__ import annotations
 
-import re
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING
 
 from fastapi import FastAPI
-from fastapi.responses import JSONResponse
 from logline import RequestLineMiddleware
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from video_client.wire import (
-    API_VERSION,
-    HEALTH_PATH,
-    REFUSAL_STATUS,
-    Health,
-    RefusalCode,
-    refusal,
-)
+from video_client.wire import HEALTH_PATH, Health
+from video_service.refusals import unknown_path_response
+from video_service.session_route import mount_session_route
 
 if TYPE_CHECKING:
     from fastapi import Request
+    from fastapi.responses import JSONResponse
 
+    from video_service.callers import VideoCallers
     from video_service.runtime import Runtime
-
-_VERSION_PREFIX: Final = re.compile(r"/v(\d+)(?:/|$)", re.ASCII)
 
 
 def _refused(request: Request, _error: Exception) -> JSONResponse:
     """The refusal of a path or method the service does not offer."""
-    found = _VERSION_PREFIX.match(request.url.path)
-    code = (
-        RefusalCode.UNSUPPORTED_VERSION
-        if found and found.group(1) != str(API_VERSION)
-        else RefusalCode.NOT_FOUND
-    )
-    return JSONResponse(
-        refusal(code).model_dump(mode="json"), status_code=int(REFUSAL_STATUS[code])
-    )
+    return unknown_path_response(request.url.path)
 
 
-def create_app(runtime: Runtime) -> FastAPI:
-    """Build the app: health, and no docs, schema or look administration."""
+def create_app(runtime: Runtime, callers: VideoCallers) -> FastAPI:
+    """Build the app: health and sessions, and no docs, schema or administration."""
     app = FastAPI(
         docs_url=None, redoc_url=None, openapi_url=None, redirect_slashes=False
     )
@@ -52,4 +37,5 @@ def create_app(runtime: Runtime) -> FastAPI:
     def health() -> Health:
         return runtime.health()
 
+    mount_session_route(app, runtime, callers)
     return app

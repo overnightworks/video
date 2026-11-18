@@ -5,12 +5,18 @@ answers health: it starts the provider, then fetches and prepares each look. Not
 is ready until `load` ends, since no session could open before. A look that fails
 stays not ready and the others serve; a provider that fails leaves every look not
 ready.
+
+A session takes a place while it runs: `open_session` checks the look and the
+limit in the order the wire refuses them, and `begin_drain` stops new places and
+tells every open session to finish.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import threading
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from logline import StepTimer
@@ -20,7 +26,9 @@ from video_client.wire import (
     Health,
     LookHealth,
     ProviderHealth,
+    RefusalCode,
     SessionsHealth,
+    VideoFormat,
 )
 from video_service.card import card_memory_mb
 from video_service.looks import (
@@ -35,13 +43,44 @@ from video_service.providers import provider_for
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
 
-    from video_provider_contract import Provider, ProviderInfo
+    from video_provider_contract import Provider, ProviderInfo, ProviderSession
 
     from video_service.config import Settings
     from video_service.looks import LookSource
     from video_service.providers import ProviderName
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class SessionLimits:
+    """The bounds every session keeps."""
+
+    max_queued_audio_seconds: float
+    max_lag_ms: int
+
+
+class Place:
+    """A session's place: its provider session, until `release`."""
+
+    def __init__(
+        self,
+        session: ProviderSession,
+        video: VideoFormat,
+        limits: SessionLimits,
+        draining: asyncio.Event,
+        release: Callable[[], None],
+    ) -> None:
+        """Hold the open provider session and what the service reports for it."""
+        self.session = session
+        self.video = video
+        self.limits = limits
+        self.draining = draining
+        self._release = release
+
+    def release(self) -> None:
+        """Give the place back."""
+        self._release()
 
 
 class Runtime:
@@ -55,6 +94,7 @@ class Runtime:
         looks: Mapping[str, LookSource],
         limits: LookLimits,
         max_sessions: int,
+        session_limits: SessionLimits,
         memory_probe: Callable[[], int] = card_memory_mb,
     ) -> None:
         """Offer the keys of `looks`, none of them ready until `load` ends."""
@@ -63,10 +103,15 @@ class Runtime:
         self._looks = dict(looks)
         self._limits = limits
         self._max_sessions = max_sessions
+        self._session_limits = session_limits
         self._memory_probe = memory_probe
         self._lock = threading.Lock()
         self._provider_info: ProviderInfo | None = None
         self._ready_looks: set[str] = set()
+        self._open = 0
+        self._draining = False
+        self._drain_begun = asyncio.Event()
+        self._idle = asyncio.Event()
 
     @classmethod
     def from_settings(cls, settings: Settings) -> Runtime:
@@ -84,7 +129,16 @@ class Runtime:
                 max_pixels=settings.look_max_pixels,
             ),
             max_sessions=settings.max_sessions,
+            session_limits=SessionLimits(
+                max_queued_audio_seconds=settings.max_queued_audio_seconds,
+                max_lag_ms=settings.max_lag_ms,
+            ),
         )
+
+    @property
+    def provider_name(self) -> str:
+        """The catalogue name of the provider this instance runs."""
+        return self._provider_name.value
 
     def load(self) -> None:
         """Start the provider, then prepare each look once; return when that is over."""
@@ -123,13 +177,64 @@ class Runtime:
         """Release the provider."""
         self._provider.close()
 
+    async def open_session(self, look: str) -> Place | RefusalCode:
+        """A place on `look`, or the refusal, checked in the order the wire names."""
+        with self._lock:
+            admitted = self._admit(look)
+        if isinstance(admitted, RefusalCode):
+            return admitted
+        try:
+            session = await asyncio.to_thread(self._provider.open_session, look)
+        except ProviderFailedError:
+            self._give_back()
+            return RefusalCode.UNAVAILABLE
+        return Place(
+            session,
+            admitted,
+            self._session_limits,
+            self._drain_begun,
+            self._give_back,
+        )
+
+    def begin_drain(self) -> None:
+        """Stop new sessions, report not ready, and tell the open sessions to finish."""
+        with self._lock:
+            self._draining = True
+            self._drain_begun.set()
+            if self._open == 0:
+                self._idle.set()
+
+    async def wait_idle(self) -> None:
+        """Return once the drain has begun and no session is open."""
+        await self._idle.wait()
+
+    def _admit(self, look: str) -> VideoFormat | RefusalCode:
+        """Take a place on `look` and return the picture it draws, or refuse."""
+        info = self._provider_info
+        if look not in self._looks:
+            return RefusalCode.INVALID_REQUEST
+        if self._draining or info is None or look not in self._ready_looks:
+            return RefusalCode.UNAVAILABLE
+        if self._open >= self._max_sessions:
+            return RefusalCode.BUSY
+        self._open += 1
+        return info.video
+
+    def _give_back(self) -> None:
+        with self._lock:
+            self._open -= 1
+            if self._draining and self._open == 0:
+                self._idle.set()
+
     def health(self) -> Health:
         """`GET /health` as the service answers it now."""
         with self._lock:
             info = self._provider_info
             ready_looks = frozenset(self._ready_looks)
+            open_sessions = self._open
+            draining = self._draining
         return Health(
-            ready=info is not None,
+            ready=info is not None and not draining,
             provider=ProviderHealth(
                 name=self._provider_name.value,
                 ready=info is not None,
@@ -137,9 +242,11 @@ class Runtime:
                 video=None if info is None else info.video,
             ),
             looks={
-                name: LookHealth(ready=info is not None and name in ready_looks)
+                name: LookHealth(
+                    ready=info is not None and not draining and name in ready_looks
+                )
                 for name in self._looks
             },
-            sessions=SessionsHealth(open=0, limit=self._max_sessions),
+            sessions=SessionsHealth(open=open_sessions, limit=self._max_sessions),
             card_memory_mb=self._memory_probe(),
         )

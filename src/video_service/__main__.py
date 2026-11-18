@@ -8,20 +8,24 @@ import logging
 import signal
 import socket
 import threading
+import time
 from concurrent.futures import Future
 from typing import TYPE_CHECKING, Final
 
 import uvicorn
 from logline import configure
+from webauth.https_client import fetch_key_set_over_https
 
 from video_service.app import create_app
-from video_service.config import Settings, load_settings
+from video_service.callers import VideoCallers
+from video_service.config import Settings, load_caller_config, load_settings
 from video_service.runtime import Runtime
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
 
 _SERVICE_NAME: Final = "video"
+_CONFIG_FILE_REQUIRED: Final = "VIDEO_CONFIG_FILE is required: it names the callers"
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -30,21 +34,35 @@ def main() -> None:
     try:
         settings = load_settings()
         runtime = Runtime.from_settings(settings)
+        callers = _callers(settings)
     except ValueError as fault:
         raise SystemExit(str(fault)) from None
     configure(_SERVICE_NAME)
     _LOGGER.info("process.started")
     stop = asyncio.Event()
-    raise SystemExit(asyncio.run(_serve_until_signalled(settings, runtime, stop)))
+    raise SystemExit(
+        asyncio.run(_serve_until_signalled(settings, runtime, callers, stop))
+    )
+
+
+def _callers(settings: Settings) -> VideoCallers:
+    if settings.config_file is None:
+        raise ValueError(_CONFIG_FILE_REQUIRED)
+    return VideoCallers.from_config(
+        load_caller_config(settings.config_file),
+        fetch_key_set=fetch_key_set_over_https,
+        wall_clock=time.time,
+        monotonic_clock=time.monotonic,
+    )
 
 
 async def _serve_until_signalled(
-    settings: Settings, runtime: Runtime, stop: asyncio.Event
+    settings: Settings, runtime: Runtime, callers: VideoCallers, stop: asyncio.Event
 ) -> int:
     loop = asyncio.get_running_loop()
     for received in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(received, stop.set)
-    return await serve(settings, runtime, stop)
+    return await serve(settings, runtime, callers, stop)
 
 
 class _ServiceServer(uvicorn.Server):
@@ -79,9 +97,13 @@ async def _load(runtime: Runtime, fatal: asyncio.Event) -> None:
         _LOGGER.info("process.ready")
 
 
-async def serve(settings: Settings, runtime: Runtime, stop: asyncio.Event) -> int:
-    """Serve health at once, load in the background, and return when `stop` is set.
+async def serve(
+    settings: Settings, runtime: Runtime, callers: VideoCallers, stop: asyncio.Event
+) -> int:
+    """Serve health at once, load in the background, and drain when `stop` is set.
 
+    A stop drains first: the service reports not ready, refuses new sessions and
+    waits up to `VIDEO_DRAIN_SECONDS` for the open ones to end before it exits.
     Returns 0 after a stop, and 1 when the listener, the server or the load fails.
     """
     try:
@@ -89,7 +111,9 @@ async def serve(settings: Settings, runtime: Runtime, stop: asyncio.Event) -> in
     except OSError:
         _LOGGER.exception("listener.failed", extra={"port": settings.port})
         return 1
-    server = _ServiceServer(uvicorn.Config(create_app(runtime), log_config=None))
+    server = _ServiceServer(
+        uvicorn.Config(create_app(runtime, callers), log_config=None)
+    )
     fatal = asyncio.Event()
     with listener:
         server_task = asyncio.create_task(server.serve(sockets=[listener]))
@@ -102,6 +126,10 @@ async def serve(settings: Settings, runtime: Runtime, stop: asyncio.Event) -> in
             {server_task, *waiting[1:]}, return_when=asyncio.FIRST_COMPLETED
         )
         result = 0 if waiting[1] in done else 1
+        if result == 0:
+            runtime.begin_drain()
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(runtime.wait_idle(), settings.drain_seconds)
         for task in waiting:
             task.cancel()
         server.should_exit = True

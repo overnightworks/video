@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 import pytest
 from video_provider_fake import FakeProvider
 
+from support.identity_support import callers_over, write_caller_config
 from support.images import picture
 from video_client.health import fetch_health
 from video_client.wire import Health
@@ -85,7 +86,7 @@ def test_the_service_answers_health_ready_and_stops_clean_on_request(
 
     async def drive() -> tuple[int, Health | None, bool]:
         stop = asyncio.Event()
-        serving = asyncio.create_task(serve(settings, runtime, stop))
+        serving = asyncio.create_task(serve(settings, runtime, callers_over(), stop))
         announced = await asyncio.to_thread(ready.announced.wait, READY_WITHIN_SECONDS)
         health = await asyncio.to_thread(_health, port)
         stop.set()
@@ -114,7 +115,7 @@ def test_a_load_that_fails_ends_the_process_nonzero(
     runtime = build_runtime({}, provider=_ExplodingProvider())
     settings = Settings(provider=ProviderName.FAKE, port=_free_port())
 
-    result = asyncio.run(serve(settings, runtime, asyncio.Event()))
+    result = asyncio.run(serve(settings, runtime, callers_over(), asyncio.Event()))
 
     assert result == 1
 
@@ -128,7 +129,7 @@ def test_a_port_that_is_taken_ends_the_process_nonzero(
         taken.listen()
         settings = Settings(provider=ProviderName.FAKE, port=taken.getsockname()[1])
 
-        result = asyncio.run(serve(settings, runtime, asyncio.Event()))
+        result = asyncio.run(serve(settings, runtime, callers_over(), asyncio.Event()))
 
     assert result == 1
 
@@ -145,6 +146,7 @@ def test_the_process_serves_the_configured_looks_and_stops_on_a_signal(
     )
     port = _free_port()
     monkeypatch.setenv("VIDEO_PROVIDER", "fake")
+    monkeypatch.setenv("VIDEO_CONFIG_FILE", str(write_caller_config(tmp_path)))
     monkeypatch.setenv("VIDEO_PORT", str(port))
     monkeypatch.setenv("VIDEO_LOOKS_FILE", str(looks_file))
     monkeypatch.setenv("VIDEO_LOOK_SOURCES", json.dumps([source.base_url]))
@@ -189,12 +191,22 @@ def test_the_process_serves_the_configured_looks_and_stops_on_a_signal(
     ("environment", "named"),
     [
         ({}, "VIDEO_PROVIDER"),
+        ({"VIDEO_PROVIDER": "fake"}, "VIDEO_CONFIG_FILE"),
+        (
+            {"VIDEO_PROVIDER": "fake", "VIDEO_CONFIG_FILE": "/no/such/config.toml"},
+            "VIDEO_CONFIG_FILE",
+        ),
         (
             {"VIDEO_PROVIDER": "fake", "VIDEO_LOOKS_FILE": "/no/such/looks.toml"},
             "VIDEO_LOOKS_FILE",
         ),
     ],
-    ids=["no-provider", "unreadable-look-file"],
+    ids=[
+        "no-provider",
+        "no-config-file",
+        "unreadable-config-file",
+        "unreadable-look-file",
+    ],
 )
 def test_main_refuses_to_start_on_a_bad_setting_and_names_it(
     environment: dict[str, str],

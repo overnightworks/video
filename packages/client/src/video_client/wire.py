@@ -1,8 +1,9 @@
 """The wire between an app and the video service.
 
-This module is the one owner of the paths, the `GET /health` answer and the closed
-list of refusals with their statuses, messages and OpenAI-form body. The service,
-its providers and its callers import these types and copy none of them.
+This module is the one owner of the paths, the caller headers, the `GET /health`
+answer and the closed list of refusals with their statuses, messages and OpenAI-form
+body. `video_client.session_wire` owns the session's events. The service, its
+providers and its callers import these types and copy none of them.
 """
 
 from __future__ import annotations
@@ -15,10 +16,25 @@ from pydantic import BaseModel, Field, StrictBool, StrictInt, StringConstraints
 
 HEALTH_PATH: Final = "/health"
 API_VERSION: Final = 1
+SESSIONS_PATH: Final = f"/v{API_VERSION}/sessions"
+LOOK_PARAM: Final = "look"
 RETRY_AFTER_HEADER: Final = "Retry-After"
+BUSY_RETRY_AFTER_SECONDS: Final = 5
+DRAIN_CLOSE_CODE: Final = 1012  # the stopping service's close, with no `error` sent
+AUTHENTICATE_HEADER: Final = "WWW-Authenticate"
+AUTHORIZATION_HEADER: Final = "Authorization"
+WORKLOAD_TOKEN_HEADER: Final = "Video-Workload-Token"  # noqa: S105 - a header name
 
 LOOK_NAME_PATTERN: Final = r"^[A-Za-z0-9._-]{1,64}$"
 LookName = Annotated[str, StringConstraints(pattern=LOOK_NAME_PATTERN)]
+
+
+def caller_headers(*, workload_token: str, person_token: str) -> dict[str, str]:
+    """The headers of a session upgrade: the app's workload token and the person's."""
+    return {
+        WORKLOAD_TOKEN_HEADER: workload_token,
+        AUTHORIZATION_HEADER: f"Bearer {person_token}",
+    }
 
 
 class Verb(StrEnum):
