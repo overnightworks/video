@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from support.images import noisy_picture, picture
+from support.images import noisy_picture, picture, webp_claiming_a_canvas
 from support.look_server import hosted_picture
 from support.runtime_support import MAX_BYTES, MAX_PIXELS, ready_looks
 from video_service.looks import LookFailure, LookSource
@@ -80,6 +80,22 @@ _REFUSED_BY_A_CHECK: dict[
     ),
     "a-format-no-look-may-have": (
         lambda source: source.host("anim", picture(fmt="GIF").data),
+        LookFailure.NOT_AN_IMAGE,
+    ),
+    "a-lossless-webp-canvas-over-the-pixel-cap": (
+        lambda source: source.host(
+            "canvas", webp_claiming_a_canvas(16383, 16383, extended=False)
+        ),
+        LookFailure.TOO_MANY_PIXELS,
+    ),
+    "an-extended-webp-canvas-over-the-pixel-cap": (
+        lambda source: source.host(
+            "extended", webp_claiming_a_canvas(16383, 16383, extended=True)
+        ),
+        LookFailure.TOO_MANY_PIXELS,
+    ),
+    "a-webp-whose-bitstream-header-is-wrong": (
+        lambda source: source.host("short", b"RIFF\0\0\0\0WEBPVP8L"),
         LookFailure.NOT_AN_IMAGE,
     ),
     "over-the-pixel-cap": (

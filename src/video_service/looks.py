@@ -36,6 +36,9 @@ if TYPE_CHECKING:
 
 _FETCH_SECONDS: Final = 30
 _IMAGE_FORMATS: Final = ("PNG", "JPEG", "WEBP")
+_WEBP_HEADER_BYTES: Final = 30
+_VP8_SIGNATURE: Final = b"\x9d\x01\x2a"
+_VP8L_SIGNATURE: Final = 0x2F
 _SEGMENT: Final = r"[A-Za-z0-9._~-]+"
 _PREFIX_PATH: Final = re.compile(rf"/({_SEGMENT}/)*")
 _FILE_PATH: Final = re.compile(rf"({_SEGMENT}/)*{_SEGMENT}")
@@ -154,7 +157,32 @@ def _fetch(url: str, max_bytes: int) -> bytes:
     return body
 
 
+def _webp_canvas_pixels(data: bytes) -> int | None:
+    """The canvas of a WebP read from its header, `None` when it is not a WebP."""
+    header = data[:_WEBP_HEADER_BYTES].ljust(_WEBP_HEADER_BYTES, b"\0")
+    if header[:4] != b"RIFF" or header[8:12] != b"WEBP":
+        return None
+    chunk = header[12:16]
+    if chunk == b"VP8X":
+        width = int.from_bytes(header[24:27], "little") + 1
+        height = int.from_bytes(header[27:30], "little") + 1
+    elif chunk == b"VP8L" and header[20] == _VP8L_SIGNATURE:
+        bits = int.from_bytes(header[21:25], "little")
+        width, height = (bits & 0x3FFF) + 1, ((bits >> 14) & 0x3FFF) + 1
+    elif chunk == b"VP8 " and header[23:26] == _VP8_SIGNATURE:
+        width = int.from_bytes(header[26:28], "little") & 0x3FFF
+        height = int.from_bytes(header[28:30], "little") & 0x3FFF
+    else:
+        raise LookRefusedError(LookFailure.NOT_AN_IMAGE)
+    return width * height
+
+
 def _decode(data: bytes, max_pixels: int) -> DecodedImage:
+    # Pillow allocates a WebP's whole canvas when it opens the file, so the cap is
+    # checked on the header first; PNG and JPEG open without allocating pixels.
+    pixels = _webp_canvas_pixels(data)
+    if pixels is not None and pixels > max_pixels:
+        raise LookRefusedError(LookFailure.TOO_MANY_PIXELS)
     try:
         with Image.open(io.BytesIO(data), formats=_IMAGE_FORMATS) as image:
             if image.width * image.height > max_pixels:
