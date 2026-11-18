@@ -1,0 +1,15 @@
+[build-system]
+requires = ["hatchling==1.33.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "overnightworks-video-provider-contract"
+version = "0.1.0"
+description = "The port between the video service and a provider: what a provider reports, prepares and refuses."
+requires-python = ">=3.14"
+dependencies = [
+    "overnightworks-video-client",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/video_provider_contract"]

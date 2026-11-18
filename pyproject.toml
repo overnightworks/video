@@ -80,3 +80,6 @@ convention = "google"
 # Asserts are the tests' checks; a test function's name is its documentation.
 "tests/**" = ["S101", "D103"]
 "packages/client/tests/**" = ["S101", "D103"]
+
+[tool.coverage.report]
+exclude_also = ["if __name__ == .__main__.:"]
