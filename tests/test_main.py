@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import signal
 import socket
 import subprocess
 import sys
-import time
+import threading
 from typing import TYPE_CHECKING
 
 import pytest
@@ -51,17 +52,23 @@ def _free_port() -> int:
         return bound.getsockname()[1]
 
 
-def _ready_health(port: int) -> Health | None:
-    """The health once it says ready, or `None` when it stays unready past the bound."""
-    ends = time.monotonic() + READY_WITHIN_SECONDS
-    while time.monotonic() < ends:
-        outcome = fetch_health(
-            f"http://127.0.0.1:{port}", deadline_seconds=2, cap_bytes=65536
-        )
-        if isinstance(outcome, Health) and outcome.ready:
-            return outcome
-        time.sleep(0.05)
-    return None
+class _ReadyAnnouncement(logging.Handler):
+    """Sets an event when the service logs `process.ready`, which follows the load."""
+
+    def __init__(self) -> None:
+        super().__init__(logging.INFO)
+        self.announced = threading.Event()
+
+    def emit(self, record: logging.LogRecord) -> None:
+        if record.getMessage() == "process.ready":
+            self.announced.set()
+
+
+def _health(port: int) -> Health | None:
+    outcome = fetch_health(
+        f"http://127.0.0.1:{port}", deadline_seconds=2, cap_bytes=65536
+    )
+    return outcome if isinstance(outcome, Health) else None
 
 
 def test_the_service_answers_health_ready_and_stops_clean_on_request(
@@ -74,14 +81,26 @@ def test_the_service_answers_health_ready_and_stops_clean_on_request(
     port = _free_port()
     settings = Settings(provider=ProviderName.FAKE, port=port)
 
-    async def drive() -> tuple[int, Health | None]:
+    ready = _ReadyAnnouncement()
+
+    async def drive() -> tuple[int, Health | None, bool]:
         stop = asyncio.Event()
         serving = asyncio.create_task(serve(settings, runtime, stop))
-        health = await asyncio.to_thread(_ready_health, port)
+        announced = await asyncio.to_thread(ready.announced.wait, READY_WITHIN_SECONDS)
+        health = await asyncio.to_thread(_health, port)
         stop.set()
-        return await serving, health
+        return await serving, health, announced
 
-    result, health = asyncio.run(drive())
+    logger = logging.getLogger("video_service.__main__")
+    logger.addHandler(ready)
+    logger.setLevel(logging.INFO)
+    try:
+        result, health, announced = asyncio.run(drive())
+    finally:
+        logger.removeHandler(ready)
+        logger.setLevel(logging.NOTSET)
+
+    assert announced
 
     assert result == 0
     assert health is not None
@@ -135,11 +154,24 @@ def test_the_process_serves_the_configured_looks_and_stops_on_a_signal(
         stdout=subprocess.PIPE,
         text=True,
     ) as process:
+        assert process.stdout is not None
+        watchdog = threading.Timer(READY_WITHIN_SECONDS, process.kill)
+        watchdog.start()
         try:
-            health = _ready_health(port)
+            announced = []
+            for line in process.stdout:
+                announced.append(line)
+                if (
+                    line.startswith("{")
+                    and json.loads(line)["event"] == "process.ready"
+                ):
+                    break
+            health = _health(port)
             process.send_signal(signal.SIGTERM)
-            output, _ = process.communicate(timeout=READY_WITHIN_SECONDS)
+            rest, _ = process.communicate(timeout=READY_WITHIN_SECONDS)
+            output = "".join(announced) + rest
         finally:
+            watchdog.cancel()
             process.kill()
 
     assert health is not None
