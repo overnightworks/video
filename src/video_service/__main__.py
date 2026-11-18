@@ -75,7 +75,7 @@ class _ServiceServer(uvicorn.Server):
         yield
 
 
-def _in_daemon_thread[Result](work: Callable[[], Result]) -> Future[Result]:
+def _in_daemon_thread[Result](work: Callable[[], Result], name: str) -> Future[Result]:
     """Run `work` on a daemon thread, which never holds the process back at its exit."""
     outcome: Future[Result] = Future()
 
@@ -85,13 +85,13 @@ def _in_daemon_thread[Result](work: Callable[[], Result]) -> Future[Result]:
         except Exception as error:  # noqa: BLE001 - handed to the waiting coroutine
             outcome.set_exception(error)
 
-    threading.Thread(target=run, daemon=True, name="load").start()
+    threading.Thread(target=run, daemon=True, name=name).start()
     return outcome
 
 
 async def _load(runtime: Runtime, fatal: asyncio.Event) -> None:
     try:
-        await asyncio.wrap_future(_in_daemon_thread(runtime.load))
+        await asyncio.wrap_future(_in_daemon_thread(runtime.load, "load"))
     except Exception:
         _LOGGER.exception("load.failed")
         fatal.set()
@@ -147,15 +147,17 @@ async def serve(
         if result == 0:
             runtime.begin_drain()
             with contextlib.suppress(TimeoutError):
-                await asyncio.wait_for(
-                    runtime.wait_idle(),
-                    settings.drain_seconds - _cut_seconds(settings.drain_seconds),
-                )
+                async with asyncio.timeout_at(
+                    deadline - _cut_seconds(settings.drain_seconds)
+                ):
+                    await runtime.wait_idle()
         for task in waiting:
             task.cancel()
         server.should_exit = True
         await _within(deadline, server_task)
-    runtime.close()
+    with contextlib.suppress(TimeoutError):
+        async with asyncio.timeout_at(deadline):
+            await asyncio.wrap_future(_in_daemon_thread(runtime.close, "close"))
     _LOGGER.info("process.stopped", extra={"exit_code": result})
     return result
 

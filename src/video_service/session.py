@@ -15,11 +15,8 @@ import asyncio
 import contextlib
 import logging
 import math
-import queue
-import threading
 import time
 from collections import deque
-from concurrent.futures import Future
 from dataclasses import dataclass, field
 from functools import partial
 from typing import TYPE_CHECKING, Final, Never, cast
@@ -51,6 +48,7 @@ from video_client.wire import DRAIN_CLOSE_CODE, RefusalCode
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Iterator
+    from concurrent.futures import Future
 
     from starlette.types import Message
     from starlette.websockets import WebSocket
@@ -146,42 +144,6 @@ class _Schedule:
         return lateness
 
 
-class _ProviderThread:
-    """The daemon thread that makes a session's provider calls one at a time.
-
-    A daemon, so a call that never returns holds back neither the end of its session
-    nor the exit of the process.
-    """
-
-    def __init__(self) -> None:
-        self._jobs: queue.SimpleQueue[Callable[[], None] | None] = queue.SimpleQueue()
-        threading.Thread(target=self._run, daemon=True, name="provider").start()
-
-    def submit[Result](self, work: Callable[[], Result]) -> Future[Result]:
-        """Queue `work`; cancelling its future before its turn drops it."""
-        outcome: Future[Result] = Future()
-        self._jobs.put(partial(self._call, work, outcome))
-        return outcome
-
-    def stop(self) -> None:
-        """End the thread once the calls queued before this one are done."""
-        self._jobs.put(None)
-
-    def _run(self) -> None:
-        while (job := self._jobs.get()) is not None:
-            job()
-
-    def _call[Result](
-        self, work: Callable[[], Result], outcome: Future[Result]
-    ) -> None:
-        if not outcome.set_running_or_notify_cancel():
-            return
-        try:
-            outcome.set_result(work())
-        except Exception as error:  # noqa: BLE001 - handed to the awaiting session
-            outcome.set_exception(error)
-
-
 class Session:
     """The state machine of one accepted session; `run` serves it to its end."""
 
@@ -201,7 +163,6 @@ class Session:
         self._socket = socket
         self._place = place
         self._frame_rate = place.video.frame_rate
-        self._worker = _ProviderThread()
         self._lock = asyncio.Lock()
         self._woken = asyncio.Event()
         self._drained = asyncio.Event()
@@ -229,15 +190,19 @@ class Session:
                 end = await self._serve(trace)
                 await self._finish(step, end)
         finally:
+            closing = self._place.worker.submit(self._place.session.close)
+            self._place.worker.stop()
+            task = asyncio.current_task()
             try:
-                await self._close_provider_session()
+                # Cancelled, the session is cut at the process's exit, which a close
+                # queued behind a stuck call must not hold back.
+                if task is None or not task.cancelling():
+                    await self._close_provider_session(closing)
             finally:
                 self._place.release()
 
-    async def _close_provider_session(self) -> None:
-        """Close the provider session, waiting for it no longer than the lag limit."""
-        closing = self._worker.submit(self._place.session.close)
-        self._worker.stop()
+    async def _close_provider_session(self, closing: Future[None]) -> None:
+        """Wait for the provider session's close no longer than the lag limit."""
         try:
             async with asyncio.timeout(self._lag_limit):
                 # Shielded: the timeout never drops the close still queued.
@@ -306,7 +271,10 @@ class Session:
         finally:
             for task in tasks:
                 task.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
+            # Shielded, so a cancellation of this task that arrives while the steps
+            # wind down raises as itself, which its canceller recognises, and not as
+            # the cancellation of a step.
+            await asyncio.shield(asyncio.gather(*tasks, return_exceptions=True))
 
     async def _until_drained(self) -> _End:
         await self._place.draining.wait()
@@ -507,7 +475,7 @@ class Session:
         """Run `work` on the provider thread; not back within the lag limit, fail."""
         try:
             async with asyncio.timeout(self._lag_limit):
-                return await asyncio.wrap_future(self._worker.submit(work))
+                return await asyncio.wrap_future(self._place.worker.submit(work))
         except TimeoutError:
             raise _Failure(RefusalCode.UNAVAILABLE) from None
 

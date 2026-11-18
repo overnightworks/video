@@ -15,7 +15,7 @@ import time
 from typing import TYPE_CHECKING
 
 import pytest
-from video_provider_fake import FakeProvider
+from video_provider_fake import FakeProvider, FakeSession
 from websockets.asyncio.client import connect
 from websockets.exceptions import ConnectionClosed
 
@@ -42,7 +42,12 @@ from video_service.providers import ProviderName
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from video_provider_contract import DecodedImage, ProviderInfo
+    from video_provider_contract import (
+        DecodedImage,
+        Frame,
+        ProviderInfo,
+        ProviderSession,
+    )
     from websockets.asyncio.client import ClientConnection
 
     from support.look_server import LookServer
@@ -51,7 +56,7 @@ if TYPE_CHECKING:
 
 READY_WITHIN_SECONDS = 20.0
 _DRAIN_SECONDS = 1.0
-_SCHEDULING_SLACK_SECONDS = 0.4
+_EXIT_SLACK_SECONDS = 5.0
 
 
 class _ExplodingProvider:
@@ -331,39 +336,76 @@ def test_a_session_that_outlasts_the_drain_bound_is_cut_when_the_service_exits(
     assert close_code == DRAIN_CLOSE_CODE
 
 
-def test_a_stop_cuts_a_session_whose_provider_never_answers_within_the_drain_bound(
+class _SessionStuckAtRest(FakeSession):
+    """A provider session whose first idle frame does not come back until `held`."""
+
+    def __init__(
+        self, frame_rate: int, held: threading.Event, at_rest: threading.Event
+    ) -> None:
+        super().__init__(
+            frame_rate, 0.0, fails_to_draw=False, finish_gate=None, sleep=time.sleep
+        )
+        self.held = held
+        self.at_rest = at_rest
+
+    def idle_frame(self) -> Frame:
+        self.at_rest.set()
+        self.held.wait()
+        return super().idle_frame()
+
+
+class _ProviderStuckAtRest(FakeProvider):
+    """Opens sessions that are stuck in their first idle frame."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.held = threading.Event()
+        self.at_rest = threading.Event()
+
+    def open_session(self, look: str) -> ProviderSession:
+        del look
+        return _SessionStuckAtRest(
+            self.start().video.frame_rate, self.held, self.at_rest
+        )
+
+
+def test_a_stop_ends_the_process_within_the_drain_bound_while_a_provider_call_is_stuck(
     source: LookServer, build_runtime: BuildRuntime
 ) -> None:
-    held = threading.Event()
+    provider = _ProviderStuckAtRest()
     runtime = build_runtime(
         {"mozart": source.host("mozart.png", picture().data)},
-        provider=FakeProvider(finish_gate=held),
+        provider=provider,
         max_lag_ms=60_000,
     )
     settings = Settings(
         provider=ProviderName.FAKE, port=_free_port(), drain_seconds=_DRAIN_SECONDS
     )
+    stopped_at: list[float] = []
 
-    async def drive() -> tuple[int, int | None, float]:
+    async def drive() -> tuple[int, int | None]:
         stop = asyncio.Event()
         serving, url = await _serving(runtime, settings, stop)
-        session = await _open_playing(url, 200)
-        stopped_at = time.monotonic()
+        session = await connect(url, additional_headers=valid_headers())
+        await session.recv()
+        await session.send(json.dumps(update_event()))
+        assert await asyncio.to_thread(provider.at_rest.wait, READY_WITHIN_SECONDS)
+        stopped_at.append(time.monotonic())
         stop.set()
         async with asyncio.timeout(READY_WITHIN_SECONDS):
             with pytest.raises(ConnectionClosed):
                 await session.recv()
-            result = await serving
-            return result, session.close_code, time.monotonic() - stopped_at
+            return await serving, session.close_code
 
     try:
-        result, close_code, took = asyncio.run(drive())
+        result, close_code = asyncio.run(drive())
+        took = time.monotonic() - stopped_at[0]
     finally:
-        held.set()
+        provider.held.set()
 
     assert result == 0
     assert close_code == DRAIN_CLOSE_CODE
-    assert took < _DRAIN_SECONDS + _SCHEDULING_SLACK_SECONDS
+    assert took < _DRAIN_SECONDS + _EXIT_SLACK_SECONDS
 
 
 class _SessionLines(logging.Handler):

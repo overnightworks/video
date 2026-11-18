@@ -15,9 +15,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import queue
 import threading
 import time
+from concurrent.futures import Future
 from dataclasses import dataclass
+from functools import partial
 from typing import TYPE_CHECKING, Final, Protocol
 
 from logline import StepTimer
@@ -82,6 +85,43 @@ class Pacing:
 REAL_TIME: Final = Pacing()
 
 
+class ProviderThread:
+    """The daemon thread that makes one session's provider calls one at a time.
+
+    A daemon, so a call that never returns holds back neither the end of its session
+    nor the exit of the process.
+    """
+
+    def __init__(self) -> None:
+        """Start the thread, which waits for its first call."""
+        self._jobs: queue.SimpleQueue[Callable[[], None] | None] = queue.SimpleQueue()
+        threading.Thread(target=self._run, daemon=True, name="provider").start()
+
+    def submit[Result](self, work: Callable[[], Result]) -> Future[Result]:
+        """Queue `work`; cancelling its future before its turn drops it."""
+        outcome: Future[Result] = Future()
+        self._jobs.put(partial(self._call, work, outcome))
+        return outcome
+
+    def stop(self) -> None:
+        """End the thread once the calls queued before this one are done."""
+        self._jobs.put(None)
+
+    def _run(self) -> None:
+        while (job := self._jobs.get()) is not None:
+            job()
+
+    def _call[Result](
+        self, work: Callable[[], Result], outcome: Future[Result]
+    ) -> None:
+        if not outcome.set_running_or_notify_cancel():
+            return
+        try:
+            outcome.set_result(work())
+        except Exception as error:  # noqa: BLE001 - handed to the awaiting session
+            outcome.set_exception(error)
+
+
 class Place:
     """A session's place: its provider session, until `release`."""
 
@@ -89,14 +129,16 @@ class Place:
         self,
         *,
         session: ProviderSession,
+        worker: ProviderThread,
         video: VideoFormat,
         limits: SessionLimits,
         pacing: Pacing,
         draining: asyncio.Event,
         release: Callable[[], None],
     ) -> None:
-        """Hold the open provider session and what the service reports for it."""
+        """Hold the open provider session, the thread that calls it, and its format."""
         self.session = session
+        self.worker = worker
         self.video = video
         self.limits = limits
         self.pacing = pacing
@@ -210,13 +252,20 @@ class Runtime:
             admitted = self._admit(look)
         if isinstance(admitted, RefusalCode):
             return admitted
+        # The session's own daemon thread, since a call stuck on the loop's default
+        # executor would hold back the exit of `asyncio.run`.
+        worker = ProviderThread()
         try:
-            session = await asyncio.to_thread(self._provider.open_session, look)
+            session = await asyncio.wrap_future(
+                worker.submit(partial(self._provider.open_session, look))
+            )
         except ProviderFailedError:
+            worker.stop()
             self._give_back()
             return RefusalCode.UNAVAILABLE
         return Place(
             session=session,
+            worker=worker,
             video=admitted,
             limits=self._session_limits,
             pacing=self._pacing,

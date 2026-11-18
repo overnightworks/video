@@ -22,7 +22,7 @@ from video_client.session_wire import (
     ServerEvent,
 )
 from video_client.wire import RefusalCode, VideoFormat
-from video_service.runtime import Pacing, Place, SessionLimits
+from video_service.runtime import Pacing, Place, ProviderThread, SessionLimits
 from video_service.session import Session
 
 if TYPE_CHECKING:
@@ -49,6 +49,7 @@ def _played(
     """The events a session sends while it plays `sentences` over `provider`."""
     place = Place(
         session=provider.open_session("mozart"),
+        worker=ProviderThread(),
         video=VideoFormat(width=256, height=256, frame_rate=25),
         limits=SessionLimits(max_queued_audio_seconds=30, max_lag_ms=max_lag_ms),
         pacing=pacing,
