@@ -12,8 +12,8 @@ const OVER = ["failed", "closed"];
 
 /**
  * Watches a session through the app's own route: a receive-only peer, one POST of its
- * offer to `path`, a `<video>` in `host`. Every failure is `ended`, after which the
- * viewer stays ended; nothing here throws.
+ * offer to `path`, a `<video>` in `host`. Every failure is `ended` and deletes the viewer
+ * the route made, as `stop` does; after it the viewer stays ended; nothing here throws.
  */
 export function watch(
   host: HTMLElement,
@@ -23,7 +23,6 @@ export function watch(
 ): Watching {
   let state: WatchState = "loading";
   let location: string | undefined;
-  let stopped = false;
   let peer: RTCPeerConnection | undefined;
   const stream = new MediaStream();
   const video = document.createElement("video");
@@ -41,16 +40,19 @@ export function watch(
     video.srcObject = null;
     video.remove();
   };
-  const fail = (): void => {
-    end();
-    peer?.close();
-  };
-  // The service keeps a viewer until it is deleted, so a stop deletes what the route made.
+  // The service keeps a viewer until it is deleted, so every end deletes what the route made.
   const release = async (): Promise<void> => {
-    if (!stopped || location === undefined) return;
+    if (state !== "ended" || location === undefined) return;
     const viewer = location;
     location = undefined;
     await fetch(viewer, { method: "DELETE" }).catch(() => undefined);
+  };
+  // Once the route has answered, the peer stays up until the delete has gone out, so the
+  // service ends the viewer by it; before the answer, the peer closes at once and the
+  // delete follows the answer.
+  const finish = (): void => {
+    end();
+    void release().finally(() => peer?.close());
   };
 
   const begin = async (): Promise<void> => {
@@ -63,7 +65,7 @@ export function watch(
     // state follows it only after the ICE consent has lapsed.
     const check = (): void => {
       const dtls = connection.getReceivers()[0]!.transport!.state;
-      if (OVER.includes(connection.connectionState) || OVER.includes(dtls)) fail();
+      if (OVER.includes(connection.connectionState) || OVER.includes(dtls)) finish();
     };
     const gathered = new Promise<void>((resolve) => {
       connection.onicecandidate = ({ candidate }) => {
@@ -90,13 +92,8 @@ export function watch(
   };
 
   show("loading");
-  begin().catch(fail);
+  begin().catch(finish);
   return {
-    stop() {
-      stopped = true;
-      end();
-      // The peer stays up until the delete has gone out, so the service ends the viewer by it.
-      void release().finally(() => peer?.close());
-    },
+    stop: finish,
   };
 }

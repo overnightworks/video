@@ -69,8 +69,11 @@ def test_a_refused_play_reports_ended_and_never_a_muted_picture(
             assert seen.states == ["loading", "ended"]
             assert seen.thrown == []
             assert await page.page.locator("video").count() == 0
+            await service.logged.wait_for("viewer.ended")
+            assert service.viewer_ends() == [ViewerEnd.DELETED]
+            assert (await service.watch(session)).location
 
-    live_in_browser(scenario)
+    live_in_browser(scenario, max_viewers=1)
 
 
 def _refused_with(status: HTTPStatus) -> Callable[[Stage], str]:
@@ -138,7 +141,7 @@ def test_a_route_that_does_not_give_a_viewer_reports_ended_and_throws_nothing(
     live_in_browser(scenario)
 
 
-def test_a_stop_after_the_viewer_ended_deletes_what_the_route_made_and_reports_nothing(
+def test_an_answer_that_does_not_set_deletes_the_viewer_and_a_later_stop_shows_nothing(
     live_in_browser: Callable[..., None], tmp_path: Path
 ) -> None:
     async def scenario(service: Service) -> None:
@@ -146,14 +149,15 @@ def test_a_stop_after_the_viewer_ended_deletes_what_the_route_made_and_reports_n
         async with stage(service, session, tmp_path / "profile") as page:
             await page.begin(_answered_with_what_does_not_set(page))
             await page.until("seen.states.includes('ended')")
+            await service.logged.wait_for("viewer.ended")
+            assert service.viewer_ends() == [ViewerEnd.DELETED]
+            assert (await service.watch(session)).location
 
             await page.page.evaluate("stage.stop()")
-            await service.logged.wait_for("viewer.ended")
-
             assert await page.states() == ["loading", "ended"]
             assert service.viewer_ends() == [ViewerEnd.DELETED]
 
-    live_in_browser(scenario)
+    live_in_browser(scenario, max_viewers=1)
 
 
 def test_stop_sends_the_delete_to_the_routes_location_and_the_service_ends_the_viewer(

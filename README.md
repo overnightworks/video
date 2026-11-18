@@ -133,7 +133,8 @@ pnpm add https://github.com/overnightworks/video/releases/download/vX.Y.Z/overni
 import { watch } from "overnightworks-video-browser";
 
 const watching = watch(host, "/video/viewers", iceServers, (state) => {
-  // "loading", then "drawn" once a frame is painted; "ended" for good on any failure
+  // "loading", then "drawn" once a frame is painted; "ended" for good on any failure,
+  // which deletes the viewer the route made
 });
 watching.stop(); // ends the viewer and deletes it
 ```

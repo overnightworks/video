@@ -223,6 +223,8 @@ route relays to WIRE-9 with the session's tokens. Its contract:
   connection that fails or closes each end the viewer: `show` gets `ended`, once,
   and `watch` throws nothing. `show` otherwise gets `loading`, then `drawn` once a
   frame is painted. A refused `play()` is `ended`, never a muted picture.
+- Every end after the route has answered 201, a failure as much as `stop()`, sends
+  the `DELETE` to its `Location`, so the viewer frees its place without the app.
 - `stop()` sends the `DELETE` and reports `ended` at once. A `stop()` before the POST
   has answered waits for the answer, then deletes: an aborted POST may already have
   made a viewer, which would hold one of the session's `VIDEO_MAX_VIEWERS` places
