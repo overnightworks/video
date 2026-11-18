@@ -58,9 +58,9 @@ flowchart LR
   opens a session on a look, which takes sentence audio and returns the frames each
   call draws; the service fetches, checks and decodes every image, so a provider
   never touches the network or an untrusted file, and it paces the frames, so a
-  provider never keeps time. The package also owns the private frame protocol and the worker loop a
-  provider's script runs, depends on no other package and runs on Python 3.10 and
-  up, since a provider's environment may be older than the service's.
+  provider never keeps time. The package also owns the private frame protocol and
+  the worker loop a provider's script runs, depends on no other package and runs on
+  Python 3.10 and up, since a provider's environment may be older than the service's.
 - `providers/fake`: a provider that holds no model. It draws blank frames on the
   audio's timeline and serves the service's tests and a run from source; its
   `video-fake-worker` runs it as a child like every provider. It is a development
