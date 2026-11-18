@@ -14,7 +14,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-import math
 import time
 from collections import deque
 from dataclasses import dataclass, field
@@ -121,25 +120,23 @@ class _Schedule:
     """When the next frame is due on the audio's clock, and how late the last one left.
 
     Input that arrives after the last frame has left restarts the clock, as the wait
-    for it is the client's, yet keeps the lateness that frame had; input that was
-    already there keeps the lag the frames before it built up.
+    for it is the client's, yet keeps the lateness that frame had; for input that was
+    already there, `max` keeps the earlier due time and with it the lag the frames
+    before it built up.
     """
 
     frame_seconds: float
     due: float = 0.0
-    released_at: float = -math.inf
     behind: float = 0.0
 
     def input_arrived(self, at: float) -> None:
         """Note input that arrived at `at`."""
-        if at > self.released_at:
-            self.due = max(self.due, at - self.behind)
+        self.due = max(self.due, at - self.behind)
 
     def release(self, now: float) -> float:
         """Let the next frame leave at `now`; how late it is, early when negative."""
         lateness = now - self.due
         self.behind = max(lateness, 0.0)
-        self.released_at = max(now, self.due)
         self.due += self.frame_seconds
         return lateness
 
