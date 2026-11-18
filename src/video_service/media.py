@@ -278,8 +278,9 @@ class Media:
     async def close(self) -> None:
         """End every viewer with the session, once their peers have closed."""
         self._closed = True
-        for viewer_id in list(self._viewers):
-            self._end(viewer_id, ViewerEnd.SESSION_ENDED)
+        ending, self._viewers = self._viewers, {}
+        for viewer in ending.values():
+            viewer.end(ViewerEnd.SESSION_ENDED)
         await asyncio.gather(*self._watchers)
 
     def send_idle(self, frame: Frame) -> None:
