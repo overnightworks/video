@@ -130,7 +130,10 @@ def test_an_unauthorized_refusal_challenges_for_a_bearer_token(
 ) -> None:
     denied = denial(client, session_url(), {})
 
-    assert denied.headers["www-authenticate"] == "Bearer"
+    assert (denied.status, denied.headers["www-authenticate"]) == (
+        HTTPStatus.UNAUTHORIZED,
+        "Bearer",
+    )
 
 
 def test_the_tokens_are_checked_before_the_look(client: TestClient) -> None:
@@ -145,9 +148,11 @@ def test_a_look_the_look_file_does_not_hold_is_refused_naming_the_look(
 ) -> None:
     denied = denial(client, session_url(look), valid_headers())
 
-    assert denied.status == HTTPStatus.UNPROCESSABLE_ENTITY
-    assert denied.code is RefusalCode.INVALID_REQUEST
-    assert denied.param == "look"
+    assert (denied.status, denied.code, denied.param) == (
+        HTTPStatus.UNPROCESSABLE_ENTITY,
+        RefusalCode.INVALID_REQUEST,
+        "look",
+    )
 
 
 def test_an_upgrade_without_a_look_is_refused_naming_the_look(
