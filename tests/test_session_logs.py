@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from typing import TYPE_CHECKING
 
 from logline import Outcome
@@ -22,6 +21,7 @@ from support.session_support import (
     sentence_events,
     session_url,
     update_event,
+    written,
 )
 from video_client.session_wire import OutputAudioBufferStarted, SessionCreated
 from video_client.wire import DRAIN_CLOSE_CODE
@@ -45,12 +45,7 @@ def _traceparent(trace_id: str) -> str:
 
 def _written(capsys: pytest.CaptureFixture[str], event: str) -> list[dict]:
     """The JSON lines of `event` written so far."""
-    records = (
-        json.loads(line)
-        for line in capsys.readouterr().out.splitlines()
-        if line.startswith("{")
-    )
-    return [record for record in records if record["event"] == event]
+    return written(capsys.readouterr().out, event)
 
 
 def _play_one_sentence_then_drain(client: TestClient, runtime: Runtime) -> None:

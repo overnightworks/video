@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from concurrent.futures import ThreadPoolExecutor, wait
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Final, NamedTuple
@@ -121,6 +122,12 @@ def next_error(session: WebSocketTestSession) -> ErrorEvent:
         event = receive(session)
         if isinstance(event, ErrorEvent):
             return event
+
+
+def written(output: str, event: str) -> list[dict]:
+    """The JSON lines of `event` in `output`, the service's standard output."""
+    records = (json.loads(line) for line in output.splitlines() if line.startswith("{"))
+    return [record for record in records if record["event"] == event]
 
 
 def close_code(session: WebSocketTestSession) -> int:

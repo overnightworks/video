@@ -23,18 +23,21 @@ if TYPE_CHECKING:
 FRAME_RATE = 25
 
 
-def played(
-    script: list[dict[str, object] | bytes | Step],
-    sentences: int,
+def scripted(
+    script: list[dict[str, object] | bytes | Step], sentences: int
+) -> ScriptedSocket:
+    """A client that opens with a valid update, then plays `script`."""
+    return ScriptedSocket([update_event(), *script], sentences)
+
+
+def play(
+    socket: ScriptedSocket,
     *,
     provider: FakeProvider,
     pacing: Pacing,
     max_lag_ms: int,
 ) -> list[ServerEvent]:
-    """The events a session sends while it plays `sentences` over `provider`.
-
-    The session ends once the script is spent and `sentences` have stopped.
-    """
+    """The events a session sends over `socket` once it has run to its end."""
     place = Place(
         session=provider.open_session("mozart"),
         worker=ProviderThread(),
@@ -46,7 +49,6 @@ def played(
         draining=asyncio.Event(),
         release=lambda: None,
     )
-    socket = ScriptedSocket([update_event(), *script], sentences)
 
     async def run() -> None:
         async with asyncio.timeout(EVENT_WITHIN_SECONDS):
@@ -61,3 +63,23 @@ def played(
 
     asyncio.run(run())
     return socket.sent
+
+
+def played(
+    script: list[dict[str, object] | bytes | Step],
+    sentences: int,
+    *,
+    provider: FakeProvider,
+    pacing: Pacing,
+    max_lag_ms: int,
+) -> list[ServerEvent]:
+    """The events a session sends while it plays `sentences` over `provider`.
+
+    The session ends once the script is spent and `sentences` have stopped.
+    """
+    return play(
+        scripted(script, sentences),
+        provider=provider,
+        pacing=pacing,
+        max_lag_ms=max_lag_ms,
+    )

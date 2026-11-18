@@ -9,14 +9,15 @@ import pytest
 from video_provider_fake import FakeProvider
 
 from support.clock_support import FakeClock
-from support.scripted_session import FRAME_RATE, played
+from support.scripted_session import FRAME_RATE, play, played, scripted
 from support.session_support import EVENT_WITHIN_SECONDS
-from video_client.session_wire import ErrorEvent
+from video_client.session_wire import ErrorEvent, SessionCreated, SessionUpdated
 from video_client.wire import RefusalCode
 from video_service.runtime import Pacing
 
 if TYPE_CHECKING:
     from support.scripted_socket import ScriptedSocket
+    from video_client.session_wire import ServerEvent
 
 _FRAME_SECONDS = 1 / FRAME_RATE
 _IDLE_FRAMES = 6
@@ -65,3 +66,25 @@ def test_a_late_idle_frame_ends_a_silent_session_unavailable() -> None:
     failure = events[-1]
     assert isinstance(failure, ErrorEvent)
     assert failure.error.code is RefusalCode.UNAVAILABLE
+
+
+def test_the_session_is_updated_only_after_the_first_idle_frame_is_drawn() -> None:
+    clock = FakeClock()
+    socket = scripted([], sentences=0)
+    sent_while_drawing: list[ServerEvent] = []
+
+    def hold_the_first_idle_frame(_seconds: float) -> None:
+        if not sent_while_drawing:
+            sent_while_drawing.extend(socket.sent)
+
+    events = play(
+        socket,
+        provider=FakeProvider(
+            idle_render_seconds=_IDLE_RENDER_SECONDS, sleep=hold_the_first_idle_frame
+        ),
+        pacing=clock.pacing,
+        max_lag_ms=_MAX_LAG_MS * 1000,
+    )
+
+    assert [type(event) for event in sent_while_drawing] == [SessionCreated]
+    assert any(isinstance(event, SessionUpdated) for event in events)

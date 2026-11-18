@@ -278,7 +278,7 @@ async def run_live(
     root = logging.getLogger()
     level = root.level
     root.addHandler(logged)
-    root.setLevel(logging.INFO)
+    root.setLevel(min(level, logging.INFO) if level else logging.INFO)
     try:
         async with (
             AsyncExitStack() as stack,
