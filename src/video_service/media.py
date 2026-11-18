@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections import deque
 from dataclasses import dataclass, field
 from enum import StrEnum
 from fractions import Fraction
@@ -107,17 +108,20 @@ class _FeedTrack(MediaStreamTrack):
     def __init__(self, kind: str, depth: int) -> None:
         super().__init__()
         self.kind = kind
-        self._frames: asyncio.Queue[MediaFrame] = asyncio.Queue(maxsize=depth)
+        self._frames: deque[MediaFrame] = deque(maxlen=depth)
+        self._arrived = asyncio.Event()
 
     def feed(self, frame: MediaFrame) -> None:
-        if self._frames.full():
-            self._frames.get_nowait()
-        self._frames.put_nowait(frame)
+        self._frames.append(frame)
+        self._arrived.set()
 
     async def recv(self) -> MediaFrame:
         if self.readyState != "live":
             raise MediaStreamError
-        return await self._frames.get()
+        while not self._frames:
+            self._arrived.clear()
+            await self._arrived.wait()
+        return self._frames.popleft()
 
 
 class _Viewer:
@@ -166,9 +170,8 @@ class _Viewer:
         self._video.feed(video)
 
     def end(self, reason: ViewerEnd) -> None:
-        """End the viewer for `reason`, unless it ended already."""
-        if not self.ended.done():
-            self.ended.set_result(reason)
+        """End the viewer for `reason`; its owner calls this once."""
+        self.ended.set_result(reason)
 
     async def close(self) -> None:
         self._audio.stop()
@@ -209,20 +212,22 @@ class Media:
         self, offer: Offer, on_end: Callable[[ViewerEnd], None]
     ) -> Admission | RefusalCode:
         """Answer `offer` with a new viewer, or refuse; `on_end` hears it end."""
-        if self._closed:
-            return RefusalCode.NOT_FOUND
         if len(self._viewers) >= self._max_viewers:
             return RefusalCode.BUSY
         viewer_id = uuid4().hex
-        viewer = _Viewer(
-            self._configuration(),
-            self._video.frame_rate,
-            lambda: self._end(viewer_id, ViewerEnd.PEER_CLOSED),
-        )
+        try:
+            viewer = _Viewer(
+                self._configuration(),
+                self._video.frame_rate,
+                lambda: self._end(viewer_id, ViewerEnd.PEER_CLOSED),
+            )
+        except ValueError:
+            # aiortc rejects an ICE server it cannot parse when it builds the peer.
+            return RefusalCode.UNAVAILABLE
         self._viewers[viewer_id] = viewer
         try:
             answer = await viewer.answer(offer)
-        except ValueError:
+        except Exception:  # noqa: BLE001 - aiortc fails an offer it cannot take any way
             return await self._refuse(viewer_id, viewer, RefusalCode.INVALID_REQUEST)
         if self._closed:
             return await self._refuse(viewer_id, viewer, RefusalCode.NOT_FOUND)

@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
+import re
 from http import HTTPStatus
 from typing import TYPE_CHECKING
 
 import pytest
+from aiortc import RTCPeerConnection
 
 from support.identity_support import (
     OTHER_APP,
@@ -24,9 +27,10 @@ from video_client.wire import (
     viewer_path,
     viewers_path,
 )
+from video_service import media
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import AsyncIterator, Callable
 
     import httpx2
 
@@ -34,6 +38,7 @@ _TOO_LARGE = b"v=0\r\n" * (MAX_OFFER_BYTES // 3)
 _NOT_SDP = "text/plain"
 _UNKNOWN_SESSION = "0" * 32
 _SPEAKING_MS = 1000
+_CHUNK = b"v=0\r\n" * 256
 
 
 def _refused(response: httpx2.Response) -> tuple[int, RefusalCode]:
@@ -171,7 +176,7 @@ def test_a_body_over_the_cap_is_too_large_even_though_it_does_not_parse(
 
 @pytest.mark.parametrize(
     "kind",
-    ["garbage", "sendrecv", "two video", "no vp8", "no opus"],
+    ["garbage", "unparsable", "sendrecv", "two video", "no vp8", "no opus"],
 )
 def test_an_offer_that_is_not_acceptable_is_invalid_even_at_the_viewer_limit(
     live: Callable[..., None], kind: str
@@ -182,6 +187,7 @@ def test_an_offer_that_is_not_acceptable_is_invalid_even_at_the_viewer_limit(
         assert first.status_code == HTTPStatus.CREATED
         offers = {
             "garbage": "not an offer",
+            "unparsable": "v=0\r\nm=audio\r\n",
             "sendrecv": (await offer_of()).replace("a=recvonly", "a=sendrecv"),
             "two video": await offer_of(video=2),
             "no vp8": await offer_of(video_codecs=["video/H264"]),
@@ -238,5 +244,90 @@ def test_a_viewer_is_ended_by_its_opener_once_and_other_methods_are_not_found(
         assert _refused(again) == (HTTPStatus.NOT_FOUND, RefusalCode.NOT_FOUND)
         assert _refused(patched) == (HTTPStatus.NOT_FOUND, RefusalCode.NOT_FOUND)
         assert _refused(listed) == (HTTPStatus.NOT_FOUND, RefusalCode.NOT_FOUND)
+
+    live(scenario)
+
+
+def test_an_ice_server_the_peer_cannot_parse_leaves_the_session_unavailable(
+    live: Callable[..., None],
+) -> None:
+    async def scenario(service: Service) -> None:
+        session = await service.open_session(update=False)
+        await session.update([{"urls": "not-an-ice-server"}], "all")
+
+        response = await service.post(session, await offer_of())
+
+        assert _refused(response) == (
+            HTTPStatus.SERVICE_UNAVAILABLE,
+            RefusalCode.UNAVAILABLE,
+        )
+
+    live(scenario)
+
+
+@pytest.mark.parametrize("missing", ["a=ice-ufrag:.*\r\n", "a=setup:.*\r\n"])
+def test_an_offer_the_peer_cannot_take_is_invalid_and_leaves_no_viewer_behind(
+    live: Callable[..., None], missing: str
+) -> None:
+    async def scenario(service: Service) -> None:
+        session = await service.open_session()
+        offer = re.sub(missing, "", await offer_of())
+
+        response = await service.post(session, offer)
+
+        assert _refused(response) == (
+            HTTPStatus.UNPROCESSABLE_ENTITY,
+            RefusalCode.INVALID_REQUEST,
+        )
+        assert not service.runtime.session(session.session_id).media.admitted
+
+    live(scenario)
+
+
+def test_a_body_sent_in_chunks_is_cut_off_at_the_cap(live: Callable[..., None]) -> None:
+    async def scenario(service: Service) -> None:
+        session = await service.open_session()
+
+        async def chunks() -> AsyncIterator[bytes]:
+            for _ in range(MAX_OFFER_BYTES // len(_CHUNK) + 1):
+                yield _CHUNK
+
+        response = await service.post(session, chunks())
+
+        assert _refused(response) == (
+            HTTPStatus.CONTENT_TOO_LARGE,
+            RefusalCode.TOO_LARGE,
+        )
+
+    live(scenario)
+
+
+def test_a_viewer_whose_session_ends_while_its_offer_is_negotiated_is_not_found(
+    live: Callable[..., None], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    reached = asyncio.Event()
+    release = asyncio.Event()
+
+    class Negotiating(RTCPeerConnection):
+        async def setRemoteDescription(  # noqa: N802 - aiortc's name
+            self,
+            sessionDescription: object,  # noqa: N803
+        ) -> None:
+            reached.set()
+            await release.wait()
+            await super().setRemoteDescription(sessionDescription)
+
+    monkeypatch.setattr(media, "RTCPeerConnection", Negotiating)
+
+    async def scenario(service: Service) -> None:
+        session = await service.open_session()
+        posting = asyncio.create_task(service.post(session, await offer_of()))
+        await reached.wait()
+
+        await session.socket.close()
+        await service.logged.wait_for("session.ended")
+        release.set()
+
+        assert _refused(await posting) == (HTTPStatus.NOT_FOUND, RefusalCode.NOT_FOUND)
 
     live(scenario)

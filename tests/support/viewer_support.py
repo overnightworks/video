@@ -29,7 +29,7 @@ from video_service.config import Settings
 from video_service.providers import ProviderName
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
+    from collections.abc import AsyncIterator, Awaitable, Callable
 
     from aiortc.mediastreams import MediaStreamTrack
     from websockets.asyncio.client import ClientConnection
@@ -237,7 +237,7 @@ class Service:
     async def post(
         self,
         session: OpenSession | str,
-        offer: str | bytes,
+        offer: str | bytes | AsyncIterator[bytes],
         *,
         headers: dict[str, str] | None = None,
         content_type: str = SDP_CONTENT_TYPE,

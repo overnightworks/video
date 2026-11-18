@@ -417,11 +417,10 @@ class Session:
     async def _play_sentence(self, sentence: _Sentence) -> None:
         with unit_trace(sentence.traceparent):
             chunk = await self._next_chunk(sentence)
-            if chunk is not None:
-                with StepTimer(
-                    "sentence.ended", logger, started_at=sentence.first_audio_at
-                ) as step:
-                    await self._render(sentence, step, chunk)
+            with StepTimer(
+                "sentence.ended", logger, started_at=sentence.first_audio_at
+            ) as step:
+                await self._render(sentence, step, chunk)
             if sentence.dropped:
                 await self._call(self._place.session.clear)
 
@@ -438,7 +437,9 @@ class Session:
             await self._wait()
         return None
 
-    async def _render(self, sentence: _Sentence, step: StepTimer, chunk: bytes) -> None:
+    async def _render(
+        self, sentence: _Sentence, step: StepTimer, chunk: bytes | None
+    ) -> None:
         provider = self._place.session
         while chunk is not None:
             sentence.heard += chunk

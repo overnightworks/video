@@ -166,12 +166,13 @@ the first of:
 3. the caller is not the session's opener, whether another person or another
    registered app: `forbidden`;
 4. the service is draining (WIRE-11), or the session has not yet received its
-   `session.update` and so has no ICE configuration (WIRE-4): `unavailable`;
+   `session.update` and so has no ICE configuration (WIRE-4), or its ICE servers
+   cannot be parsed into a peer: `unavailable`;
 5. `Content-Type` other than `application/sdp`: `invalid_request`;
 6. a body over `MAX_OFFER_BYTES`: `too_large`; the body is never read past the cap;
 7. a body that is not SDP, an offer that is not recvonly, that has other than one
-   audio and one video section, or that offers no Opus or no VP8:
-   `invalid_request`;
+   audio and one video section, that offers no Opus or no VP8, or that the peer
+   cannot take: `invalid_request`;
 8. the session already has `VIDEO_MAX_VIEWERS` viewers: `busy` with `Retry-After: 5`.
 
 `DELETE` on `Location`, with the same two tokens and the same opener check, ends the
