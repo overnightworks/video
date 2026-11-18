@@ -36,6 +36,8 @@ if TYPE_CHECKING:
 _SHORT_MS = 80
 _STALL_SECONDS = 1.0
 _CHUNK_MS = 40
+_PARTIAL_FRAME_MS = 50
+_FRAME_SECONDS = 0.01
 
 
 @pytest.fixture
@@ -130,6 +132,27 @@ def test_a_sentence_whose_audio_comes_late_is_not_a_provider_lag(
 
     assert isinstance(stopped, OutputAudioBufferStopped)
     assert stopped.audio_end_ms == 2 * _CHUNK_MS
+
+
+def test_a_sentence_that_the_client_ends_late_is_not_a_provider_lag(
+    started: Callable[..., Runtime], wire: Callable[[Runtime], TestClient]
+) -> None:
+    clock = FakeClock()
+    provider = FakeProvider(render_seconds=_FRAME_SECONDS, sleep=clock.advance)
+    client = wire(started(provider, max_lag_ms=500, pacing=clock.pacing))
+    with opened(client) as session:
+        start, end = sentence_events("s1")
+        session.send_json(start)
+        session.send_bytes(pcm(_PARTIAL_FRAME_MS))
+        assert isinstance(receive(session), OutputAudioBufferStarted)
+        # The client takes longer to end the sentence than the lag the service bounds.
+        clock.stall(_STALL_SECONDS)
+        session.send_json(end)
+
+        stopped = receive(session)
+
+    assert isinstance(stopped, OutputAudioBufferStopped)
+    assert stopped.audio_end_ms == _PARTIAL_FRAME_MS
 
 
 @pytest.mark.parametrize(

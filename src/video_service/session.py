@@ -106,6 +106,7 @@ class _Sentence:
     chunks: deque[_Chunk] = field(default_factory=deque)
     samples: int = 0
     ended: bool = False
+    ended_at: float = 0.0
     dropped: bool = False
     started: bool = False
     frames_left: int = 0
@@ -337,6 +338,7 @@ class Session:
         if sentence is None or sentence.id != event.sentence or sentence.samples == 0:
             raise _Failure(RefusalCode.INVALID_REQUEST, _PARAM_SENTENCE, event.event_id)
         sentence.ended = True
+        sentence.ended_at = self._place.pacing.now()
         self._open = None
         self._woken.set()
 
@@ -399,6 +401,9 @@ class Session:
                 self._playhead = max(self._playhead, chunk.arrived_at)
                 return chunk.pcm
             if sentence.ended:
+                # The last partial frame cannot come before the client ends the
+                # sentence: the wait for that is no lag of the provider's either.
+                self._playhead = max(self._playhead, sentence.ended_at)
                 return None
             await self._wait()
         return None

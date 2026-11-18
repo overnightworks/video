@@ -137,7 +137,8 @@ real time by more than `VIDEO_MAX_LAG_MS`, or that fails to draw, ends it with
 `unavailable`. The lag is how far a frame is produced after its time on the audio's
 clock, a provider call that has not returned by then included; a client whose audio
 arrives late restarts the clock and is not a lag, while audio already queued keeps
-the lag the frames before it built up. A provider call outside the audio's clock, the first idle frame and
+the lag the frames before it built up, and the time a client takes to end a sentence
+is none either. A provider call outside the audio's clock, the first idle frame and
 the return to idle after a clear, that has not returned within `VIDEO_MAX_LAG_MS` ends
 the session with `unavailable` too. A client that disconnects gets no event.
 
