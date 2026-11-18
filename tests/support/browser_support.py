@@ -60,6 +60,7 @@ class StandInApp:
     alter: Callable[[httpx2.Response], Response] | None = None
     answer_gate: asyncio.Event = field(default_factory=asyncio.Event)
     posted: asyncio.Event = field(default_factory=asyncio.Event)
+    credentials: dict[str, str] = field(default_factory=valid_headers)
 
     def __post_init__(self) -> None:
         """Answer at once until a scenario closes the gate."""
@@ -77,7 +78,9 @@ class StandInApp:
     async def _post(self, request: Request) -> Response:
         if self.refusal is not None:
             return Response(status_code=self.refusal)
-        relayed = await self.service.post(self.session, await request.body())
+        relayed = await self.service.post(
+            self.session, await request.body(), headers=self.credentials
+        )
         self.posted.set()
         await self.answer_gate.wait()
         if self.alter is not None:
@@ -92,7 +95,7 @@ class StandInApp:
     async def _delete(self, request: Request) -> Response:
         relayed = await self.service.http.delete(
             viewer_path(self.session.session_id, request.path_params["viewer"]),
-            headers=valid_headers(),
+            headers=self.credentials,
         )
         return Response(status_code=relayed.status_code)
 
@@ -140,6 +143,15 @@ class Seen:
     heard: list[float]
 
 
+@dataclass(frozen=True)
+class PageRequest:
+    """A request the page sent, as Chromium put it on the wire."""
+
+    url: str
+    headers: dict[str, str]
+    body: bytes
+
+
 @dataclass
 class Stage:
     """A Chromium page on the stand-in app, and the browser around it."""
@@ -149,7 +161,7 @@ class Stage:
     profile: Path
     address: str
     killed: bool = False
-    requests: list[tuple[str, dict[str, str]]] = field(default_factory=list)
+    requests: list[PageRequest] = field(default_factory=list)
 
     async def begin(self, path: str = VIEWERS_PATH) -> None:
         """Have the page watch through `path`, with no ICE server."""
@@ -243,7 +255,12 @@ async def stage(
             page = await context.new_page()
             await coverage.start(page)
             watched = Stage(page, app, profile, address)
-            page.on("request", lambda r: watched.requests.append((r.url, r.headers)))
+            page.on(
+                "request",
+                lambda r: watched.requests.append(
+                    PageRequest(r.url, r.headers, r.post_data_buffer or b"")
+                ),
+            )
             await page.goto(address)
             yield watched
             if not watched.killed:

@@ -224,23 +224,32 @@ def test_no_request_from_the_page_carries_a_token(
     live_in_browser: Callable[..., None], tmp_path: Path
 ) -> None:
     async def scenario(service: Service) -> None:
-        session = await service.open_session()
+        opening = valid_headers()
+        session = await service.open_session(opening)
         async with stage(service, session, tmp_path / "profile") as page:
             await page.begin()
             await page.until("seen.states.includes('drawn')")
             await page.page.evaluate("stage.stop()")
             await service.logged.wait_for("viewer.ended")
 
-            tokens = {name.lower(): value for name, value in valid_headers().items()}
-            assert {url for url, _ in page.requests} >= {
+            used = {
+                name.lower(): {opening[name], page.app.credentials[name]}
+                for name in opening
+            }
+            assert {request.url for request in page.requests} >= {
                 f"{page.address}{VIEWERS_PATH[1:]}"
             }
-            for url, headers in page.requests:
-                assert tokens.keys().isdisjoint(headers), url
+            for request in page.requests:
+                assert used.keys().isdisjoint(request.headers), request.url
                 assert not any(
-                    value in text
-                    for value in tokens.values()
-                    for text in (url, *headers.values())
-                ), url
+                    token.encode() in text
+                    for tokens in used.values()
+                    for token in tokens
+                    for text in (
+                        request.url.encode(),
+                        *(value.encode() for value in request.headers.values()),
+                        request.body,
+                    )
+                ), request.url
 
     live_in_browser(scenario)
