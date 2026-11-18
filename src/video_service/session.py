@@ -412,6 +412,7 @@ class Session:
                     await self._render(sentence, step, chunk)
             if sentence.dropped:
                 await self._call(self._place.session.clear, self._lag_limit)
+                await self._call(self._place.session.idle_frame, self._lag_limit)
 
     async def _next_chunk(self, sentence: _Sentence) -> bytes | None:
         """The next audio of `sentence`, or `None` once it is complete or dropped."""

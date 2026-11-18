@@ -32,6 +32,7 @@ if TYPE_CHECKING:
     from video_service.runtime import Runtime
 
 _LONG_MS = 10_000
+_IDLE_FRAMES_AT_START = 1
 _CLEAR = {"type": "output_audio_buffer.clear"}
 
 
@@ -118,6 +119,7 @@ def test_a_cleared_sentence_never_stops_and_the_face_returns_to_idle(
         OutputAudioBufferStopped,
     ]
     assert provider.sessions[0].clears == 1
+    assert provider.sessions[0].idle_frames == _IDLE_FRAMES_AT_START + 1
 
 
 def test_a_sentence_cleared_before_any_audio_is_dropped_with_nothing_played(
