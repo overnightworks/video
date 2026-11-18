@@ -118,8 +118,10 @@ def live(source: LookServer, build_runtime: BuildRuntime) -> Callable[..., None]
 
 
 @pytest.fixture
-def live_in_browser(live: Callable[..., None]) -> Callable[..., None]:
-    """Run a scenario as `live` does, on a thread of its own.
+def live_in_browser(
+    live: Callable[..., None], make_provider: MakeProvider
+) -> Callable[..., None]:
+    """Run a scenario as `live` does, on a thread of its own, over the fake child.
 
     aioice binds the lock of its mDNS resolver to the first event loop that contends
     for it, on that thread, and Chromium's candidates are mDNS names; a thread for
@@ -127,8 +129,15 @@ def live_in_browser(live: Callable[..., None]) -> Callable[..., None]:
     """
 
     def run(scenario: Callable[[Service], Awaitable[None]], **limits: object) -> None:
+        provider = make_provider(bounds=ProcessBounds())
         with ThreadPoolExecutor(max_workers=1) as thread:
-            thread.submit(live, scenario, **limits).result()
+            thread.submit(
+                live,
+                scenario,
+                provider=provider,
+                provider_failed=lambda: provider.failed,
+                **limits,
+            ).result()
 
     return run
 
