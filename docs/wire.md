@@ -228,7 +228,7 @@ route relays to WIRE-9 with the session's tokens. Its contract:
 - `stop()` sends the `DELETE` and reports `ended` at once. A `stop()` before the POST
   has answered waits for the answer, then deletes: an aborted POST may already have
   made a viewer, which would hold one of the session's `VIDEO_MAX_VIEWERS` places
-  until its ICE fails.
+  until it is deleted or its session ends (WIRE-9).
 - `watch` sets no deadline on the POST: a route that never answers stays `loading`
   until the app calls `stop()`.
 
