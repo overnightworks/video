@@ -151,9 +151,9 @@ nonzero exit. A provider that fails inside a session ends that session
 ## Delivery
 
 CI runs lint, format and the tests with branch coverage over the service, the
-client, the port and the fake provider, the browser package's type check and
+client, the port, the fake provider and the release script, the browser package's type check and
 pack-and-install proof, the browser layer, and then the quality gate, which reads the
-Python coverage and the browser layer's lcov. The release publishes the client
+Python coverage and the browser layer's lcov, to which the browser package's two scripts add theirs. The release publishes the client
 distribution at a tag by Git pin and the browser package as a tarball beside it
 ([README](../README.md#release)). No image exists yet.
 
