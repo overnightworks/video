@@ -113,3 +113,11 @@ def failure_of(event: ServerEvent) -> ErrorEvent:
     """`event`, which must be an `error`."""
     assert isinstance(event, ErrorEvent)
     return event
+
+
+def next_error(session: WebSocketTestSession) -> ErrorEvent:
+    """The `error` event, read past the playback events that came before it."""
+    while True:
+        event = receive(session)
+        if isinstance(event, ErrorEvent):
+            return event

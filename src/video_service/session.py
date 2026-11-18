@@ -377,7 +377,10 @@ class Session:
     ) -> None:
         """Release each frame of `frames` at its time on the audio's clock."""
         limit = self._place.limits.max_lag_ms / _MS_PER_SECOND
-        while await self._call(partial(next, frames, None)) is not None:
+        while (
+            not sentence.dropped
+            and await self._call(partial(next, frames, None)) is not None
+        ):
             due = self._playhead
             behind = time.perf_counter() - due
             if behind > limit:
