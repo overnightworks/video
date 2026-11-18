@@ -15,11 +15,25 @@ from typing import TYPE_CHECKING
 
 import pytest
 from video_provider_fake import FakeProvider
+from websockets.asyncio.client import connect
+from websockets.exceptions import ConnectionClosed
 
-from support.identity_support import callers_over, write_caller_config
+from support.identity_support import callers_over, valid_headers, write_caller_config
 from support.images import picture
+from support.session_support import (
+    pcm,
+    sentence_events,
+    session_url,
+    update_event,
+)
 from video_client.health import fetch_health
-from video_client.wire import Health
+from video_client.session_wire import (
+    OutputAudioBufferStarted,
+    OutputAudioBufferStopped,
+    ServerEvent,
+    parse_server_event,
+)
+from video_client.wire import DRAIN_CLOSE_CODE, Health
 from video_service.__main__ import main, serve
 from video_service.config import Settings
 from video_service.providers import ProviderName
@@ -28,9 +42,11 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from video_provider_contract import DecodedImage, ProviderInfo
+    from websockets.asyncio.client import ClientConnection
 
     from support.look_server import LookServer
     from support.runtime_support import BuildRuntime
+    from video_service.runtime import Runtime
 
 READY_WITHIN_SECONDS = 20.0
 
@@ -230,3 +246,83 @@ def test_a_runtime_closes_its_provider(build_runtime: BuildRuntime) -> None:
     build_runtime({}, provider=provider).close()
 
     assert provider.closed
+
+
+async def _serving(
+    runtime: Runtime, settings: Settings, stop: asyncio.Event
+) -> tuple[asyncio.Task[int], str]:
+    """Start `serve` on a free port and return its task and its session URL."""
+    ready = _ReadyAnnouncement()
+    logger = logging.getLogger("video_service.__main__")
+    logger.addHandler(ready)
+    logger.setLevel(logging.INFO)
+    task = asyncio.create_task(serve(settings, runtime, callers_over(), stop))
+    try:
+        assert await asyncio.to_thread(ready.announced.wait, READY_WITHIN_SECONDS)
+    finally:
+        logger.removeHandler(ready)
+        logger.setLevel(logging.NOTSET)
+    return task, f"ws://127.0.0.1:{settings.port}{session_url()}"
+
+
+async def _open_playing(url: str, milliseconds: int) -> ClientConnection:
+    """Open a session at `url` and speak one sentence; return once it plays."""
+    session = await connect(url, additional_headers=valid_headers())
+    await session.recv()
+    await session.send(json.dumps(update_event()))
+    await session.recv()
+    start, end = sentence_events("playing")
+    await session.send(json.dumps(start))
+    await session.send(pcm(milliseconds))
+    await session.send(json.dumps(end))
+    assert isinstance(
+        parse_server_event(str(await session.recv())), OutputAudioBufferStarted
+    )
+    return session
+
+
+def test_a_stop_lets_the_playing_sentence_finish_then_closes_the_session(
+    source: LookServer, build_runtime: BuildRuntime
+) -> None:
+    runtime = build_runtime({"mozart": source.host("mozart.png", picture().data)})
+    settings = Settings(provider=ProviderName.FAKE, port=_free_port())
+
+    async def drive() -> tuple[int, ServerEvent, int | None]:
+        stop = asyncio.Event()
+        serving, url = await _serving(runtime, settings, stop)
+        session = await _open_playing(url, 200)
+        stop.set()
+        stopped = parse_server_event(str(await session.recv()))
+        with pytest.raises(ConnectionClosed):
+            await session.recv()
+        return await serving, stopped, session.close_code
+
+    result, stopped, close_code = asyncio.run(drive())
+
+    assert result == 0
+    assert isinstance(stopped, OutputAudioBufferStopped)
+    assert close_code == DRAIN_CLOSE_CODE
+
+
+def test_a_session_that_outlasts_the_drain_bound_is_cut_when_the_service_exits(
+    source: LookServer, build_runtime: BuildRuntime
+) -> None:
+    runtime = build_runtime({"mozart": source.host("mozart.png", picture().data)})
+    settings = Settings(
+        provider=ProviderName.FAKE, port=_free_port(), drain_seconds=0.2
+    )
+
+    async def drive() -> tuple[int, int | None]:
+        stop = asyncio.Event()
+        serving, url = await _serving(runtime, settings, stop)
+        session = await _open_playing(url, 20_000)
+        stop.set()
+        async with asyncio.timeout(READY_WITHIN_SECONDS):
+            with pytest.raises(ConnectionClosed):
+                await session.recv()
+            return await serving, session.close_code
+
+    result, close_code = asyncio.run(drive())
+
+    assert result == 0
+    assert close_code == DRAIN_CLOSE_CODE
