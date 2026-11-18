@@ -232,14 +232,16 @@ class Media:
         limit last. `on_end` hears the admitted viewer end.
         """
         viewer_id = uuid4().hex
+        peer = self._peers(self._configuration())
         try:
             viewer = _Viewer(
-                self._peers(self._configuration()),
+                peer,
                 self._video.frame_rate,
                 lambda: self._end(viewer_id, ViewerEnd.PEER_CLOSED),
             )
         except ValueError:
-            # aiortc rejects an ICE server it cannot parse when it builds the peer.
+            # aiortc rejects an ICE server it cannot parse when it adds the tracks.
+            await peer.close()
             return RefusalCode.UNAVAILABLE
         try:
             answer = await self._negotiate(viewer_id, viewer, read_offer)
