@@ -22,14 +22,29 @@ _STUN_CLASS_BITS = 14
 
 
 class _RecordingPeers:
-    """A peer factory that notes the configuration of every peer it builds."""
+    """A peer factory that notes every peer it builds and its configuration."""
 
     def __init__(self) -> None:
         self.configurations: list[RTCConfiguration] = []
+        self.peers: list[RTCPeerConnection] = []
 
     def __call__(self, configuration: RTCConfiguration) -> RTCPeerConnection:
         self.configurations.append(configuration)
-        return RTCPeerConnection(configuration)
+        peer = RTCPeerConnection(configuration)
+        self.peers.append(peer)
+        return peer
+
+    def stun_servers(self) -> list[tuple[str, int] | None]:
+        """The STUN server each peer's ICE connection was handed, `None` for none."""
+        gatherers = [
+            transceiver.sender.transport.transport.iceGatherer
+            for peer in self.peers
+            for transceiver in peer.getTransceivers()
+        ]
+        return [
+            gatherer._connection.stun_server  # noqa: SLF001 - aiortc keeps it private
+            for gatherer in gatherers
+        ]
 
 
 class _StunEgress:
@@ -84,6 +99,8 @@ def test_an_empty_ice_server_list_stays_empty_and_no_stun_packet_leaves_the_host
 
         (configuration,) = peers.configurations
         assert configuration.iceServers == []
+        assert peers.stun_servers()
+        assert set(peers.stun_servers()) == {None}
         assert egress.destinations
         assert set(egress.destinations) <= egress.own_addresses
 
