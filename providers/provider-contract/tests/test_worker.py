@@ -255,7 +255,7 @@ def test_a_request_the_provider_refuses_is_answered_failed_and_the_worker_serves
         ("serves", encode_open(NO_SESSION, "mozart"), None),
         ("serves", encode_prepare("mozart", DecodedImage(11, 10, bytes(330))), None),
         ("serves", ProtocolFrame(FrameKind.PREPARE, b"\x00"), None),
-        ("serves", ProtocolFrame(FrameKind.PREPARE, bytes(100_000)), None),
+        ("serves", ProtocolFrame(FrameKind.PREPARE, bytes(1_000)), None),
     ],
     ids=[
         "a provider that fails to start",
