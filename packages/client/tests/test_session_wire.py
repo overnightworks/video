@@ -11,7 +11,9 @@ from video_client.session_wire import (
     OutputAudioBufferCleared,
     ServerEventError,
     SessionUpdate,
+    client_event_id,
     error_event,
+    is_session_update,
     parse_client_event,
     parse_server_event,
 )
@@ -55,6 +57,22 @@ def test_a_message_that_is_no_event_names_the_field_and_the_client_event(
         parse_client_event(text)
 
     assert (refused.value.param, refused.value.event_id) == (param, event_id)
+
+
+@pytest.mark.parametrize(
+    ("text", "names_update", "event_id"),
+    [
+        ('{"type": "session.update", "event_id": "e1", "session": 1}', True, "e1"),
+        ('{"type": "sentence.start", "event_id": 7}', False, None),
+        ('["session.update"]', False, None),
+        ("not json", False, None),
+    ],
+)
+def test_the_type_and_the_id_of_a_message_are_read_without_validating_the_rest(
+    text: str, *, names_update: bool, event_id: str | None
+) -> None:
+    assert is_session_update(text) is names_update
+    assert client_event_id(text) == event_id
 
 
 def test_an_error_event_carries_the_code_in_the_form_of_the_refusal_list() -> None:

@@ -104,6 +104,14 @@ def test_the_session_takes_the_ice_servers_in_the_webrtc_shape(
         ({"type": "output_audio_buffer.clear"}, "type"),
         ({"type": "no.such.event"}, "type"),
         ({"no": "type"}, "type"),
+        (
+            {
+                "type": "sentence.start",
+                "sentence": "s",
+                "format": {"type": "audio/pcm", "rate": 8000},
+            },
+            "type",
+        ),
         (update_event(extra=1), "extra"),
         (update_event(session={"ice_servers": []}), "session.ice_transport_policy"),
         (
@@ -124,6 +132,7 @@ def test_the_session_takes_the_ice_servers_in_the_webrtc_shape(
         "a-clear",
         "unknown-type",
         "no-type",
+        "a-sentence-that-is-no-valid-sentence",
         "unknown-field",
         "no-policy",
         "bad-policy",
@@ -167,6 +176,21 @@ def test_a_second_session_update_ends_the_session_naming_the_event(
     assert error.error.param == "type"
     assert error.error.event_id == "client-event-7"
     assert error.event_id != error.error.event_id
+
+
+@pytest.mark.parametrize(
+    "second",
+    [update_event(extra=1), update_event(session={"ice_servers": []})],
+    ids=["unknown-field", "no-policy"],
+)
+def test_a_second_session_update_names_its_type_whatever_else_is_wrong_with_it(
+    client: TestClient, second: dict[str, object]
+) -> None:
+    with opened(client) as session:
+        session.send_json(second)
+        error = failure_of(receive(session))
+
+    assert error.error.param == "type"
 
 
 def test_a_session_that_leaves_before_its_first_event_closes_its_provider_session(

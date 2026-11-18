@@ -108,6 +108,7 @@ class OutputAudioBufferClear(_ClientEvent):
 
 
 ClientEvent = SessionUpdate | SentenceStart | SentenceEnd | OutputAudioBufferClear
+_SESSION_UPDATE: Final = "session.update"
 _CLIENT_EVENT: Final = TypeAdapter(Annotated[ClientEvent, Field(discriminator="type")])
 
 
@@ -134,16 +135,27 @@ def parse_client_event(text: str) -> ClientEvent:
             param = "type"
         else:
             param = ".".join(map(str, first["loc"][1:])) or None
-        raise ClientEventError(param, _event_id(text)) from None
+        raise ClientEventError(param, client_event_id(text)) from None
 
 
-def _event_id(text: str) -> str | None:
+def is_session_update(text: str) -> bool:
+    """Whether `text` names itself a `session.update`, whatever else it holds."""
+    event = _members(text)
+    return event.get("type") == _SESSION_UPDATE
+
+
+def client_event_id(text: str) -> str | None:
+    """The `event_id` the client's message carries, valid or not."""
+    event_id = _members(text).get("event_id")
+    return event_id if isinstance(event_id, str) else None
+
+
+def _members(text: str) -> dict[str, object]:
     try:
         event = json.loads(text)
     except ValueError:
-        return None
-    event_id = event.get("event_id") if isinstance(event, dict) else None
-    return event_id if isinstance(event_id, str) else None
+        return {}
+    return event if isinstance(event, dict) else {}
 
 
 def new_event_id() -> str:

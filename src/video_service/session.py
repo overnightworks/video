@@ -21,7 +21,7 @@ from collections import deque
 from concurrent.futures import Future
 from dataclasses import dataclass, field
 from functools import partial
-from typing import TYPE_CHECKING, Final, Never
+from typing import TYPE_CHECKING, Final, Never, cast
 
 from logline import StepTimer, unit_trace
 from starlette.websockets import WebSocketDisconnect
@@ -41,7 +41,9 @@ from video_client.session_wire import (
     SessionInfo,
     SessionUpdate,
     SessionUpdated,
+    client_event_id,
     error_event,
+    is_session_update,
     parse_client_event,
 )
 from video_client.wire import DRAIN_CLOSE_CODE, RefusalCode
@@ -281,10 +283,7 @@ class Session:
         text = message.get("text")
         if text is None:
             raise _Failure(RefusalCode.INVALID_REQUEST, _PARAM_TYPE)
-        event = _parse(text)
-        if not isinstance(event, SessionUpdate):
-            raise _Failure(RefusalCode.INVALID_REQUEST, _PARAM_TYPE, event.event_id)
-        return event
+        return cast("SessionUpdate", _parse(text, session_update=True))
 
     async def _converse(self) -> _End:
         return await self._first_to_end(self._receive(), self._play())
@@ -324,9 +323,7 @@ class Session:
         if text is None:
             self._on_audio(message["bytes"])
             return
-        match _parse(text):
-            case SessionUpdate() as event:
-                raise _Failure(RefusalCode.INVALID_REQUEST, _PARAM_TYPE, event.event_id)
+        match _parse(text, session_update=False):
             case SentenceStart() as event:
                 self._start_sentence(event)
             case SentenceEnd() as event:
@@ -520,9 +517,16 @@ class Session:
             raise _Failure(RefusalCode.UNAVAILABLE) from None
 
 
-def _parse(text: str) -> ClientEvent:
+def _parse(text: str, *, session_update: bool) -> ClientEvent:
+    """The event in `text`, which must be a `session.update` if `session_update` is set.
+
+    The type is judged before any other field, so an event out of order ends the
+    session naming its type, whatever else is wrong with it.
+    """
     if len(text.encode()) > MAX_EVENT_BYTES:
         raise _Failure(RefusalCode.TOO_LARGE)
+    if is_session_update(text) is not session_update:
+        raise _Failure(RefusalCode.INVALID_REQUEST, _PARAM_TYPE, client_event_id(text))
     try:
         return parse_client_event(text)
     except ClientEventError as error:
