@@ -10,6 +10,7 @@ import pytest
 from support.identity_support import valid_headers
 from support.session_support import (
     close_code,
+    connect,
     denial,
     opened,
     pcm,
@@ -21,6 +22,7 @@ from video_client.session_wire import (
     OutputAudioBufferCleared,
     OutputAudioBufferStarted,
     OutputAudioBufferStopped,
+    SessionCreated,
 )
 from video_client.wire import DRAIN_CLOSE_CODE, Health, RefusalCode
 
@@ -58,6 +60,18 @@ def test_an_idle_session_closes_with_service_restart_when_the_drain_begins(
     client: TestClient, runtime: Runtime
 ) -> None:
     with opened(client) as session:
+        _begin_drain(client, runtime)
+
+        code = close_code(session)
+
+    assert code == DRAIN_CLOSE_CODE
+
+
+def test_a_session_still_waiting_for_its_first_event_closes_when_the_drain_begins(
+    client: TestClient, runtime: Runtime
+) -> None:
+    with connect(client) as session:
+        assert isinstance(receive(session), SessionCreated)
         _begin_drain(client, runtime)
 
         code = close_code(session)

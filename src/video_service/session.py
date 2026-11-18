@@ -47,7 +47,7 @@ from video_client.session_wire import (
 from video_client.wire import DRAIN_CLOSE_CODE, RefusalCode
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import Awaitable, Callable, Iterator
 
     from starlette.types import Message
     from starlette.websockets import WebSocket
@@ -246,7 +246,7 @@ class Session:
                     )
                 )
             )
-            update = await self._first_update()
+            update = await self._first_to_end(self._first_update())
             if isinstance(update, _End):
                 return update
             trace.enter_context(unit_trace(update.traceparent))
@@ -287,11 +287,12 @@ class Session:
         return event
 
     async def _converse(self) -> _End:
-        tasks = [
-            asyncio.create_task(self._receive()),
-            asyncio.create_task(self._play()),
-            asyncio.create_task(self._until_drained()),
-        ]
+        return await self._first_to_end(self._receive(), self._play())
+
+    async def _first_to_end[Outcome](self, *work: Awaitable[Outcome]) -> Outcome | _End:
+        """The first of `work` to end, or the drain's end, whichever is first."""
+        tasks = [asyncio.ensure_future(step) for step in work]
+        tasks.append(asyncio.create_task(self._until_drained()))
         try:
             done, _pending = await asyncio.wait(
                 tasks, return_when=asyncio.FIRST_COMPLETED
