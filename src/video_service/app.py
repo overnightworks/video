@@ -42,7 +42,9 @@ def _refused(request: Request, _error: Exception) -> JSONResponse:
 
 def create_app(runtime: Runtime) -> FastAPI:
     """Build the app: health, and no docs, schema or look administration."""
-    app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
+    app = FastAPI(
+        docs_url=None, redoc_url=None, openapi_url=None, redirect_slashes=False
+    )
     app.add_middleware(RequestLineMiddleware)
     app.add_exception_handler(StarletteHTTPException, _refused)
 

@@ -56,6 +56,7 @@ def test_a_version_other_than_the_supported_is_refused_whatever_the_method(
         f"/v{API_VERSION}x/sessions",
         "/",
         "/sessions",
+        "/health/",
         "/health/x",
         "/vx/health",
     ],
