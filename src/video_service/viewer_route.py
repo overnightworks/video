@@ -142,9 +142,9 @@ async def _bounded_body(request: Request) -> bytes | None:
         return None
     body = bytearray()
     async for chunk in request.stream():
-        body += chunk
-        if len(body) > MAX_OFFER_BYTES:
+        if len(body) + len(chunk) > MAX_OFFER_BYTES:
             return None
+        body += chunk
     return bytes(body)
 
 

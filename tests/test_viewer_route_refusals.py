@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import re
+import tracemalloc
 from http import HTTPStatus
 from typing import TYPE_CHECKING
 
 import pytest
 from aiortc import RTCPeerConnection
+from starlette.requests import Request
 
 from support.identity_support import (
     OTHER_APP,
@@ -27,6 +29,7 @@ from video_client.wire import (
     viewer_path,
     viewers_path,
 )
+from video_service.viewer_route import _offer_of
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable
@@ -301,6 +304,28 @@ def test_a_body_sent_in_chunks_is_cut_off_at_the_cap(live: Callable[..., None]) 
         )
 
     live(scenario)
+
+
+def test_a_chunk_past_the_cap_is_refused_before_it_is_copied_into_the_offer() -> None:
+    oversized = b"v" * (64 * MAX_OFFER_BYTES)
+    headers = [(b"content-type", b"application/sdp")]
+
+    async def receive() -> dict[str, object]:
+        return {"type": "http.request", "body": oversized, "more_body": True}
+
+    async def read() -> tuple[object, int]:
+        request = Request({"type": "http", "headers": headers}, receive)
+        tracemalloc.start()
+        try:
+            offer = await _offer_of(request)
+            return offer, tracemalloc.get_traced_memory()[1]
+        finally:
+            tracemalloc.stop()
+
+    offer, peak_bytes = asyncio.run(read())
+
+    assert offer is RefusalCode.TOO_LARGE
+    assert peak_bytes < len(oversized)
 
 
 def test_a_viewer_whose_session_ends_while_its_offer_is_negotiated_is_not_found(
