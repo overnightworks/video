@@ -71,8 +71,9 @@ refused, in this order and with the refusal's HTTP status, for the first of:
 2. `look` is absent, does not match `^[A-Za-z0-9._-]{1,64}$` or is not in the look
    file: `invalid_request`, `param` `look`;
 3. the provider is not ready, the look is not ready or the service is draining
-   (WIRE-11), or the provider cannot open the session: `unavailable`;
-4. `VIDEO_MAX_SESSIONS` sessions are open: `busy` with `Retry-After: 5`.
+   (WIRE-11): `unavailable`;
+4. `VIDEO_MAX_SESSIONS` sessions are open: `busy` with `Retry-After: 5`;
+5. the provider cannot open the session: `unavailable`.
 
 A session holds its place until it ends, whoever ends it. Every refusal writes a
 `session.ended` line with outcome `refused` and its code as `reason`.
