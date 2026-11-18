@@ -231,6 +231,9 @@ route relays to WIRE-9 with the session's tokens. Its contract:
   until it is deleted or its session ends (WIRE-9).
 - `watch` sets no deadline on the POST: a route that never answers stays `loading`
   until the app calls `stop()`.
+- `watch` waits for ICE gathering to complete before the POST, with no deadline
+  either: with STUN or TURN servers that do not answer, the page stays `loading`
+  until the browser gives up on them, about 40 s in Chromium.
 
 ## Drain
 
