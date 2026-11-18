@@ -1,0 +1,15 @@
+[build-system]
+requires = ["hatchling==1.33.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "overnightworks-video-client"
+version = "0.1.0"
+description = "The wire between an app and the video service: the refusals, the health answer and the bounded health fetch."
+requires-python = ">=3.14"
+dependencies = [
+    "pydantic>=2.13,<3",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/video_client"]
