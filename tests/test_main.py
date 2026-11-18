@@ -11,6 +11,7 @@ import socket
 import subprocess
 import sys
 import threading
+import time
 from typing import TYPE_CHECKING
 
 import pytest
@@ -49,6 +50,8 @@ if TYPE_CHECKING:
     from video_service.runtime import Runtime
 
 READY_WITHIN_SECONDS = 20.0
+_DRAIN_SECONDS = 1.0
+_SCHEDULING_SLACK_SECONDS = 0.4
 
 
 class _ExplodingProvider:
@@ -328,7 +331,7 @@ def test_a_session_that_outlasts_the_drain_bound_is_cut_when_the_service_exits(
     assert close_code == DRAIN_CLOSE_CODE
 
 
-def test_a_stop_cuts_a_session_whose_provider_never_answers(
+def test_a_stop_cuts_a_session_whose_provider_never_answers_within_the_drain_bound(
     source: LookServer, build_runtime: BuildRuntime
 ) -> None:
     held = threading.Event()
@@ -338,26 +341,29 @@ def test_a_stop_cuts_a_session_whose_provider_never_answers(
         max_lag_ms=60_000,
     )
     settings = Settings(
-        provider=ProviderName.FAKE, port=_free_port(), drain_seconds=0.2
+        provider=ProviderName.FAKE, port=_free_port(), drain_seconds=_DRAIN_SECONDS
     )
 
-    async def drive() -> tuple[int, int | None]:
+    async def drive() -> tuple[int, int | None, float]:
         stop = asyncio.Event()
         serving, url = await _serving(runtime, settings, stop)
         session = await _open_playing(url, 200)
+        stopped_at = time.monotonic()
         stop.set()
         async with asyncio.timeout(READY_WITHIN_SECONDS):
             with pytest.raises(ConnectionClosed):
                 await session.recv()
-            return await serving, session.close_code
+            result = await serving
+            return result, session.close_code, time.monotonic() - stopped_at
 
     try:
-        result, close_code = asyncio.run(drive())
+        result, close_code, took = asyncio.run(drive())
     finally:
         held.set()
 
     assert result == 0
     assert close_code == DRAIN_CLOSE_CODE
+    assert took < _DRAIN_SECONDS + _SCHEDULING_SLACK_SECONDS
 
 
 class _SessionLines(logging.Handler):

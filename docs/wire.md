@@ -156,9 +156,9 @@ session finish, then closes the session with `1012` (Service Restart,
 `DRAIN_CLOSE_CODE` in `video_client.wire`) and no `error`. A sentence still queued is
 dropped without events; a session with no sentence playing closes at once; a clear
 during the drain ends the session after its `cleared`. The process exits when the
-last session has ended, or after `VIDEO_DRAIN_SECONDS`, when the sessions still open,
-one stuck in a provider call included, are closed with `1012` by the stop, which ends
-them within a second.
+last session has ended, or `VIDEO_DRAIN_SECONDS` after the signal at the latest; the
+sessions still open then, one stuck in a provider call included, are closed with
+`1012` by the stop, which starts at most one second before that time.
 
 ## Health
 
@@ -205,4 +205,4 @@ The looks are what the operator's look file names.
 | `VIDEO_MAX_SESSIONS` | `1` | `sessions.limit`, at least 1; one more is `busy` (WIRE-3). |
 | `VIDEO_MAX_QUEUED_AUDIO_SECONDS` | `30` | The most queued audio a session holds, above 0 (WIRE-5). |
 | `VIDEO_MAX_LAG_MS` | `500` | The most a frame may be late, and the longest a provider call outside the audio's clock may take, before the session ends `unavailable`, at least 1 (WIRE-7). |
-| `VIDEO_DRAIN_SECONDS` | `30` | The longest the stop waits for the open sessions, above 0 (WIRE-11). |
+| `VIDEO_DRAIN_SECONDS` | `30` | The longest from the stop to the exit, the cut of the sessions left included, above 0 (WIRE-11). |

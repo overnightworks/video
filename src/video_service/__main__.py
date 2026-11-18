@@ -25,7 +25,8 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
 
 _SERVICE_NAME: Final = "video"
-_CUT_SECONDS: Final = 1
+# The most of the drain kept for closing the sessions left when it runs out.
+_CUT_SECONDS: Final = 1.0
 _CONFIG_FILE_REQUIRED: Final = "VIDEO_CONFIG_FILE is required: it names the callers"
 _LOGGER = logging.getLogger(__name__)
 
@@ -98,14 +99,28 @@ async def _load(runtime: Runtime, fatal: asyncio.Event) -> None:
         _LOGGER.info("process.ready")
 
 
+def _cut_seconds(drain_seconds: float) -> float:
+    """The time of the drain kept for the cut of the sessions left."""
+    return min(_CUT_SECONDS, drain_seconds / 2)
+
+
+async def _within(deadline: float, server_task: asyncio.Task[None]) -> None:
+    """Wait for the server's shutdown until `deadline`, then cancel it."""
+    left = max(deadline - asyncio.get_running_loop().time(), 0.0)
+    _done, pending = await asyncio.wait({server_task}, timeout=left)
+    for task in pending:
+        task.cancel()
+    await asyncio.gather(server_task, return_exceptions=True)
+
+
 async def serve(
     settings: Settings, runtime: Runtime, callers: VideoCallers, stop: asyncio.Event
 ) -> int:
     """Serve health at once, load in the background, and drain when `stop` is set.
 
     A stop drains first: the service reports not ready, refuses new sessions and
-    waits up to `VIDEO_DRAIN_SECONDS` for the open ones to end, then cuts those left,
-    a session stuck in a provider call included, before it exits.
+    waits for the open ones to end, then cuts those left, a session stuck in a provider
+    call included, and exits, the whole within `VIDEO_DRAIN_SECONDS` of the stop.
     Returns 0 after a stop, and 1 when the listener, the server or the load fails.
     """
     try:
@@ -114,12 +129,7 @@ async def serve(
         _LOGGER.exception("listener.failed", extra={"port": settings.port})
         return 1
     server = _ServiceServer(
-        uvicorn.Config(
-            create_app(runtime, callers),
-            log_config=None,
-            # The cut of the sessions left after the drain ends within a second.
-            timeout_graceful_shutdown=_CUT_SECONDS,
-        )
+        uvicorn.Config(create_app(runtime, callers), log_config=None)
     )
     fatal = asyncio.Event()
     with listener:
@@ -133,14 +143,18 @@ async def serve(
             {server_task, *waiting[1:]}, return_when=asyncio.FIRST_COMPLETED
         )
         result = 0 if waiting[1] in done else 1
+        deadline = asyncio.get_running_loop().time() + settings.drain_seconds
         if result == 0:
             runtime.begin_drain()
             with contextlib.suppress(TimeoutError):
-                await asyncio.wait_for(runtime.wait_idle(), settings.drain_seconds)
+                await asyncio.wait_for(
+                    runtime.wait_idle(),
+                    settings.drain_seconds - _cut_seconds(settings.drain_seconds),
+                )
         for task in waiting:
             task.cancel()
         server.should_exit = True
-        await asyncio.gather(server_task, return_exceptions=True)
+        await _within(deadline, server_task)
     runtime.close()
     _LOGGER.info("process.stopped", extra={"exit_code": result})
     return result

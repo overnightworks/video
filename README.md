@@ -25,8 +25,9 @@ curl http://127.0.0.1:8080/health
 
 The service listens on `127.0.0.1:8080` and answers health at once; `ready` turns
 true when the start is over. On SIGINT or SIGTERM it drains: it reports not ready,
-refuses new sessions, lets each playing sentence finish and exits, after
-`VIDEO_DRAIN_SECONDS` and one second to cut the sessions left at the latest.
+refuses new sessions, lets each playing sentence finish and exits, at the latest
+`VIDEO_DRAIN_SECONDS` after the signal, the last second of it spent cutting the
+sessions left.
 
 ## Callers
 
@@ -96,7 +97,7 @@ holds the settings that shape the wire.
 | `VIDEO_MAX_SESSIONS` | `1` | The sessions the service admits, reported in health. |
 | `VIDEO_MAX_QUEUED_AUDIO_SECONDS` | `30` | The most audio a session may queue. |
 | `VIDEO_MAX_LAG_MS` | `500` | The most a frame may be late, and the longest a provider call outside the audio's clock may take, before the session ends. |
-| `VIDEO_DRAIN_SECONDS` | `30` | The longest the stop waits for open sessions. |
+| `VIDEO_DRAIN_SECONDS` | `30` | The longest from the stop to the exit, the cut of the sessions left included. |
 
 The `fake` provider is a development dependency (`uv sync --all-groups` installs
 it) that no image installs.
