@@ -1,0 +1,8 @@
+claim_id = "c11c4036c180461d811b16423369cfa3"
+agent = "Claude 21fd863e-01fb-442b-a634-e988b43fd9d7"
+role = "builder"
+base = "9868bd47f9a4c45b54661c4c6f4ee680802991af"
+branch = "claude/issue-6-p1b-sessions"
+scope = ["docs", "packages/client", "src/video_service", "tests"]
+opened_commit = "34a522389f1a04cd2057c86c8fb16b6e32137000"
+whole_reason = "P1b is the session state machine and its wire (callers, start, sentences, clear, playback, drain): one coherent slice whose service code, client types and wire document change together and cannot be proven apart."
