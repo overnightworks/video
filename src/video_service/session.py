@@ -66,7 +66,7 @@ _PARAM_SENTENCE: Final = "sentence"
 _PARAM_AUDIO: Final = "audio"
 
 
-class _Failure(Exception):  # noqa: N818 - an ending of the session, not a defect
+class _FailureError(Exception):
     """The session ends with an `error` event."""
 
     def __init__(
@@ -86,7 +86,7 @@ class _End:
     """How a session ended: the close it sends, if the client is still there."""
 
     close_code: int | None
-    failure: _Failure | None = None
+    failure: _FailureError | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -224,10 +224,10 @@ class Session:
             await self._call(self._place.session.idle_frame)
             await self._send(SessionUpdated())
             return await self._converse()
-        except _Failure as failure:
+        except _FailureError as failure:
             return _End(_NORMAL_CLOSE, failure)
         except ProviderFailedError:
-            return _End(_NORMAL_CLOSE, _Failure(RefusalCode.UNAVAILABLE))
+            return _End(_NORMAL_CLOSE, _FailureError(RefusalCode.UNAVAILABLE))
 
     async def _finish(self, step: StepTimer, end: _End) -> None:
         failure = end.failure
@@ -250,7 +250,7 @@ class Session:
             return _End(None)
         text = message.get("text")
         if text is None:
-            raise _Failure(RefusalCode.INVALID_REQUEST, _PARAM_TYPE)
+            raise _FailureError(RefusalCode.INVALID_REQUEST, _PARAM_TYPE)
         return cast("SessionUpdate", _parse(text, session_update=True))
 
     async def _converse(self) -> _End:
@@ -304,9 +304,13 @@ class Session:
 
     def _start_sentence(self, event: SentenceStart) -> None:
         if self._open is not None:
-            raise _Failure(RefusalCode.INVALID_REQUEST, _PARAM_TYPE, event.event_id)
+            raise _FailureError(
+                RefusalCode.INVALID_REQUEST, _PARAM_TYPE, event.event_id
+            )
         if any(queued.id == event.sentence for queued in self._queue):
-            raise _Failure(RefusalCode.INVALID_REQUEST, _PARAM_SENTENCE, event.event_id)
+            raise _FailureError(
+                RefusalCode.INVALID_REQUEST, _PARAM_SENTENCE, event.event_id
+            )
         sentence = _Sentence(event.sentence, event.format.rate, event.traceparent)
         self._queue.append(sentence)
         self._open = sentence
@@ -316,20 +320,22 @@ class Session:
     def _on_audio(self, pcm: bytes) -> None:
         sentence = self._open
         if sentence is None or len(pcm) % _BYTES_PER_SAMPLE:
-            raise _Failure(RefusalCode.INVALID_REQUEST, _PARAM_AUDIO)
+            raise _FailureError(RefusalCode.INVALID_REQUEST, _PARAM_AUDIO)
         if sentence.samples == 0:
             # logline reads the start of the sentence's line off its own clock.
             sentence.first_audio_at = time.perf_counter()
         sentence.chunks.append(_Chunk(self._place.pacing.now(), pcm))
         sentence.samples += len(pcm) // _BYTES_PER_SAMPLE
         if self._queued_seconds() > self._place.limits.max_queued_audio_seconds:
-            raise _Failure(RefusalCode.TOO_LARGE)
+            raise _FailureError(RefusalCode.TOO_LARGE)
         self._woken.set()
 
     def _end_sentence(self, event: SentenceEnd) -> None:
         sentence = self._open
         if sentence is None or sentence.id != event.sentence or sentence.samples == 0:
-            raise _Failure(RefusalCode.INVALID_REQUEST, _PARAM_SENTENCE, event.event_id)
+            raise _FailureError(
+                RefusalCode.INVALID_REQUEST, _PARAM_SENTENCE, event.event_id
+            )
         sentence.ended = True
         sentence.ended_at = self._place.pacing.now()
         self._open = None
@@ -426,7 +432,7 @@ class Session:
         ):
             lateness = self._schedule.release(self._place.pacing.now())
             if lateness > self._lag_limit:
-                raise _Failure(RefusalCode.UNAVAILABLE)
+                raise _FailureError(RefusalCode.UNAVAILABLE)
             if lateness > 0:
                 sentence.late_frames += 1
             else:
@@ -474,7 +480,7 @@ class Session:
             async with asyncio.timeout(self._lag_limit):
                 return await asyncio.wrap_future(self._place.worker.submit(work))
         except TimeoutError:
-            raise _Failure(RefusalCode.UNAVAILABLE) from None
+            raise _FailureError(RefusalCode.UNAVAILABLE) from None
 
 
 def _parse(text: str, *, session_update: bool) -> ClientEvent:
@@ -484,12 +490,14 @@ def _parse(text: str, *, session_update: bool) -> ClientEvent:
     session naming its type, whatever else is wrong with it.
     """
     if len(text.encode()) > MAX_EVENT_BYTES:
-        raise _Failure(RefusalCode.TOO_LARGE)
+        raise _FailureError(RefusalCode.TOO_LARGE)
     if is_session_update(text) is not session_update:
-        raise _Failure(RefusalCode.INVALID_REQUEST, _PARAM_TYPE, client_event_id(text))
+        raise _FailureError(
+            RefusalCode.INVALID_REQUEST, _PARAM_TYPE, client_event_id(text)
+        )
     try:
         return parse_client_event(text)
     except ClientEventError as error:
-        raise _Failure(
+        raise _FailureError(
             RefusalCode.INVALID_REQUEST, error.param, error.event_id
         ) from None
