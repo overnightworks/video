@@ -1,13 +1,14 @@
 """One session: the sentences a client queues, their playback in order, and the clear.
 
-The receive loop takes the client's events and audio; the player plays the queued
-sentences one after another on the frame clock, and draws the face at rest on the
-same clock while none has audio to play; the drain watcher ends the session
-once a drain has let the playing sentence finish. The first of them to end decides
-how the session ends. Every call into the provider session runs on one thread of
-the session's own, so the provider is never entered twice and a call that a clear
-or an ending abandons still finishes before the next one starts. A call that has
-not returned within the lag limit ends the session `unavailable`.
+The receive loop takes the client's events and audio; the producer draws frames
+ahead, one provider call at a time, up to what the lag limit allows; the pacer lets
+each frame leave at its time on the frame clock, the face at rest included, so the
+stream never stops while a chunked provider renders; the drain watcher ends the
+session once a drain has let the playing sentence finish. The first of them to end
+decides how the session ends. Every call into the provider session runs on one
+thread of the session's own, so the provider is never entered twice and a call that
+a clear or an ending abandons still finishes before the next one starts. A call that
+has not returned within the lag limit ends the session `unavailable`.
 """
 
 from __future__ import annotations
@@ -48,7 +49,7 @@ from video_client.wire import DRAIN_CLOSE_CODE, RefusalCode
 from video_service.media import Media
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable, Iterator
+    from collections.abc import Awaitable, Callable, Iterable
     from concurrent.futures import Future
 
     from starlette.types import Message
@@ -91,10 +92,16 @@ class _End:
     failure: _FailureError | None = None
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class _Chunk:
     arrived_at: float
-    pcm: bytes
+    pcm: memoryview
+
+    def take(self, size: int) -> bytes:
+        """The first `size` bytes of the audio left, which they leave."""
+        taken = bytes(self.pcm[:size])
+        self.pcm = self.pcm[size:]
+        return taken
 
 
 @dataclass(slots=True)
@@ -102,12 +109,15 @@ class _Sentence:
     id: str
     rate: int
     traceparent: str | None
+    generation: int
     first_audio_at: float = 0.0
     chunks: deque[_Chunk] = field(default_factory=deque)
     samples: int = 0
     ended: bool = False
     ended_at: float = 0.0
-    dropped: bool = False
+    step: StepTimer | None = None
+    frames_drawn: int = 0
+    drawn: bool = False
     started: bool = False
     frames_left: int = 0
     late_frames: int = 0
@@ -117,6 +127,19 @@ class _Sentence:
     def audio_ms(self) -> int:
         return self.samples * _MS_PER_SECOND // self.rate
 
+    @property
+    def awaiting_audio(self) -> bool:
+        """Whether no audio waits to be fed and the client may still send some."""
+        return not self.chunks and not self.ended
+
+    def take_audio(self, frame_rate: int) -> tuple[float, bytes]:
+        """The next frame period of audio at most, and when its message arrived."""
+        chunk = self.chunks[0]
+        pcm = chunk.take(max(1, self.rate // frame_rate) * _BYTES_PER_SAMPLE)
+        if not chunk.pcm:
+            self.chunks.popleft()
+        return chunk.arrived_at, pcm
+
     def take_period(self, frame_rate: int) -> bytes:
         """The audio of the next frame to leave, off the audio the provider heard."""
         first = self.frames_left * self.rate // frame_rate
@@ -125,6 +148,23 @@ class _Sentence:
         period = bytes(self.heard[:size])
         del self.heard[:size]
         return period
+
+
+@dataclass(frozen=True, slots=True)
+class _Drawn:
+    """A frame the provider drew, until the pacer lets it leave or a clear drops it."""
+
+    generation: int
+    frame: Frame
+    sentence: _Sentence | None
+    arrived_at: float
+
+
+@dataclass(frozen=True, slots=True)
+class _Finished:
+    """The mark behind a sentence's last frame."""
+
+    sentence: _Sentence
 
 
 @dataclass(slots=True)
@@ -151,6 +191,10 @@ class _Schedule:
         self.behind = max(lateness, 0.0)
         self.due += self.frame_seconds
         return lateness
+
+    def give_back(self) -> None:
+        """Take back the frame period of a frame that never left."""
+        self.due -= self.frame_seconds
 
 
 class Session:
@@ -184,6 +228,12 @@ class Session:
         self._playing: _Sentence | None = None
         self._draining = False
         self._schedule = _Schedule(1 / self._frame_rate)
+        self._look_ahead = max(1, self._lag_ms * self._frame_rate // _MS_PER_SECOND)
+        self._generation = 0
+        self._input_at = 0.0
+        self._buffer: deque[_Drawn | _Finished] = deque()
+        self._drawn = asyncio.Event()
+        self._fed_generation: int | None = None
         self._sentence_count = 0
         self._media = Media(place.video, place.limits.max_viewers, place.peers)
         self.opener = opener
@@ -245,7 +295,7 @@ class Session:
                 return update
             trace.enter_context(unit_trace(update.traceparent))
             self._media.configure(update.session)
-            await self._idle_step()
+            await self._first_idle_frame()
             await self._send(SessionUpdated())
             return await self._converse()
         except _FailureError as failure:
@@ -278,7 +328,13 @@ class Session:
         return cast("SessionUpdate", _parse(text, session_update=True))
 
     async def _converse(self) -> _End:
-        return await self._first_to_end(self._receive(), self._play())
+        try:
+            return await self._first_to_end(
+                self._receive(), self._produce(), self._pace()
+            )
+        finally:
+            for sentence in self._queue:
+                self._end_line(sentence, cancelled=True)
 
     async def _first_to_end[Outcome](self, *work: Awaitable[Outcome]) -> Outcome | _End:
         """The first of `work` to end, or the drain's end, whichever is first."""
@@ -335,7 +391,9 @@ class Session:
             raise _FailureError(
                 RefusalCode.INVALID_REQUEST, _PARAM_SENTENCE, event.event_id
             )
-        sentence = _Sentence(event.sentence, event.format.rate, event.traceparent)
+        sentence = _Sentence(
+            event.sentence, event.format.rate, event.traceparent, self._generation
+        )
         self._queue.append(sentence)
         self._open = sentence
         self._sentence_count += 1
@@ -348,7 +406,8 @@ class Session:
         if sentence.samples == 0:
             # logline reads the start of the sentence's line off its own clock.
             sentence.first_audio_at = time.perf_counter()
-        sentence.chunks.append(_Chunk(self._place.pacing.now(), pcm))
+        self._input_at = self._place.pacing.now()
+        sentence.chunks.append(_Chunk(self._input_at, memoryview(pcm)))
         sentence.samples += len(pcm) // _BYTES_PER_SAMPLE
         if self._queued_seconds() > self._place.limits.max_queued_audio_seconds:
             raise _FailureError(RefusalCode.TOO_LARGE)
@@ -360,8 +419,8 @@ class Session:
             raise _FailureError(
                 RefusalCode.INVALID_REQUEST, _PARAM_SENTENCE, event.event_id
             )
+        self._input_at = sentence.ended_at = self._place.pacing.now()
         sentence.ended = True
-        sentence.ended_at = self._place.pacing.now()
         self._open = None
         self._woken.set()
 
@@ -374,11 +433,13 @@ class Session:
         async with self._lock:
             dropped = list(self._queue)
             self._queue.clear()
+            self._buffer.clear()
+            self._generation += 1
+            self._input_at = self._place.pacing.now()
             self._open = None
             self._playing = None
             for sentence in dropped:
-                sentence.dropped = True
-            for sentence in dropped:
+                self._end_line(sentence, cancelled=True)
                 await self._send(
                     OutputAudioBufferCleared(
                         response_id=sentence.id, audio_end_ms=self._played_ms(sentence)
@@ -392,21 +453,13 @@ class Session:
         frames_ms = sentence.frames_left * _MS_PER_SECOND // self._frame_rate
         return min(frames_ms, sentence.audio_ms)
 
-    async def _play(self) -> Never:
-        while True:
-            if self._audible():
-                await self._play_sentence(self._queue[0])
-            else:
-                await self._idle_step()
+    async def _first_idle_frame(self) -> None:
+        """Draw the first frame of the face at rest; it starts the frame clock.
 
-    def _audible(self) -> bool:
-        """Whether the first queued sentence has audio to play."""
-        return bool(self._queue) and bool(self._queue[0].chunks)
-
-    async def _idle_step(self) -> None:
-        """Draw the face at rest and let the frame leave at its time on the clock."""
-        self._schedule.input_arrived(self._place.pacing.now())
+        Its render is no lag, which the call's own bound holds to `VIDEO_MAX_LAG_MS`.
+        """
         frame = await self._call(self._place.session.idle_frame)
+        self._schedule.input_arrived(self._place.pacing.now())
         await self._hold_to_due()
         self._media.send_idle(frame)
 
@@ -414,69 +467,99 @@ class Session:
         await self._woken.wait()
         self._woken.clear()
 
-    async def _play_sentence(self, sentence: _Sentence) -> None:
-        with unit_trace(sentence.traceparent):
-            chunk = await self._next_chunk(sentence)
-            with StepTimer(
-                "sentence.ended", logger, started_at=sentence.first_audio_at
-            ) as step:
-                await self._render(sentence, step, chunk)
-            if sentence.dropped:
-                await self._call(self._place.session.clear)
-
-    async def _next_chunk(self, sentence: _Sentence) -> bytes | None:
-        """The next audio of `sentence`, or `None` once it is complete or dropped.
-
-        Until the sentence's first frame has left, the face at rest goes on while
-        its audio is awaited.
-        """
-        while not sentence.dropped:
-            if sentence.chunks:
-                chunk = sentence.chunks.popleft()
-                self._schedule.input_arrived(chunk.arrived_at)
-                return chunk.pcm
-            if sentence.ended:
-                self._schedule.input_arrived(sentence.ended_at)
-                return None
-            if sentence.started:
+    async def _produce(self) -> Never:
+        """Draw frames ahead of the pacer, the provider called one call at a time."""
+        while True:
+            await self._forget_cleared()
+            draw = self._next_draw()
+            if draw is None:
                 await self._wait()
             else:
-                await self._idle_step()
-        return None
+                await draw()
 
-    async def _render(
-        self, sentence: _Sentence, step: StepTimer, chunk: bytes | None
-    ) -> None:
-        provider = self._place.session
-        while chunk is not None:
-            sentence.heard += chunk
-            frames = await self._call(partial(provider.feed, chunk, sentence.rate))
-            await self._send_frames(sentence, step, frames)
-            chunk = await self._next_chunk(sentence)
-        if not sentence.dropped:
-            await self._send_frames(
-                sentence, step, await self._call(provider.finish_sentence)
-            )
-            await self._stop(sentence)
-        step.add(
-            audio_ms=sentence.audio_ms,
-            frame_count=sentence.frames_left,
-            late_frame_count=sentence.late_frames,
+    async def _forget_cleared(self) -> None:
+        """Have the provider drop the audio of a cleared sentence, after its call."""
+        fed = self._fed_generation
+        if fed is not None and fed != self._generation:
+            await self._call(self._place.session.clear)
+            self._fed_generation = None
+
+    def _next_draw(self) -> Callable[[], Awaitable[None]] | None:
+        """What to draw next, or `None` while the buffer is full or audio is awaited.
+
+        Until the first frame of the next sentence is drawn, the face at rest is.
+        """
+        sentence = next((queued for queued in self._queue if not queued.drawn), None)
+        if sentence is None or (sentence.awaiting_audio and not sentence.frames_drawn):
+            return self._draw_idle if len(self._buffer) < self._look_ahead else None
+        if sentence.awaiting_audio or self._buffered_frames() >= self._look_ahead:
+            return None
+        return partial(self._draw_sentence, sentence)
+
+    def _buffered_frames(self) -> int:
+        """The frames of sentences drawn ahead and not yet let go."""
+        return sum(
+            isinstance(entry, _Drawn) and entry.sentence is not None
+            for entry in self._buffer
         )
-        if sentence.dropped:
-            step.end_cancelled()
 
-    async def _send_frames(
-        self, sentence: _Sentence, step: StepTimer, frames: Iterator[Frame]
-    ) -> None:
-        """Release each frame of `frames` at its time on the audio's clock."""
-        while not sentence.dropped:
-            frame = await self._call(partial(next, frames, None))
-            if frame is None:
-                return
-            if await self._hold_to_due():
-                sentence.late_frames += 1
-            await self._leave(sentence, step, frame)
+    async def _draw_idle(self) -> None:
+        generation, arrived_at = self._generation, self._input_at
+        frame = await self._call(self._place.session.idle_frame)
+        if generation == self._generation:
+            self._buffer.append(_Drawn(generation, frame, None, arrived_at))
+            self._drawn.set()
+
+    async def _draw_sentence(self, sentence: _Sentence) -> None:
+        """Feed `sentence` a frame period of its audio, or end it once it has none."""
+        provider = self._place.session
+        finishing = not sentence.chunks
+        if finishing:
+            arrived_at = sentence.ended_at
+            draw = partial(_drawn_by, provider.finish_sentence)
+        else:
+            arrived_at, pcm = sentence.take_audio(self._frame_rate)
+            if sentence.step is None:
+                sentence.step = StepTimer(
+                    "sentence.ended", logger, started_at=sentence.first_audio_at
+                )
+            sentence.heard += pcm
+            self._fed_generation = sentence.generation
+            draw = partial(_drawn_by, provider.feed, pcm, sentence.rate)
+        frames = await self._call(draw)
+        if finishing:
+            self._fed_generation = None
+        if sentence.generation != self._generation:
+            return
+        if frames and not sentence.frames_drawn:
+            self._buffer = deque(
+                entry
+                for entry in self._buffer
+                if not isinstance(entry, _Drawn) or entry.sentence is not None
+            )
+        sentence.frames_drawn += len(frames)
+        self._buffer.extend(
+            _Drawn(sentence.generation, frame, sentence, arrived_at) for frame in frames
+        )
+        if finishing:
+            sentence.drawn = True
+            self._buffer.append(_Finished(sentence))
+        self._drawn.set()
+
+    async def _pace(self) -> Never:
+        """Let each frame the producer drew leave at its time on the frame clock."""
+        while True:
+            while not self._buffer:
+                await self._drawn.wait()
+                self._drawn.clear()
+            entry = self._buffer.popleft()
+            self._woken.set()
+            if isinstance(entry, _Finished):
+                await self._stop(entry.sentence)
+                continue
+            self._schedule.input_arrived(entry.arrived_at)
+            late = await self._hold_to_due()
+            await self._leave(entry, late=late)
 
     async def _hold_to_due(self) -> bool:
         """Hold the frame until it is due; whether it was late, too late fails."""
@@ -488,23 +571,29 @@ class Session:
         await self._place.pacing.sleep(-lateness)
         return False
 
-    async def _leave(self, sentence: _Sentence, step: StepTimer, frame: Frame) -> None:
-        """A frame leaves for the viewers; the sentence's first one starts it."""
+    async def _leave(self, entry: _Drawn, *, late: bool) -> None:
+        """A frame leaves unless a clear dropped it; a sentence's first starts it."""
         async with self._lock:
-            if sentence.dropped:
+            if entry.generation != self._generation:
+                self._schedule.give_back()
+                return
+            sentence = entry.sentence
+            if sentence is None:
+                self._media.send_idle(entry.frame)
                 return
             period = sentence.take_period(self._frame_rate)
-            self._media.send(frame, period, sentence.rate)
+            self._media.send(entry.frame, period, sentence.rate)
             sentence.frames_left += 1
+            sentence.late_frames += late
             if not sentence.started:
                 sentence.started = True
                 self._playing = sentence
-                step.first_output()
+                cast("StepTimer", sentence.step).first_output()
                 await self._send(OutputAudioBufferStarted(response_id=sentence.id))
 
     async def _stop(self, sentence: _Sentence) -> None:
         async with self._lock:
-            if sentence.dropped:
+            if sentence.generation != self._generation:
                 return
             self._queue.popleft()
             self._playing = None
@@ -515,6 +604,23 @@ class Session:
             )
             if self._draining:
                 self._drained.set()
+        self._end_line(sentence, cancelled=False)
+
+    def _end_line(self, sentence: _Sentence, *, cancelled: bool) -> None:
+        """Write the sentence's line, once, in the sentence's trace."""
+        step = sentence.step
+        if step is None:
+            return
+        step.add(
+            audio_ms=sentence.audio_ms,
+            frame_count=sentence.frames_left,
+            late_frame_count=sentence.late_frames,
+        )
+        with unit_trace(sentence.traceparent):
+            if cancelled:
+                step.end_cancelled()
+            else:
+                step.end()
 
     async def _send(self, event: ServerEvent) -> None:
         """Send `event`; a client that has gone ends the session through `receive`."""
@@ -522,8 +628,12 @@ class Session:
             await self._socket.send_text(event.model_dump_json())
 
     @property
+    def _lag_ms(self) -> int:
+        return self._place.limits.max_lag_ms
+
+    @property
     def _lag_limit(self) -> float:
-        return self._place.limits.max_lag_ms / _MS_PER_SECOND
+        return self._lag_ms / _MS_PER_SECOND
 
     async def _call[Result](self, work: Callable[[], Result]) -> Result:
         """Run `work` on the provider thread; not back within the lag limit, fail."""
@@ -532,6 +642,11 @@ class Session:
                 return await asyncio.wrap_future(self._place.worker.submit(work))
         except TimeoutError:
             raise _FailureError(RefusalCode.UNAVAILABLE) from None
+
+
+def _drawn_by(draw: Callable[..., Iterable[Frame]], *arguments: object) -> list[Frame]:
+    """Every frame one provider call draws, drawn on the provider thread."""
+    return list(draw(*arguments))
 
 
 def _parse(text: str, *, session_update: bool) -> ClientEvent:

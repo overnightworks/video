@@ -3,7 +3,9 @@
 The face at rest is dark; a sentence's frame is bright when its frame period of
 audio holds a loud sample, so a test sees the idle between sentences and a beep.
 It serves the service's own tests and a run from source, in a process of its own
-like every provider (`video-fake-worker`); no image installs it.
+like every provider (`video-fake-worker`); no image installs it. A chunked fake
+draws a chunk of frames at a time and takes one render for the chunk, as a model
+that renders in chunks does.
 """
 
 from __future__ import annotations
@@ -34,7 +36,7 @@ _LOUD_SAMPLE = 8192
 
 
 class FakeSession:
-    """Draws one frame per frame period of the audio it is fed."""
+    """Draws one frame per frame period of the audio it is fed, a chunk at a time."""
 
     def __init__(  # noqa: PLR0913 - one switch for each way a test makes it fail or lag
         self,
@@ -42,19 +44,25 @@ class FakeSession:
         render_seconds: float,
         *,
         idle_render_seconds: float = 0.0,
+        chunk_frames: int = 1,
         fails_to_draw: bool,
         finish_gate: threading.Event | None,
         sleep: Callable[[float], None],
     ) -> None:
-        """Draw at `frame_rate`, taking `render_seconds` of `sleep` for each frame.
+        """Draw at `frame_rate`, taking `render_seconds` of `sleep` for each chunk.
 
-        An idle frame takes `idle_render_seconds`. A `finish_gate` holds the last
-        frames of a sentence until it is set; `finishing` is set once a sentence's
-        last frames are asked for.
+        A chunk is `chunk_frames` frames of the audio fed, drawn once the audio of
+        all of them is there, or at the end of the sentence for the frames left; a
+        call draws every chunk it can and nothing between calls. The face at rest
+        is drawn in chunks too, each taking `idle_render_seconds`. A `finish_gate`
+        holds the last frames of a sentence until it is set; `finishing` is set once
+        a sentence's last frames are asked for.
         """
         self._frame_rate = frame_rate
         self._render_seconds = render_seconds
         self._idle_render_seconds = idle_render_seconds
+        self._chunk_frames = chunk_frames
+        self._idle_left = 0
         self._fails_to_draw = fails_to_draw
         self._finish_gate = finish_gate
         self._sleep = sleep
@@ -73,28 +81,32 @@ class FakeSession:
     def idle_frame(self) -> Frame:
         """Draw the face at rest."""
         self.idle_frames += 1
-        if self._idle_render_seconds:
-            self._sleep(self._idle_render_seconds)
+        if not self._idle_left:
+            if self._idle_render_seconds:
+                self._sleep(self._idle_render_seconds)
+            self._idle_left = self._chunk_frames
+        self._idle_left -= 1
         return self._dark
 
     def feed(self, pcm: bytes, rate: int) -> Iterator[Frame]:
-        """Count the audio; its whole frame periods come out."""
+        """Count the audio; the frames of its whole chunks come out."""
         if self._fails_to_draw:
             message = "the fake provider was told to fail to draw"
             raise ProviderFailedError(message)
         self._audio += pcm
         self._samples += len(pcm) // _BYTES_PER_SAMPLE
         self._rate = rate
-        return self._until(self._samples * self._frame_rate // rate)
+        return iter(self._draw(self._samples * self._frame_rate // rate, flush=False))
 
     def finish_sentence(self) -> Iterator[Frame]:
-        """Draw the frame of a last partial period, then forget the sentence."""
+        """Draw the frames left, the last of a partial period too, then forget."""
         self.finishing.set()
         if self._finish_gate is not None:
             self._finish_gate.wait()
         total = -(-self._samples * self._frame_rate // self._rate)
-        yield from self._until(total)
+        frames = self._draw(total, flush=True)
         self._reset()
+        return iter(frames)
 
     def clear(self) -> None:
         """Forget the sentence."""
@@ -106,12 +118,16 @@ class FakeSession:
         self.closed = True
         self._reset()
 
-    def _until(self, total: int) -> Iterator[Frame]:
-        while self._drawn < total:
+    def _draw(self, total: int, *, flush: bool) -> list[Frame]:
+        """The frames up to `total`: a render per chunk, a short one if `flush`."""
+        frames: list[Frame] = []
+        while (pending := total - self._drawn) >= (1 if flush else self._chunk_frames):
             self._sleep(self._render_seconds)
-            period = self._take_period()
-            self._drawn += 1
-            yield self._bright if self._is_loud(period) else self._dark
+            for _ in range(min(pending, self._chunk_frames)):
+                period = self._take_period()
+                self._drawn += 1
+                frames.append(self._bright if self._is_loud(period) else self._dark)
+        return frames
 
     def _take_period(self) -> bytes:
         """Take out the next period's audio, which may be short at a sentence's end."""
@@ -132,6 +148,7 @@ class FakeSession:
         self._samples = 0
         self._taken = 0
         self._drawn = 0
+        self._idle_left = 0
 
 
 class FakeProvider:
@@ -145,6 +162,7 @@ class FakeProvider:
         frame_rate: int = 25,
         render_seconds: float = 0.0,
         idle_render_seconds: float = 0.0,
+        chunk_frames: int = 1,
         fails_to_open: bool = False,
         fails_to_draw: bool = False,
         finish_gate: threading.Event | None = None,
@@ -152,14 +170,15 @@ class FakeProvider:
     ) -> None:
         """Fail or lag as told; `refuses` names the looks `prepare` fails for.
 
-        A frame takes `render_seconds` of `sleep`, an idle frame `idle_render_seconds`;
-        a test hands the sleep of its own clock.
+        A chunk of `chunk_frames` frames takes `render_seconds` of `sleep`, a chunk of
+        the face at rest `idle_render_seconds`; a test hands the sleep of its own clock.
         """
         self._fails_to_start = fails_to_start
         self._refuses = frozenset(refuses)
         self._frame_rate = frame_rate
         self._render_seconds = render_seconds
         self._idle_render_seconds = idle_render_seconds
+        self._chunk_frames = chunk_frames
         self._fails_to_open = fails_to_open
         self._fails_to_draw = fails_to_draw
         self._finish_gate = finish_gate
@@ -197,6 +216,7 @@ class FakeProvider:
             self._frame_rate,
             self._render_seconds,
             idle_render_seconds=self._idle_render_seconds,
+            chunk_frames=self._chunk_frames,
             fails_to_draw=self._fails_to_draw,
             finish_gate=self._finish_gate,
             sleep=self._sleep,

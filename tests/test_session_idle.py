@@ -6,11 +6,24 @@ import asyncio
 from typing import TYPE_CHECKING
 
 import pytest
+from logline.testing import configured
 from video_provider_fake import FakeProvider
 
+from support.chunk_support import (
+    FRAME_SECONDS,
+    gaps,
+    play_chunked,
+    record_leaves,
+    waiting,
+)
 from support.clock_support import FakeClock
 from support.scripted_session import FRAME_RATE, play, played, scripted
-from support.session_support import EVENT_WITHIN_SECONDS, sentence_events
+from support.session_support import (
+    EVENT_WITHIN_SECONDS,
+    pcm,
+    sentence_events,
+    written,
+)
 from video_client.session_wire import ErrorEvent, SessionCreated, SessionUpdated
 from video_client.wire import RefusalCode
 from video_service.runtime import Pacing
@@ -23,6 +36,8 @@ _FRAME_SECONDS = 1 / FRAME_RATE
 _IDLE_FRAMES = 6
 _IDLE_RENDER_SECONDS = 0.1
 _MAX_LAG_MS = 150
+_START_UP_SECONDS = 1.0
+_SENTENCE_MS = 1920
 
 
 def test_idle_frames_leave_one_frame_period_apart_while_the_session_is_open() -> None:
@@ -87,11 +102,16 @@ def test_idle_frames_keep_leaving_while_a_sentence_lacks_audio_for_a_frame() -> 
 def test_a_late_idle_frame_ends_a_silent_session_unavailable() -> None:
     clock = FakeClock()
     provider = FakeProvider(
-        idle_render_seconds=_IDLE_RENDER_SECONDS, sleep=clock.advance
+        idle_render_seconds=_IDLE_RENDER_SECONDS, sleep=clock.render
     )
 
     events = played(
-        [], sentences=1, provider=provider, pacing=clock.pacing, max_lag_ms=_MAX_LAG_MS
+        [],
+        sentences=1,
+        provider=provider,
+        pacing=clock.pacing,
+        worker=clock.worker(),
+        max_lag_ms=_MAX_LAG_MS,
     )
 
     failure = events[-1]
@@ -119,3 +139,25 @@ def test_the_session_is_updated_only_after_the_first_idle_frame_is_drawn() -> No
 
     assert [type(event) for event in sent_while_drawing] == [SessionCreated]
     assert any(isinstance(event, SessionUpdated) for event in events)
+
+
+def test_idle_frames_keep_leaving_while_a_sentence_s_first_chunk_renders(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    clock = FakeClock()
+    leaves = record_leaves(monkeypatch, clock)
+    start, end = sentence_events("a")
+
+    with configured("video"):
+        play_chunked(
+            clock,
+            [waiting(clock, _START_UP_SECONDS), start, pcm(_SENTENCE_MS), end],
+            sentences=1,
+        )
+
+    (line,) = written(capsys.readouterr().out, "sentence.ended")
+    assert line["late_frame_count"] == 0
+    assert sum(leave.speech for leave in leaves) == _SENTENCE_MS * FRAME_RATE // 1000
+    assert gaps(leaves, since=_START_UP_SECONDS) == pytest.approx(
+        [FRAME_SECONDS] * len(gaps(leaves, since=_START_UP_SECONDS))
+    )

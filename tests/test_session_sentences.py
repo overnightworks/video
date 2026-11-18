@@ -6,10 +6,20 @@ import threading
 from typing import TYPE_CHECKING
 
 import pytest
+from logline.testing import configured
 from starlette.websockets import WebSocketDisconnect
 from video_provider_fake import FakeProvider
 
+from support.chunk_support import (
+    FRAME_SECONDS,
+    RENDER_SECONDS,
+    gaps,
+    play_chunked,
+    record_leaves,
+    waiting,
+)
 from support.clock_support import FakeClock
+from support.scripted_session import FRAME_RATE
 from support.session_support import (
     failure_of,
     next_error,
@@ -17,6 +27,7 @@ from support.session_support import (
     pcm,
     receive,
     sentence_events,
+    written,
 )
 from video_client.session_wire import (
     MAX_EVENT_BYTES,
@@ -38,6 +49,9 @@ _STALL_SECONDS = 1.0
 _CHUNK_MS = 40
 _PARTIAL_FRAME_MS = 50
 _FRAME_SECONDS = 0.01
+_START_UP_SECONDS = 3.0
+_TWO_CHUNKS_MS = 1920
+_LONG_MESSAGE_MS = 5_000
 
 
 @pytest.fixture
@@ -343,3 +357,44 @@ def test_a_client_that_leaves_while_a_sentence_plays_frees_the_place(
 
     with opened(client):
         pass
+
+
+def test_chunked_sentences_back_to_back_leave_with_no_frame_between_and_none_late(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    clock = FakeClock()
+    leaves = record_leaves(monkeypatch, clock)
+    script = [waiting(clock, _START_UP_SECONDS)]
+    for sentence in ("a", "b"):
+        start, end = sentence_events(sentence)
+        script += [start, pcm(_TWO_CHUNKS_MS), end]
+
+    with configured("video"):
+        play_chunked(clock, script, sentences=2)
+
+    lines = written(capsys.readouterr().out, "sentence.ended")
+    kinds = [leave.speech for leave in leaves if leave.at >= _START_UP_SECONDS]
+    assert [line["late_frame_count"] for line in lines] == [0, 0]
+    assert kinds == sorted(kinds)
+    assert sum(kinds) == 2 * _TWO_CHUNKS_MS * FRAME_RATE // 1000
+    assert gaps(leaves, since=_START_UP_SECONDS) == pytest.approx(
+        [FRAME_SECONDS] * len(gaps(leaves, since=_START_UP_SECONDS))
+    )
+
+
+def test_a_message_of_any_length_never_makes_a_call_longer_than_one_render() -> None:
+    clock = FakeClock()
+    worker = clock.worker()
+    start, end = sentence_events("long")
+
+    events = play_chunked(
+        clock,
+        [waiting(clock, _START_UP_SECONDS), start, pcm(_LONG_MESSAGE_MS), end],
+        sentences=1,
+        worker=worker,
+    )
+
+    stopped = events[-1]
+    assert isinstance(stopped, OutputAudioBufferStopped)
+    assert stopped.audio_end_ms == _LONG_MESSAGE_MS
+    assert worker.longest_call == RENDER_SECONDS

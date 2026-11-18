@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 from video_provider_contract import DecodedImage, ProviderFailedError
+from video_provider_contract.protocol import MAX_PCM_BYTES
 
 from support.scripted_session import played
 from support.session_support import pcm, sentence_events
@@ -346,15 +347,20 @@ def test_a_session_ends_unavailable_when_its_child_dies(
     assert failure.error.code is RefusalCode.UNAVAILABLE
 
 
+@pytest.mark.parametrize(
+    ("payload", "rate"),
+    [(_LOUD, 0), (bytes(MAX_PCM_BYTES + 2), _RATE)],
+    ids=["no-rate", "more-than-one-request-holds"],
+)
 def test_a_request_the_protocol_cannot_hold_fails_that_call_not_the_provider(
-    make_provider: MakeProvider,
+    make_provider: MakeProvider, payload: bytes, rate: int
 ) -> None:
     provider = make_provider(bounds=ProcessBounds())
     provider.start()
     session = provider.open_session(_MOZART)
 
     with pytest.raises(ProviderFailedError):
-        session.feed(_LOUD, 0)
+        session.feed(payload, rate)
 
     assert session.idle_frame()
     assert not provider.failed

@@ -27,7 +27,6 @@ from typing import IO, TYPE_CHECKING, Final, cast
 from video_provider_contract import ProviderFailedError
 from video_provider_contract.protocol import (
     ANSWER_KINDS,
-    MAX_PCM_BYTES,
     NO_SESSION,
     FailureCode,
     FrameKind,
@@ -443,19 +442,14 @@ class _ProcessSession:
         return self._provider.draw(self._session, request, expected=1)[0]
 
     def feed(self, pcm: bytes, rate: int) -> Iterator[Frame]:
-        """Take PCM16 audio; the frames drawn so far come out.
+        """Take PCM16 audio in one request; the frames the call draws come out.
 
-        The wire bounds no binary message, so audio longer than one PCM frame goes
-        as several, each a whole number of samples.
+        A payload over `MAX_PCM_BYTES` fails the call; the player never sends one,
+        as it feeds at most one frame period of audio a call.
         """
-        frames: list[Frame] = []
-        for start in range(0, len(pcm), MAX_PCM_BYTES):
-            with _encoding():
-                request = encode_pcm(
-                    self._session, rate, pcm[start : start + MAX_PCM_BYTES]
-                )
-            frames.extend(self._provider.draw(self._session, request))
-        return iter(frames)
+        with _encoding():
+            request = encode_pcm(self._session, rate, pcm)
+        return iter(self._provider.draw(self._session, request))
 
     def finish_sentence(self) -> Iterator[Frame]:
         """End the open sentence; the frames not yet drawn come out."""
