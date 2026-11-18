@@ -70,12 +70,13 @@ jobs:
           host="$RUNNER_TEMP/host-client"
           mkdir "$host"
           cp "$GITHUB_WORKSPACE/.python-version" "$host/"
+          requires_python="$(python3 -c 'import sys, tomllib; print(tomllib.load(open(sys.argv[1], "rb"))["project"]["requires-python"])' "$GITHUB_WORKSPACE/packages/client/pyproject.toml")"
           pin="overnightworks-video-client @ git+https://github.com/$GITHUB_REPOSITORY@$COMMIT#subdirectory=packages/client"
           printf '%s\n' \
             '[project]' \
             'name = "host-client"' \
             'version = "0"' \
-            'requires-python = ">=3.14"' \
+            "requires-python = \"$requires_python\"" \
             "dependencies = [\"$pin\"]" \
             '' \
             '[tool.uv]' \
