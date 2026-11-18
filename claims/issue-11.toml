@@ -1,8 +1,0 @@
-claim_id = "e06fe654fd94493c965f0689a01b73dc"
-agent = "Claude 21fd863e-01fb-442b-a634-e988b43fd9d7"
-role = "builder"
-base = "2f8ee0312545949bbf22aabf8d71cf4436cb51eb"
-branch = "claude/issue-11-p2b-the-browser-package-and-the-browser"
-scope = [".github/dependabot.yml", ".github/workflows", ".gitignore", "AGENTS.md", "README.md", "docs", "packages/browser", "pyproject.toml", "quality/config.toml", "scripts/check_release.py", "sonar-project.properties", "tests", "uv.lock"]
-opened_commit = "52f257295cfa18ba09549a7295ddae979b211548"
-whole_reason = "P2b is one browser package and its one proof in headless Chromium: the package, its CI and release job, its quality and sonar wiring and its docs cannot be proven apart"
