@@ -1,7 +1,8 @@
 """One session: the sentences a client queues, their playback in order, and the clear.
 
 The receive loop takes the client's events and audio; the player plays the queued
-sentences one after another on the frame clock; the drain watcher ends the session
+sentences one after another on the frame clock, and draws the face at rest on the
+same clock while none has audio to play; the drain watcher ends the session
 once a drain has let the playing sentence finish. The first of them to end decides
 how the session ends. Every call into the provider session runs on one thread of
 the session's own, so the provider is never entered twice and a call that a clear
@@ -117,7 +118,7 @@ class _Sentence:
 
 @dataclass(slots=True)
 class _Schedule:
-    """When the next frame is due on the audio's clock, and how late the last one left.
+    """When the next frame is due on the frame clock, and how late the last one left.
 
     Input that arrives after the last frame has left restarts the clock, as the wait
     for it is the client's, yet keeps the lateness that frame had; for input that was
@@ -221,7 +222,7 @@ class Session:
                 return update
             trace.enter_context(unit_trace(update.traceparent))
             self._ice = update.session
-            await self._call(self._place.session.idle_frame)
+            await self._idle_step()
             await self._send(SessionUpdated())
             return await self._converse()
         except _FailureError as failure:
@@ -370,9 +371,20 @@ class Session:
 
     async def _play(self) -> Never:
         while True:
-            while not self._queue:
-                await self._wait()
-            await self._play_sentence(self._queue[0])
+            if self._audible():
+                await self._play_sentence(self._queue[0])
+            else:
+                await self._idle_step()
+
+    def _audible(self) -> bool:
+        """Whether the first queued sentence has audio to play."""
+        return bool(self._queue) and bool(self._queue[0].chunks)
+
+    async def _idle_step(self) -> None:
+        """Draw the face at rest and let the frame leave at its time on the clock."""
+        self._schedule.input_arrived(self._place.pacing.now())
+        await self._call(self._place.session.idle_frame)
+        await self._hold_to_due()
 
     async def _wait(self) -> None:
         await self._woken.wait()
@@ -388,7 +400,6 @@ class Session:
                     await self._render(sentence, step, chunk)
             if sentence.dropped:
                 await self._call(self._place.session.clear)
-                await self._call(self._place.session.idle_frame)
 
     async def _next_chunk(self, sentence: _Sentence) -> bytes | None:
         """The next audio of `sentence`, or `None` once it is complete or dropped."""
@@ -430,14 +441,19 @@ class Session:
             not sentence.dropped
             and await self._call(partial(next, frames, None)) is not None
         ):
-            lateness = self._schedule.release(self._place.pacing.now())
-            if lateness > self._lag_limit:
-                raise _FailureError(RefusalCode.UNAVAILABLE)
-            if lateness > 0:
+            if await self._hold_to_due():
                 sentence.late_frames += 1
-            else:
-                await self._place.pacing.sleep(-lateness)
             await self._leave(sentence, step)
+
+    async def _hold_to_due(self) -> bool:
+        """Hold the frame until it is due; whether it was late, too late fails."""
+        lateness = self._schedule.release(self._place.pacing.now())
+        if lateness > self._lag_limit:
+            raise _FailureError(RefusalCode.UNAVAILABLE)
+        if lateness > 0:
+            return True
+        await self._place.pacing.sleep(-lateness)
+        return False
 
     async def _leave(self, sentence: _Sentence, step: StepTimer) -> None:
         """A frame leaves for the viewers; the sentence's first one starts it."""
