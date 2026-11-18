@@ -96,7 +96,7 @@ class FakeSession:
         self._audio += pcm
         self._samples += len(pcm) // _BYTES_PER_SAMPLE
         self._rate = rate
-        return iter(self._draw(self._samples * self._frame_rate // rate, flush=False))
+        return self._draw(self._samples * self._frame_rate // rate, flush=False)
 
     def finish_sentence(self) -> Iterator[Frame]:
         """Draw the frames left, the last of a partial period too, then forget."""
@@ -104,9 +104,8 @@ class FakeSession:
         if self._finish_gate is not None:
             self._finish_gate.wait()
         total = -(-self._samples * self._frame_rate // self._rate)
-        frames = self._draw(total, flush=True)
+        yield from self._draw(total, flush=True)
         self._reset()
-        return iter(frames)
 
     def clear(self) -> None:
         """Forget the sentence."""
@@ -118,16 +117,14 @@ class FakeSession:
         self.closed = True
         self._reset()
 
-    def _draw(self, total: int, *, flush: bool) -> list[Frame]:
+    def _draw(self, total: int, *, flush: bool) -> Iterator[Frame]:
         """The frames up to `total`: a render per chunk, a short one if `flush`."""
-        frames: list[Frame] = []
         while (pending := total - self._drawn) >= (1 if flush else self._chunk_frames):
             self._sleep(self._render_seconds)
             for _ in range(min(pending, self._chunk_frames)):
                 period = self._take_period()
                 self._drawn += 1
-                frames.append(self._bright if self._is_loud(period) else self._dark)
-        return frames
+                yield self._bright if self._is_loud(period) else self._dark
 
     def _take_period(self) -> bytes:
         """Take out the next period's audio, which may be short at a sentence's end."""
