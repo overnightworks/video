@@ -64,7 +64,7 @@ overnightworks-video-provider-fake = { workspace = true }
 [tool.pytest.ini_options]
 addopts = "--strict-config --strict-markers --import-mode=importlib"
 pythonpath = [".", "scripts", "tests"]
-testpaths = ["tests", "packages/client/tests"]
+testpaths = ["tests", "packages/client/tests", "providers/fake/tests"]
 
 [tool.coverage.run]
 branch = true
@@ -73,7 +73,7 @@ include = ["src/*", "packages/*/src/*", "providers/*/src/*"]
 
 [tool.ruff]
 target-version = "py314"
-src = [".", "scripts", "src", "packages/client/src", "tests", "packages/client/tests"]
+src = [".", "scripts", "src", "packages/client/src", "tests", "packages/client/tests", "providers/fake/tests"]
 # The gate's layout rules forbid package markers in these directories.
 namespace-packages = ["scripts", "tests/scripts", "tests/support", "packages/client/tests/support"]
 
@@ -97,6 +97,7 @@ convention = "google"
 # Asserts are the tests' checks; a test function's name is its documentation.
 "tests/**" = ["S101", "D103"]
 "packages/client/tests/**" = ["S101", "D103"]
+"providers/fake/tests/**" = ["S101", "D103"]
 
 [tool.coverage.report]
 exclude_also = ["if __name__ == .__main__.:"]
