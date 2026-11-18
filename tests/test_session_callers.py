@@ -225,3 +225,19 @@ def test_the_limit_is_checked_after_the_look_and_its_readiness(
         unknown = denial(client, session_url("no-such-look"), valid_headers())
 
     assert unknown.code is RefusalCode.INVALID_REQUEST
+
+
+@pytest.mark.parametrize(
+    ("path", "status", "code"),
+    [
+        ("/v2/sessions", HTTPStatus.BAD_REQUEST, RefusalCode.UNSUPPORTED_VERSION),
+        ("/v1/no-such-path", HTTPStatus.NOT_FOUND, RefusalCode.NOT_FOUND),
+        ("/health", HTTPStatus.NOT_FOUND, RefusalCode.NOT_FOUND),
+    ],
+)
+def test_an_upgrade_at_another_path_is_refused_as_a_request_there_would_be(
+    client: TestClient, path: str, status: int, code: RefusalCode
+) -> None:
+    denied = denial(client, path, valid_headers())
+
+    assert (denied.status, denied.code) == (status, code)

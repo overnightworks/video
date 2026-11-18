@@ -326,3 +326,47 @@ def test_a_session_that_outlasts_the_drain_bound_is_cut_when_the_service_exits(
 
     assert result == 0
     assert close_code == DRAIN_CLOSE_CODE
+
+
+class _SessionLines(logging.Handler):
+    """Collects the `session.ended` records of the session logger."""
+
+    def __init__(self) -> None:
+        super().__init__(logging.INFO)
+        self.records: list[logging.LogRecord] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        if record.getMessage() == "session.ended":
+            self.records.append(record)
+
+
+def test_a_client_that_leaves_ends_its_session_ok_and_frees_its_place(
+    source: LookServer, build_runtime: BuildRuntime
+) -> None:
+    runtime = build_runtime(
+        {"mozart": source.host("mozart.png", picture().data)}, max_sessions=1
+    )
+    settings = Settings(provider=ProviderName.FAKE, port=_free_port())
+    lines = _SessionLines()
+    logger = logging.getLogger("video_service.session")
+    logger.addHandler(lines)
+    logger.setLevel(logging.INFO)
+
+    async def drive() -> int:
+        stop = asyncio.Event()
+        serving, url = await _serving(runtime, settings, stop)
+        session = await _open_playing(url, 20_000)
+        await session.close()
+        stop.set()
+        return await serving
+
+    try:
+        result = asyncio.run(drive())
+    finally:
+        logger.removeHandler(lines)
+        logger.setLevel(logging.NOTSET)
+
+    assert result == 0
+    (line,) = lines.records
+    assert line.outcome == "ok"
+    assert not hasattr(line, "close_code")

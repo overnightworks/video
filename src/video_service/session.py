@@ -28,7 +28,6 @@ from video_client.session_wire import (
     MAX_EVENT_BYTES,
     ClientEvent,
     ClientEventError,
-    OutputAudioBufferClear,
     OutputAudioBufferCleared,
     OutputAudioBufferStarted,
     OutputAudioBufferStopped,
@@ -182,8 +181,6 @@ class Session:
             return _End(_NORMAL_CLOSE, failure)
         except ProviderFailedError:
             return _End(_NORMAL_CLOSE, _Failure(RefusalCode.UNAVAILABLE))
-        except WebSocketDisconnect:
-            return _End(None)
 
     async def _finish(self, step: StepTimer, end: _End) -> None:
         failure = end.failure
@@ -195,10 +192,7 @@ class Session:
                 step.fail(failure.code.value)
             else:
                 step.refuse(failure.code.value)
-            with contextlib.suppress(WebSocketDisconnect):
-                await self._send(
-                    error_event(failure.code, failure.param, failure.event_id)
-                )
+            await self._send(error_event(failure.code, failure.param, failure.event_id))
         if end.close_code is not None:
             with contextlib.suppress(WebSocketDisconnect):
                 await self._socket.close(end.close_code)
@@ -259,7 +253,7 @@ class Session:
                 self._start_sentence(event)
             case SentenceEnd() as event:
                 self._end_sentence(event)
-            case OutputAudioBufferClear():
+            case _:
                 await self._clear()
 
     def _start_sentence(self, event: SentenceStart) -> None:
@@ -419,7 +413,9 @@ class Session:
                 self._drained.set()
 
     async def _send(self, event: ServerEvent) -> None:
-        await self._socket.send_text(event.model_dump_json())
+        """Send `event`; a client that has gone ends the session through `receive`."""
+        with contextlib.suppress(WebSocketDisconnect):
+            await self._socket.send_text(event.model_dump_json())
 
     async def _call[Result](self, work: Callable[[], Result]) -> Result:
         return await asyncio.get_running_loop().run_in_executor(self._executor, work)

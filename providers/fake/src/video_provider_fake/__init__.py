@@ -5,6 +5,7 @@ It serves the service's own tests and a run from source; no image installs it.
 
 from __future__ import annotations
 
+import threading
 import time
 from typing import TYPE_CHECKING
 
@@ -31,16 +32,27 @@ class FakeSession:
     """Draws one blank frame per frame period of the audio it is fed."""
 
     def __init__(
-        self, frame_rate: int, render_seconds: float, *, fails_to_draw: bool
+        self,
+        frame_rate: int,
+        render_seconds: float,
+        *,
+        fails_to_draw: bool,
+        finish_gate: threading.Event | None,
     ) -> None:
-        """Draw at `frame_rate`, taking `render_seconds` for each frame."""
+        """Draw at `frame_rate`, taking `render_seconds` for each frame.
+
+        A `finish_gate` holds the last frames of a sentence until it is set; `finishing`
+        is set once a sentence's last frames are asked for.
+        """
         self._frame_rate = frame_rate
         self._render_seconds = render_seconds
         self._fails_to_draw = fails_to_draw
+        self._finish_gate = finish_gate
         self._frame = Frame(bytes(_WIDTH * _HEIGHT * _BYTES_PER_PIXEL))
         self._samples = 0
         self._rate = 1
         self._drawn = 0
+        self.finishing = threading.Event()
         self.idle_frames = 0
         self.clears = 0
         self.closed = False
@@ -61,6 +73,9 @@ class FakeSession:
 
     def finish_sentence(self) -> Iterator[Frame]:
         """Draw the frame of a last partial period, then forget the sentence."""
+        self.finishing.set()
+        if self._finish_gate is not None:
+            self._finish_gate.wait()
         total = -(-self._samples * self._frame_rate // self._rate)
         yield from self._until(total)
         self._reset()
@@ -97,6 +112,7 @@ class FakeProvider:
         render_seconds: float = 0.0,
         fails_to_open: bool = False,
         fails_to_draw: bool = False,
+        finish_gate: threading.Event | None = None,
     ) -> None:
         """Fail or lag as told; `refuses` names the looks `prepare` fails for."""
         self._fails_to_start = fails_to_start
@@ -105,6 +121,7 @@ class FakeProvider:
         self._render_seconds = render_seconds
         self._fails_to_open = fails_to_open
         self._fails_to_draw = fails_to_draw
+        self._finish_gate = finish_gate
         self.prepared: dict[str, DecodedImage] = {}
         self.sessions: list[FakeSession] = []
         self.closed = False
@@ -135,7 +152,10 @@ class FakeProvider:
             message = "the fake provider was told to fail to open"
             raise ProviderFailedError(message)
         session = FakeSession(
-            self._frame_rate, self._render_seconds, fails_to_draw=self._fails_to_draw
+            self._frame_rate,
+            self._render_seconds,
+            fails_to_draw=self._fails_to_draw,
+            finish_gate=self._finish_gate,
         )
         self.sessions.append(session)
         return session

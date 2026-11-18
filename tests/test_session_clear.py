@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import threading
 from typing import TYPE_CHECKING
 
 import pytest
 from video_provider_fake import FakeProvider
 
 from support.session_support import (
+    EVENT_WITHIN_SECONDS,
     failure_of,
     opened,
     pcm,
@@ -156,3 +158,24 @@ def test_the_end_of_a_cleared_open_sentence_is_refused(client: TestClient) -> No
         RefusalCode.INVALID_REQUEST,
         "sentence",
     )
+
+
+def test_a_clear_while_the_last_frames_are_drawn_leaves_no_stop_behind(
+    started: Callable[..., Runtime], wire: Callable[[Runtime], TestClient]
+) -> None:
+    gate = threading.Event()
+    provider = FakeProvider(finish_gate=gate)
+    client = wire(started(provider))
+    with opened(client) as session:
+        frame_rate = client.get("/health").json()["provider"]["video"]["frame_rate"]
+        _queue(session, "last", 1000 // frame_rate)
+        assert isinstance(receive(session), OutputAudioBufferStarted)
+        assert provider.sessions[0].finishing.wait(EVENT_WITHIN_SECONDS)
+        session.send_json(_CLEAR)
+        _cleared(session, 1)
+        gate.set()
+        _queue(session, "next", 80)
+        after = receive(session)
+
+    assert isinstance(after, OutputAudioBufferStarted)
+    assert after.response_id == "next"

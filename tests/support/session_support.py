@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Final, NamedTuple
 
 import pytest
 from starlette.testclient import WebSocketDenialResponse
+from starlette.websockets import WebSocketDisconnect
 
 from support.identity_support import valid_headers
 from video_client.session_wire import (
@@ -121,3 +122,10 @@ def next_error(session: WebSocketTestSession) -> ErrorEvent:
         event = receive(session)
         if isinstance(event, ErrorEvent):
             return event
+
+
+def close_code(session: WebSocketTestSession) -> int:
+    """The code the service closes the session with; no event may precede it."""
+    with pytest.raises(WebSocketDisconnect) as closed:
+        receive(session)
+    return closed.value.code

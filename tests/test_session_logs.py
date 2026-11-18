@@ -1,0 +1,188 @@
+"""The session's lines follow logline's standard, each in its client event's trace."""
+
+from __future__ import annotations
+
+import json
+from typing import TYPE_CHECKING
+
+from logline import Outcome
+from logline.testing import configured
+from video_provider_fake import FakeProvider
+
+from support.identity_support import valid_headers
+from support.session_support import (
+    ICE_SERVERS,
+    close_code,
+    connect,
+    denial,
+    failure_of,
+    opened,
+    pcm,
+    receive,
+    sentence_events,
+    session_url,
+    update_event,
+)
+from video_client.session_wire import OutputAudioBufferStarted, SessionCreated
+from video_client.wire import DRAIN_CLOSE_CODE
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    import pytest
+    from fastapi.testclient import TestClient
+
+    from video_service.runtime import Runtime
+
+_SENTENCE_MS = 80
+_SESSION_TRACE = "0af7651916cd43dd8448eb211c80319c"
+_SENTENCE_TRACE = "4bf92f3577b34da6a3ce929d0e0e4736"
+
+
+def _traceparent(trace_id: str) -> str:
+    return f"00-{trace_id}-b7ad6b7169203331-01"
+
+
+def _written(capsys: pytest.CaptureFixture[str], event: str) -> list[dict]:
+    """The JSON lines of `event` written so far."""
+    records = (
+        json.loads(line)
+        for line in capsys.readouterr().out.splitlines()
+        if line.startswith("{")
+    )
+    return [record for record in records if record["event"] == event]
+
+
+def _play_one_sentence_then_drain(client: TestClient, runtime: Runtime) -> None:
+    with connect(client) as session:
+        receive(session)
+        session.send_json(update_event(traceparent=_traceparent(_SESSION_TRACE)))
+        receive(session)
+        start, end = sentence_events("s1")
+        session.send_json(start | {"traceparent": _traceparent(_SENTENCE_TRACE)})
+        session.send_bytes(pcm(_SENTENCE_MS))
+        session.send_json(end)
+        receive(session)
+        receive(session)
+        # The session ends by the service's own close, which the line follows.
+        client.portal.call(runtime.begin_drain)
+        close_code(session)
+
+
+def test_the_session_line_names_look_and_provider_in_the_update_s_trace(
+    started: Callable[..., Runtime],
+    wire: Callable[[Runtime], TestClient],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    runtime = started()
+    client = wire(runtime)
+
+    with configured("video"):
+        _play_one_sentence_then_drain(client, runtime)
+
+    (line,) = _written(capsys, "session.ended")
+    assert line["trace_id"] == _SESSION_TRACE
+    assert (line["look"], line["provider"], line["sentence_count"]) == (
+        "mozart",
+        "fake",
+        1,
+    )
+    assert line["outcome"] == Outcome.OK
+    assert line["close_code"] == DRAIN_CLOSE_CODE
+
+
+def test_the_sentence_line_counts_its_audio_and_frames_in_the_sentence_s_trace(
+    started: Callable[..., Runtime],
+    wire: Callable[[Runtime], TestClient],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    runtime = started()
+    client = wire(runtime)
+
+    with configured("video"):
+        _play_one_sentence_then_drain(client, runtime)
+
+    (line,) = _written(capsys, "sentence.ended")
+    assert line["trace_id"] == _SENTENCE_TRACE
+    assert line["outcome"] == Outcome.OK
+    assert line["audio_ms"] == _SENTENCE_MS
+    frame_rate = client.get("/health").json()["provider"]["video"]["frame_rate"]
+    assert line["frame_count"] == _SENTENCE_MS * frame_rate // 1000
+    assert line["first_output_ms"] <= line["duration_ms"]
+
+
+def test_a_cleared_sentence_ends_its_line_cancelled(
+    started: Callable[..., Runtime],
+    wire: Callable[[Runtime], TestClient],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    client = wire(started())
+    with configured("video"), opened(client) as session:
+        start, end = sentence_events("s1")
+        session.send_json(start)
+        session.send_bytes(pcm(10_000))
+        session.send_json(end)
+        assert isinstance(receive(session), OutputAudioBufferStarted)
+        session.send_json({"type": "output_audio_buffer.clear"})
+        receive(session)
+
+    (line,) = _written(capsys, "sentence.ended")
+    assert line["outcome"] == Outcome.CANCELLED
+
+
+def test_a_refused_upgrade_writes_a_refused_session_line_with_its_code(
+    started: Callable[..., Runtime],
+    wire: Callable[[Runtime], TestClient],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    client = wire(started())
+
+    with configured("video"):
+        denial(client, session_url("no-such-look"), valid_headers())
+
+    (line,) = _written(capsys, "session.ended")
+    assert (line["outcome"], line["reason"]) == (Outcome.REFUSED, "invalid_request")
+
+
+def test_a_session_ended_by_the_client_s_fault_is_refused_and_by_the_provider_failed(
+    started: Callable[..., Runtime],
+    wire: Callable[[Runtime], TestClient],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    client = wire(started())
+    failing = wire(started(FakeProvider(fails_to_draw=True)))
+    with configured("video"):
+        with opened(client) as session:
+            session.send_json({"type": "no.such.event"})
+            failure_of(receive(session))
+        with opened(failing) as session:
+            start, end = sentence_events("s1")
+            session.send_json(start)
+            session.send_bytes(pcm(_SENTENCE_MS))
+            session.send_json(end)
+            failure_of(receive(session))
+
+    ended = [
+        (line["outcome"], line["reason"]) for line in _written(capsys, "session.ended")
+    ]
+    assert ended == [
+        (Outcome.REFUSED, "invalid_request"),
+        (Outcome.FAILED, "unavailable"),
+    ]
+
+
+def test_no_credential_reaches_a_line_even_when_the_update_is_refused(
+    started: Callable[..., Runtime],
+    wire: Callable[[Runtime], TestClient],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    client = wire(started())
+    bad = update_event(
+        session={"ice_servers": ICE_SERVERS, "ice_transport_policy": "x"}
+    )
+    with configured("video"), connect(client) as session:
+        assert isinstance(receive(session), SessionCreated)
+        session.send_json(bad)
+        failure_of(receive(session))
+
+    assert "SENTINEL-CRED" not in capsys.readouterr().out
