@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
-from concurrent.futures import TimeoutError as FutureTimeout
+from concurrent.futures import ThreadPoolExecutor, wait
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Final, NamedTuple
 
@@ -82,10 +81,10 @@ def pcm(milliseconds: int, rate: int = RATE) -> bytes:
 def receive(session: WebSocketTestSession) -> ServerEvent:
     """The next server event; the test fails when none comes."""
     pending = _reader.submit(session.receive_text)
-    try:
-        return parse_server_event(pending.result(timeout=EVENT_WITHIN_SECONDS))
-    except FutureTimeout:
+    done, _ = wait([pending], timeout=EVENT_WITHIN_SECONDS)
+    if not done:
         pytest.fail("no server event arrived")
+    return parse_server_event(pending.result())
 
 
 @contextmanager
