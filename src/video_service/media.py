@@ -35,7 +35,7 @@ from av import AudioFrame, AudioResampler, VideoFrame
 from video_client.wire import RefusalCode
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Awaitable, Callable
 
     from av.frame import Frame as MediaFrame
     from video_provider_contract import Frame
@@ -162,9 +162,12 @@ class _Viewer:
         if state in {"failed", "closed"}:
             self._on_peer_closed()
 
-    async def answer(self, offer: Offer) -> str:
-        """Negotiate `offer`: Opus and VP8 only, sending, with every candidate."""
+    async def take(self, offer: Offer) -> None:
+        """Take `offer`, or raise whatever aiortc raises for one it cannot take."""
         await self._peer.setRemoteDescription(RTCSessionDescription(offer.sdp, "offer"))
+
+    async def answer(self) -> str:
+        """The answer to the offer taken: Opus and VP8 only, with every candidate."""
         await self._peer.setLocalDescription(await self._peer.createAnswer())
         return self._peer.localDescription.sdp
 
@@ -218,11 +221,16 @@ class Media:
         return self._closed
 
     async def admit(
-        self, offer: Offer, on_end: Callable[[ViewerEnd], None]
+        self,
+        read_offer: Callable[[], Awaitable[Offer | RefusalCode]],
+        on_end: Callable[[ViewerEnd], None],
     ) -> Admission | RefusalCode:
-        """Answer `offer` with a new viewer, or refuse; `on_end` hears it end."""
-        if len(self._viewers) >= self._max_viewers:
-            return RefusalCode.BUSY
+        """Answer the offer `read_offer` reads with a new viewer, or refuse.
+
+        The refusals keep the wire's order: ICE servers the peer cannot parse, then
+        what `read_offer` refuses, an offer the peer cannot take, and the viewer
+        limit last. `on_end` hears the admitted viewer end.
+        """
         viewer_id = uuid4().hex
         try:
             viewer = _Viewer(
@@ -233,13 +241,15 @@ class Media:
         except ValueError:
             # aiortc rejects an ICE server it cannot parse when it builds the peer.
             return RefusalCode.UNAVAILABLE
-        self._viewers[viewer_id] = viewer
         try:
-            answer = await viewer.answer(offer)
-        except Exception:  # noqa: BLE001 - aiortc fails an offer it cannot take any way
-            return await self._refuse(viewer_id, viewer, RefusalCode.INVALID_REQUEST)
-        if self._closed:
-            return await self._refuse(viewer_id, viewer, RefusalCode.NOT_FOUND)
+            answer = await self._negotiate(viewer_id, viewer, read_offer)
+        except BaseException:
+            # A request that fails while its body is read leaves no peer behind.
+            await self._discard(viewer_id, viewer)
+            raise
+        if isinstance(answer, RefusalCode):
+            await self._discard(viewer_id, viewer)
+            return answer
         self.admitted += 1
         watcher = asyncio.create_task(self._watch(viewer_id, viewer, on_end))
         self._watchers.add(watcher)
@@ -258,12 +268,46 @@ class Media:
             iceTransportPolicy=RTCIceTransportPolicy(ice.ice_transport_policy),
         )
 
-    async def _refuse(
-        self, viewer_id: str, viewer: _Viewer, code: RefusalCode
-    ) -> RefusalCode:
+    async def _negotiate(
+        self,
+        viewer_id: str,
+        viewer: _Viewer,
+        read_offer: Callable[[], Awaitable[Offer | RefusalCode]],
+    ) -> str | RefusalCode:
+        """The answer `viewer` gives the offer read, or the refusal."""
+        refused = await self._take(viewer, read_offer)
+        if refused is not None:
+            return refused
+        # The viewer counts toward the limit while its candidates are gathered.
+        self._viewers[viewer_id] = viewer
+        try:
+            answer = await viewer.answer()
+        except Exception:  # noqa: BLE001 - as for the offer, aiortc fails any way
+            return RefusalCode.INVALID_REQUEST
+        return RefusalCode.NOT_FOUND if self._closed else answer
+
+    async def _take(
+        self,
+        viewer: _Viewer,
+        read_offer: Callable[[], Awaitable[Offer | RefusalCode]],
+    ) -> RefusalCode | None:
+        """Why `viewer` may not answer the offer read, if it may not."""
+        offer = await read_offer()
+        if isinstance(offer, RefusalCode):
+            return offer
+        try:
+            await viewer.take(offer)
+        except Exception:  # noqa: BLE001 - aiortc fails an offer it cannot take any way
+            return RefusalCode.INVALID_REQUEST
+        if self._closed:
+            return RefusalCode.NOT_FOUND
+        if len(self._viewers) >= self._max_viewers:
+            return RefusalCode.BUSY
+        return None
+
+    async def _discard(self, viewer_id: str, viewer: _Viewer) -> None:
         self._viewers.pop(viewer_id, None)
         await viewer.close()
-        return code
 
     async def _watch(
         self, viewer_id: str, viewer: _Viewer, on_end: Callable[[ViewerEnd], None]

@@ -8,6 +8,7 @@ POST that admitted it, or at once when the POST is refused.
 from __future__ import annotations
 
 import logging
+from functools import partial
 from http import HTTPStatus
 from typing import TYPE_CHECKING, Final
 
@@ -36,7 +37,7 @@ if TYPE_CHECKING:
     from starlette.requests import Request
 
     from video_service.callers import VideoCallers
-    from video_service.media import Admission, ViewerEnd
+    from video_service.media import Admission, Offer, ViewerEnd
     from video_service.runtime import Runtime
     from video_service.session import Session
 
@@ -97,15 +98,7 @@ class _ViewerRoute:
             return session
         if not (self._runtime.accepts_viewers and session.media.ready):
             return RefusalCode.UNAVAILABLE
-        if _media_type(request.headers) != SDP_CONTENT_TYPE:
-            return RefusalCode.INVALID_REQUEST
-        body = await _bounded_body(request)
-        if body is None:
-            return RefusalCode.TOO_LARGE
-        offer = parse_offer(body)
-        if offer is None:
-            return RefusalCode.INVALID_REQUEST
-        return await session.media.admit(offer, on_end)
+        return await session.media.admit(partial(_offer_of, request), on_end)
 
     async def _opened_by_caller(
         self, headers: Headers, session_id: str
@@ -120,6 +113,17 @@ class _ViewerRoute:
         if session.opener != opener:
             return RefusalCode.FORBIDDEN
         return session
+
+
+async def _offer_of(request: Request) -> Offer | RefusalCode:
+    """The request's offer, or the refusal of its type, size or shape."""
+    if _media_type(request.headers) != SDP_CONTENT_TYPE:
+        return RefusalCode.INVALID_REQUEST
+    body = await _bounded_body(request)
+    if body is None:
+        return RefusalCode.TOO_LARGE
+    offer = parse_offer(body)
+    return RefusalCode.INVALID_REQUEST if offer is None else offer
 
 
 def _media_type(headers: Headers) -> str:

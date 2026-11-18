@@ -247,14 +247,14 @@ def test_a_viewer_is_ended_by_its_opener_once_and_other_methods_are_not_found(
     live(scenario)
 
 
-def test_an_ice_server_the_peer_cannot_parse_leaves_the_session_unavailable(
+def test_an_ice_server_the_peer_cannot_parse_is_unavailable_before_the_content_type(
     live: Callable[..., None],
 ) -> None:
     async def scenario(service: Service) -> None:
         session = await service.open_session(update=False)
         await session.update([{"urls": "not-an-ice-server"}], "all")
 
-        response = await service.post(session, await offer_of())
+        response = await service.post(session, await offer_of(), content_type=_NOT_SDP)
 
         assert _refused(response) == (
             HTTPStatus.SERVICE_UNAVAILABLE,
@@ -265,11 +265,13 @@ def test_an_ice_server_the_peer_cannot_parse_leaves_the_session_unavailable(
 
 
 @pytest.mark.parametrize("missing", ["a=ice-ufrag:.*\r\n", "a=setup:.*\r\n"])
-def test_an_offer_the_peer_cannot_take_is_invalid_and_leaves_no_viewer_behind(
+def test_an_offer_the_peer_cannot_take_is_invalid_at_the_viewer_limit_and_admits_none(
     live: Callable[..., None], missing: str
 ) -> None:
     async def scenario(service: Service) -> None:
         session = await service.open_session()
+        first = await service.post(session, await offer_of())
+        assert first.status_code == HTTPStatus.CREATED
         offer = re.sub(missing, "", await offer_of())
 
         response = await service.post(session, offer)
@@ -278,9 +280,9 @@ def test_an_offer_the_peer_cannot_take_is_invalid_and_leaves_no_viewer_behind(
             HTTPStatus.UNPROCESSABLE_ENTITY,
             RefusalCode.INVALID_REQUEST,
         )
-        assert not service.runtime.session(session.session_id).media.admitted
+        assert service.runtime.session(session.session_id).media.admitted == 1
 
-    live(scenario)
+    live(scenario, max_viewers=1)
 
 
 def test_a_body_sent_in_chunks_is_cut_off_at_the_cap(live: Callable[..., None]) -> None:
