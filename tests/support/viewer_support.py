@@ -87,9 +87,11 @@ class Logged(logging.Handler):
         """The lines of `event` written so far."""
         return [record for record in self.records if record.getMessage() == event]
 
-    async def wait_for(self, event: str, count: int = 1) -> list[logging.LogRecord]:
+    async def wait_for(
+        self, event: str, count: int = 1, within_seconds: float = WITHIN_SECONDS
+    ) -> list[logging.LogRecord]:
         """The lines of `event` once `count` of them are written."""
-        async with asyncio.timeout(WITHIN_SECONDS):
+        async with asyncio.timeout(within_seconds):
             while len(self.lines(event)) < count:
                 self._written.clear()
                 await self._written.wait()
@@ -235,6 +237,10 @@ class Service:
     http: httpx2.AsyncClient
     logged: Logged
     stack: AsyncExitStack
+
+    def viewer_ends(self) -> list[str]:
+        """What ended each viewer, in the order of the `viewer.ended` lines."""
+        return [line.ended_by for line in self.logged.lines("viewer.ended")]
 
     async def open_session(
         self, headers: dict[str, str] | None = None, *, update: bool = True

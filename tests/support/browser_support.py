@@ -59,7 +59,7 @@ class StandInApp:
     refusal: int | None = None
     alter: Callable[[httpx2.Response], Response] | None = None
     answer_gate: asyncio.Event = field(default_factory=asyncio.Event)
-    relayed: list[httpx2.Response] = field(default_factory=list)
+    posted: asyncio.Event = field(default_factory=asyncio.Event)
 
     def __post_init__(self) -> None:
         """Answer at once until a scenario closes the gate."""
@@ -78,7 +78,7 @@ class StandInApp:
         if self.refusal is not None:
             return Response(status_code=self.refusal)
         relayed = await self.service.post(self.session, await request.body())
-        self.relayed.append(relayed)
+        self.posted.set()
         await self.answer_gate.wait()
         if self.alter is not None:
             return self.alter(relayed)
@@ -146,11 +146,16 @@ class Stage:
     page: Page
     app: StandInApp
     profile: Path
+    address: str
     requests: list[tuple[str, dict[str, str]]] = field(default_factory=list)
 
     async def begin(self, path: str = VIEWERS_PATH) -> None:
         """Have the page watch through `path`, with no ICE server."""
         await self.page.evaluate("path => stage.begin(path)", path)
+
+    async def begin_on_load(self, path: str = VIEWERS_PATH) -> None:
+        """Load the page so that it watches through `path` with no user activation."""
+        await self.page.goto(f"{self.address}?watch={path}")
 
     async def read(self) -> Seen:
         """What the page recorded: states, errors, frames, flashes, beeps."""
@@ -234,7 +239,7 @@ async def stage(
         try:
             page = await context.new_page()
             await coverage.start(page)
-            watched = Stage(page, app, profile)
+            watched = Stage(page, app, profile, address)
             page.on("request", lambda r: watched.requests.append((r.url, r.headers)))
             await page.goto(address)
             yield watched

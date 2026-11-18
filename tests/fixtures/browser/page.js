@@ -62,3 +62,7 @@ window.stage = {
   },
   read: () => ({ states, thrown, presented, flashes, heard }),
 };
+
+// A page that begins on load has had no user activation, as an app's page has not.
+const requested = new URLSearchParams(location.search).get("watch");
+if (requested !== null) window.stage.begin(requested);

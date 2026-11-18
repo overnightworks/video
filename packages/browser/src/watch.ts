@@ -8,6 +8,7 @@ export interface Watching {
 
 const SDP_TYPE = "application/sdp";
 const CREATED = 201;
+const OVER = ["failed", "closed"];
 
 /**
  * Watches a session through the app's own route: a receive-only peer, one POST of its
@@ -24,9 +25,10 @@ export function watch(
   let location: string | undefined;
   let stopped = false;
   let peer: RTCPeerConnection | undefined;
+  const stream = new MediaStream();
   const video = document.createElement("video");
   video.playsInline = true;
-  video.srcObject = new MediaStream();
+  video.srcObject = stream;
   host.append(video);
 
   const report = (next: WatchState): void => {
@@ -36,14 +38,19 @@ export function watch(
   };
   const end = (): void => {
     report("ended");
-    peer?.close();
+    video.srcObject = null;
     video.remove();
   };
+  const fail = (): void => {
+    end();
+    peer?.close();
+  };
   // The service keeps a viewer until it is deleted, so a stop deletes what the route made.
-  const release = (): void => {
+  const release = async (): Promise<void> => {
     if (!stopped || location === undefined) return;
-    void fetch(location, { method: "DELETE" }).catch(() => undefined);
+    const viewer = location;
     location = undefined;
+    await fetch(viewer, { method: "DELETE" }).catch(() => undefined);
   };
 
   const begin = async (): Promise<void> => {
@@ -51,9 +58,12 @@ export function watch(
     peer = connection;
     connection.addTransceiver("audio", { direction: "recvonly" });
     connection.addTransceiver("video", { direction: "recvonly" });
-    connection.ontrack = ({ track }) => (video.srcObject as MediaStream).addTrack(track);
-    connection.onconnectionstatechange = () => {
-      if (connection.connectionState === "failed" || connection.connectionState === "closed") end();
+    connection.ontrack = ({ track }) => stream.addTrack(track);
+    // A closed DTLS transport is the service's close of the viewer; the connection's own
+    // state follows it only after the ICE consent has lapsed.
+    const check = (): void => {
+      const dtls = connection.getReceivers()[0]!.transport!.state;
+      if (OVER.includes(connection.connectionState) || OVER.includes(dtls)) fail();
     };
     const gathered = new Promise<void>((resolve) => {
       connection.onicecandidate = ({ candidate }) => {
@@ -70,20 +80,23 @@ export function watch(
     const created = response.headers.get("Location");
     if (response.status !== CREATED || created === null) throw new Error(`the route answered ${response.status}`);
     location = created;
-    release();
+    void release();
     if (state === "ended") return;
     await connection.setRemoteDescription({ type: "answer", sdp: await response.text() });
+    connection.onconnectionstatechange = check;
+    connection.getReceivers()[0]!.transport!.onstatechange = check;
     video.requestVideoFrameCallback(() => report("drawn"));
     await video.play();
   };
 
   show("loading");
-  begin().catch(end);
+  begin().catch(fail);
   return {
     stop() {
       stopped = true;
       end();
-      release();
+      // The peer stays up until the delete has gone out, so the service ends the viewer by it.
+      void release().finally(() => peer?.close());
     },
   };
 }
