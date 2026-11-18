@@ -20,7 +20,7 @@ Run each from the repository root.
 - A new mandatory CI job is added by its display name to `mandatory_jobs` in `quality/config.toml`; the required check is `quality / verdict`.
 - A new root entry is declared in `quality/config.toml` with a reason, or lives in its owner's directory.
 - `sonar-project.properties` carries only the keys the quality gate allows.
-- Coverage reports are `coverage-<job>.xml` with paths relative to the repository root, as `[tool.coverage.run]` sets.
+- Coverage reports are `coverage-<job>.xml`, written without `relative_files`: its `<source>` is the checkout's absolute path, which SonarCloud's module per uv workspace member resolves each file against; a relative `<source>` leaves the other packages' files unresolved.
 
 ## Owners
 
