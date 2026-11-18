@@ -9,9 +9,11 @@ What runs today: one process that runs the provider `VIDEO_PROVIDER` names (only
 `fake` exists), fetches each look's image once at start, answers `GET /health` with
 the provider's readiness, what it plays and each look's readiness, and serves
 sessions over `WS /v1/sessions`: an app opens one on a look with two tokens, queues
-sentences of audio, clears them, and reads when each starts and stops. The picture
-does not leave the process yet: viewers, media and a real model are not built. The
-service downloads no weights and has no image to deploy.
+sentences of audio, clears them, and reads when each starts and stops. The session's
+opener adds viewers over `POST /v1/sessions/{id}/viewers` with a WebRTC offer and gets
+one Opus and VP8 stream of the provider's picture and sound, with the idle picture
+and silence between sentences. A real model and the browser package are not built.
+The service downloads no weights and has no image to deploy.
 
 ## Quick start
 
@@ -25,7 +27,7 @@ curl http://127.0.0.1:8080/health
 
 The service listens on `127.0.0.1:8080` and answers health at once; `ready` turns
 true when the start is over. On SIGINT or SIGTERM it drains: it reports not ready,
-refuses new sessions, lets each playing sentence finish and exits, at the latest
+refuses new sessions and viewers, lets each playing sentence finish and exits, at the latest
 `VIDEO_DRAIN_SECONDS` after the signal, the last second of it spent cutting the
 sessions left.
 
@@ -95,6 +97,7 @@ holds the settings that shape the wire.
 | `VIDEO_LOOK_MAX_PIXELS` | `16777216` | The most pixels (width times height) an image may have. |
 | `VIDEO_CONFIG_FILE` | required | The absolute path of the caller file ([Callers](#callers)). |
 | `VIDEO_MAX_SESSIONS` | `1` | The sessions the service admits, reported in health. |
+| `VIDEO_MAX_VIEWERS` | `5` | The most viewers a session admits. |
 | `VIDEO_MAX_QUEUED_AUDIO_SECONDS` | `30` | The most audio a session may queue. |
 | `VIDEO_MAX_LAG_MS` | `500` | The most a frame may be late, and the longest a provider call may take, before the session ends. |
 | `VIDEO_DRAIN_SECONDS` | `30` | The longest from the stop to the exit, the cut of the sessions left included. |
@@ -113,8 +116,8 @@ dependencies = [
 ]
 ```
 
-It holds the wire types (health, refusals and the session's events) and
-`fetch_health`. Its only dependency is pydantic.
+It holds the wire types (health, refusals, the session's events and the viewer
+paths) and `fetch_health`. Its only dependency is pydantic.
 
 ## Release
 
