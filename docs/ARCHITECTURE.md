@@ -55,10 +55,10 @@ flowchart LR
   dependency: the app relays the offer ([WIRE-14](wire.md#the-apps-route)).
 - `providers/provider-contract`: the port and the protocol. A provider reports what
   it plays and draws when it starts, prepares each look from a decoded image and
-  opens a session on a look, which takes sentence audio and returns frames; the
-  service fetches, checks and decodes every image, so a provider never touches the
-  network or an untrusted file, and it paces the frames, so a provider never keeps
-  time. The package also owns the private frame protocol and the worker loop a
+  opens a session on a look, which takes sentence audio and returns the frames each
+  call draws; the service fetches, checks and decodes every image, so a provider
+  never touches the network or an untrusted file, and it paces the frames, so a
+  provider never keeps time. The package also owns the private frame protocol and the worker loop a
   provider's script runs, depends on no other package and runs on Python 3.10 and
   up, since a provider's environment may be older than the service's.
 - `providers/fake`: a provider that holds no model. It draws blank frames on the
@@ -113,7 +113,7 @@ of input even while the model computes, so a service that dies leaves no child.
 ## Media
 
 A session owns a `Media`: the viewers its opener admitted and the frames they are fed.
-Each frame the player lets leave (a sentence's, or the face at rest on silence)
+Each frame the pacer lets leave (a sentence's, or the face at rest on silence)
 reaches every connected viewer together with the PCM of its frame period, resampled
 to 48 kHz; each viewer's peer encodes for itself with its own encoder, so a slow
 viewer holds back no other, and a viewer whose encoder stalls loses its oldest
@@ -141,15 +141,31 @@ ends. The service keeps no image; what a provider prepares stays inside it.
 ## Sessions
 
 `runtime.open_session` gives a place, or the refusal in the wire's order, and the
-route accepts the upgrade on it. `session.py` then runs three tasks and ends with
+route accepts the upgrade on it. `session.py` then runs four tasks and ends with
 the first that ends: the receive loop (events and audio in, queue and clear), the
-player (the queued sentences, one at a time, on the frame clock) and the drain
-watcher. The frame clock is one grid of frame periods: a sentence's audio sets it
-while it plays and the player draws the provider's idle frame on it while no sentence
-has audio, so the stream never stops. A frame is due one frame period after the one
-before, input the client sent after the last frame had left restarts the clock, and a
-frame (idle ones too) produced more than `VIDEO_MAX_LAG_MS` after its time ends the
-session `unavailable`.
+producer, the pacer and the drain watcher. The frame clock is one grid of frame
+periods: a sentence's audio sets it while it plays and the face at rest runs on it
+while no sentence has audio, so the stream never stops. A frame is due one frame
+period after the one before, input the client sent after the last frame had left
+restarts the clock, and a frame (idle ones too) that leaves more than
+`VIDEO_MAX_LAG_MS` after its time ends the session `unavailable`.
+
+The player draws ahead of the clock so that a provider which renders in chunks
+longer than a frame period serves a session without late frames, stalls or bursts.
+The producer is one task that submits one provider call at a time, at most one frame
+period of a sentence's audio a call, so no call takes longer than one render
+however large a binary message is. It keeps the frames it gets in a buffer bounded
+by `VIDEO_MAX_LAG_MS` of frames, and the pacer takes each from the buffer at its
+time on the clock, so the face at rest keeps leaving while a sentence's first chunk
+renders. When a sentence's first frame is in the buffer, the face at rest not yet
+let go is dropped and the sentence follows; the next queued sentence is fed while
+the one before still leaves, so no idle frame goes between them. Every buffered
+frame carries the generation of the sentence or idle run it belongs to: a clear
+bumps the generation, which discards the buffered frames and those of a call still
+in flight when it returns, and the provider is asked to drop the sentence on its
+own thread after that call. A chunked provider needs `VIDEO_MAX_LAG_MS` of at least
+two renders and a frame period, as a clear can leave a frame waiting for the render
+in flight and then the render of the face at rest.
 
 The opening of a provider session and every call into it run on a daemon thread of
 the session's own, so the provider is never entered twice and a call that never
@@ -157,9 +173,9 @@ returns holds back neither the session's end nor the process's exit: a call not 
 within `VIDEO_MAX_LAG_MS` ends the session `unavailable`, and the session gives up its
 place once the close of the provider session has taken that long. A session cut at
 the process's exit queues the close and gives up its place without waiting for it.
-A clear lets the call in flight finish before it asks the provider to drop the sentence. A sentence's `started`, `stopped`
-and `cleared` are sent under one lock that also decides whether the sentence was
-dropped, so no event follows its `cleared`.
+The producer is cancelled and gathered before the close is queued. A sentence's
+`started`, `stopped` and `cleared` are sent under one lock that also decides whether
+the sentence was dropped, so no event follows its `cleared`.
 
 ## Failure isolation
 
