@@ -78,10 +78,9 @@ def test_a_post_whose_client_drops_its_body_still_writes_its_viewer_line(
             yield b"v=0\r\n"
             raise _ClientAbortedError
 
+        body = first_chunk_only()
         with pytest.raises((_ClientAbortedError, httpx2.TransportError)):
-            await service.post(
-                session, first_chunk_only(), headers=_traced(_ABORTED_TRACE)
-            )
+            await service.post(session, body, headers=_traced(_ABORTED_TRACE))
         await service.logged.wait_for("viewer.ended")
 
     with configured("video"):
