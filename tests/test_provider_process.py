@@ -368,3 +368,17 @@ def test_a_provider_that_is_closed_does_not_start_and_serves_no_session(
     started.close()
     with pytest.raises(ProviderFailedError):
         started.start()
+
+
+def test_a_second_close_kills_no_process_group(
+    make_provider: MakeProvider, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    provider = make_provider(bounds=ProcessBounds())
+    provider.start()
+    provider.close()
+    killed: list[int] = []
+    monkeypatch.setattr(os, "killpg", lambda pid, _signal: killed.append(pid))
+
+    provider.close()
+
+    assert killed == []

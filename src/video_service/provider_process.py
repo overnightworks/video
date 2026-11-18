@@ -400,11 +400,13 @@ class ProcessProvider:
     def _reap(self, child: subprocess.Popen[bytes]) -> None:
         """Kill the worker's process group, reap it and close its input.
 
-        Its output pipes close in the threads that read them, which end at the end of
-        the output.
+        A child already reaped is not killed again: its pid may belong to another
+        process by now. Its output pipes close in the threads that read them, which
+        end at the end of the output.
         """
-        with suppress(ProcessLookupError):
-            os.killpg(child.pid, signal.SIGKILL)
+        if child.poll() is None:
+            with suppress(ProcessLookupError):
+                os.killpg(child.pid, signal.SIGKILL)
         child.wait()
         with suppress(OSError):
             _stream(child.stdin).close()
