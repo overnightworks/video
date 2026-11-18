@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
 
 _SERVICE_NAME: Final = "video"
+_CUT_SECONDS: Final = 1
 _CONFIG_FILE_REQUIRED: Final = "VIDEO_CONFIG_FILE is required: it names the callers"
 _LOGGER = logging.getLogger(__name__)
 
@@ -103,7 +104,8 @@ async def serve(
     """Serve health at once, load in the background, and drain when `stop` is set.
 
     A stop drains first: the service reports not ready, refuses new sessions and
-    waits up to `VIDEO_DRAIN_SECONDS` for the open ones to end before it exits.
+    waits up to `VIDEO_DRAIN_SECONDS` for the open ones to end, then cuts those left,
+    a session stuck in a provider call included, before it exits.
     Returns 0 after a stop, and 1 when the listener, the server or the load fails.
     """
     try:
@@ -112,7 +114,12 @@ async def serve(
         _LOGGER.exception("listener.failed", extra={"port": settings.port})
         return 1
     server = _ServiceServer(
-        uvicorn.Config(create_app(runtime, callers), log_config=None)
+        uvicorn.Config(
+            create_app(runtime, callers),
+            log_config=None,
+            # The cut of the sessions left after the drain ends within a second.
+            timeout_graceful_shutdown=_CUT_SECONDS,
+        )
     )
     fatal = asyncio.Event()
     with listener:

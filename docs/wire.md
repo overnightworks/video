@@ -132,9 +132,10 @@ audio as `audio_end_ms`. A failure sends `error`
 refusal list, `param` the field at fault or `null`, and `event_id` the client event's
 own id or `null`, and closes the session with `1000`. A provider that falls behind
 real time by more than `VIDEO_MAX_LAG_MS`, or that fails to draw, ends it with
-`unavailable`. The lag is how far a frame is produced after
-its time on the audio's clock; a client whose audio arrives late restarts the clock
-and is not a lag. A client that disconnects gets no event.
+`unavailable`. The lag is how far a frame is produced after its time on the audio's
+clock, a provider call that has not returned by then included; a client whose audio
+arrives late restarts the clock and is not a lag, while audio already queued keeps
+the lag the frames before it built up. A client that disconnects gets no event.
 
 **Trace.** The session's lines (`session.ended`) are written in the trace of
 `session.update`'s `traceparent`, and a sentence's line (`sentence.ended`, with
@@ -151,8 +152,9 @@ session finish, then closes the session with `1012` (Service Restart,
 `DRAIN_CLOSE_CODE` in `video_client.wire`) and no `error`. A sentence still queued is
 dropped without events; a session with no sentence playing closes at once; a clear
 during the drain ends the session after its `cleared`. The process exits when the
-last session has ended, or after `VIDEO_DRAIN_SECONDS`, when the sessions still open
-are closed with `1012` by the stop.
+last session has ended, or after `VIDEO_DRAIN_SECONDS`, when the sessions still open,
+one stuck in a provider call included, are closed with `1012` by the stop, which ends
+them within a second.
 
 ## Health
 

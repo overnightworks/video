@@ -26,7 +26,7 @@ curl http://127.0.0.1:8080/health
 The service listens on `127.0.0.1:8080` and answers health at once; `ready` turns
 true when the start is over. On SIGINT or SIGTERM it drains: it reports not ready,
 refuses new sessions, lets each playing sentence finish and exits, after
-`VIDEO_DRAIN_SECONDS` at the latest.
+`VIDEO_DRAIN_SECONDS` and one second to cut the sessions left at the latest.
 
 ## Callers
 
