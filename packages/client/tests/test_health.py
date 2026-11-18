@@ -63,6 +63,14 @@ def _stalls(connection: socket.socket, stopped: threading.Event) -> None:
     stopped.wait()
 
 
+def _floods_trailers(connection: socket.socket, stopped: threading.Event) -> None:
+    """Answer chunked, then send trailer lines without a pause past the deadline."""
+    connection.sendall(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n")
+    ends = time.monotonic() + DEADLINE_SECONDS + MARGIN_SECONDS
+    while time.monotonic() < ends and not stopped.is_set():
+        connection.sendall(b"X-Trailer: 1\r\n" * 100_000)
+
+
 def test_a_200_health_is_the_health(raw_listener: RawListener) -> None:
     with raw_listener(_ok(_HEALTH)) as (base_url, _):
         outcome = _fetch(base_url)
@@ -139,6 +147,17 @@ def test_an_answer_that_is_not_http_is_malformed(raw_listener: RawListener) -> N
 
 def test_a_server_that_stalls_is_past_the_deadline(raw_listener: RawListener) -> None:
     with raw_listener(_stalls) as (base_url, _):
+        began = time.monotonic()
+        outcome = _fetch(base_url, deadline_seconds=DEADLINE_SECONDS)
+
+    assert outcome == PastDeadline()
+    assert time.monotonic() - began < DEADLINE_SECONDS + MARGIN_SECONDS
+
+
+def test_a_response_that_never_stops_arriving_is_past_the_deadline(
+    raw_listener: RawListener,
+) -> None:
+    with raw_listener(_floods_trailers) as (base_url, _):
         began = time.monotonic()
         outcome = _fetch(base_url, deadline_seconds=DEADLINE_SECONDS)
 

@@ -17,7 +17,6 @@ from urllib.parse import urlsplit
 from video_client.outcomes import Cut, Malformed, OverCap, PastDeadline, Unreachable
 
 _READ_BYTES: Final = 64 * 1024
-_LEAST_TIMEOUT_SECONDS: Final = 0.001
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,8 +71,12 @@ class _DeadlineSocket(socket.socket):
         self._deadline = deadline
 
     def arm(self) -> None:
+        remaining = self._deadline - time.monotonic()
         # settimeout(0) would make the socket non-blocking and a negative value raises.
-        self.settimeout(max(self._deadline - time.monotonic(), _LEAST_TIMEOUT_SECONDS))
+        if remaining <= 0:
+            message = "the deadline passed"
+            raise TimeoutError(message)
+        self.settimeout(remaining)
 
     def sendall(self, data: bytes, flags: int = 0) -> None:
         self.arm()
