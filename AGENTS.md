@@ -16,7 +16,7 @@ Run each from the repository root.
 ## Rules
 
 - `packages/client` owns the wire's types and `docs/wire.md` its ruled behaviour; the service imports the types and copies none.
-- A provider is reached only through the port in `providers/provider-contract`; the service fetches, checks and decodes every image, a provider never does.
+- A provider is reached only through the port in `providers/provider-contract`, in a child process that only `src/video_service/provider_process.py` starts; the service fetches, checks and decodes every image, a provider never does.
 - `looks.py` is the only module that fetches a look's image, and only at start; nothing fetches during a session.
 - The `fake` provider is a development dependency: no image installs it, and nothing under `src/` imports it at module level.
 - The service offers no `/docs`, `/redoc`, `/openapi.json`, look administration, upload or recording.
