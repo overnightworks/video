@@ -1,0 +1,8 @@
+claim_id = "4a4a20f917be41a7b55eca2fa554303f"
+agent = "Claude 9dc12da3-ab64-4985-bb01-3681b1c64c09"
+role = "builder"
+base = "89173f35e2ca6e12b0549d8c39984142a5dd9624"
+branch = "claude/issue-17-p3a-provider-process"
+scope = [".github/workflows", "README.md", "docs/ARCHITECTURE.md", "providers/fake", "providers/provider-contract", "pyproject.toml", "quality/config.toml", "scripts/check_release.py", "sonar-project.properties", "src/video_service", "tests", "uv.lock"]
+opened_commit = "5138c5c8c3ca9d34b94c7c9b7c660fc4e359de88"
+whole_reason = "One boundary moves: the contract, its two sides and the runtime that holds it change together, or two provider paths would stay."
