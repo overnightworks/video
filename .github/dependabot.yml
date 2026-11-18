@@ -17,3 +17,7 @@ updates:
     groups:
       uv-video:
         update-types: [minor, patch]
+  - package-ecosystem: npm
+    directory: /packages/browser
+    schedule:
+      interval: weekly
