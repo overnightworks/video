@@ -57,6 +57,9 @@ _VIDEO_CLOCK_RATE: Final = 90_000
 _BYTES_PER_SAMPLE: Final = 2
 _BYTES_PER_PIXEL: Final = 3
 
+type PeerFactory = Callable[[RTCConfiguration], RTCPeerConnection]
+"""Builds a viewer's peer from its ICE configuration."""
+
 
 class ViewerEnd(StrEnum):
     """Why a viewer ended."""
@@ -129,11 +132,11 @@ class _Viewer:
 
     def __init__(
         self,
-        configuration: RTCConfiguration,
+        peer: RTCPeerConnection,
         depth: int,
         on_peer_closed: Callable[[], None],
     ) -> None:
-        self._peer = RTCPeerConnection(configuration)
+        self._peer = peer
         self._audio = _FeedTrack(_AUDIO, depth)
         self._video = _FeedTrack(_VIDEO, depth)
         self.connected = False
@@ -182,10 +185,16 @@ class _Viewer:
 class Media:
     """The viewers of one session and the frames they are fed."""
 
-    def __init__(self, video: VideoFormat, max_viewers: int) -> None:
-        """Serve viewers of a picture of `video`, at most `max_viewers` at a time."""
+    def __init__(
+        self, video: VideoFormat, max_viewers: int, peers: PeerFactory
+    ) -> None:
+        """Serve viewers of a picture of `video`, at most `max_viewers` at a time.
+
+        Each viewer's peer is built by `peers`.
+        """
         self._video = video
         self._max_viewers = max_viewers
+        self._peers = peers
         self._ice: IceConfiguration | None = None
         self._viewers: dict[str, _Viewer] = {}
         self._watchers: set[asyncio.Task[None]] = set()
@@ -217,7 +226,7 @@ class Media:
         viewer_id = uuid4().hex
         try:
             viewer = _Viewer(
-                self._configuration(),
+                self._peers(self._configuration()),
                 self._video.frame_rate,
                 lambda: self._end(viewer_id, ViewerEnd.PEER_CLOSED),
             )

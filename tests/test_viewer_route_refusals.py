@@ -27,7 +27,6 @@ from video_client.wire import (
     viewer_path,
     viewers_path,
 )
-from video_service import media
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable
@@ -303,7 +302,7 @@ def test_a_body_sent_in_chunks_is_cut_off_at_the_cap(live: Callable[..., None]) 
 
 
 def test_a_viewer_whose_session_ends_while_its_offer_is_negotiated_is_not_found(
-    live: Callable[..., None], monkeypatch: pytest.MonkeyPatch
+    live: Callable[..., None],
 ) -> None:
     reached = asyncio.Event()
     release = asyncio.Event()
@@ -317,8 +316,6 @@ def test_a_viewer_whose_session_ends_while_its_offer_is_negotiated_is_not_found(
             await release.wait()
             await super().setRemoteDescription(sessionDescription)
 
-    monkeypatch.setattr(media, "RTCPeerConnection", Negotiating)
-
     async def scenario(service: Service) -> None:
         session = await service.open_session()
         posting = asyncio.create_task(service.post(session, await offer_of()))
@@ -330,4 +327,4 @@ def test_a_viewer_whose_session_ends_while_its_offer_is_negotiated_is_not_found(
 
         assert _refused(await posting) == (HTTPStatus.NOT_FOUND, RefusalCode.NOT_FOUND)
 
-    live(scenario)
+    live(scenario, peers=Negotiating)

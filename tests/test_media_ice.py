@@ -2,77 +2,106 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+import asyncio
+import struct
+from typing import TYPE_CHECKING
 
-import pytest
-from aiortc import rtcicetransport
+from aiortc import RTCPeerConnection
 
 from support.session_support import ICE_SERVERS
 from support.viewer_support import Service, offer_of
-from video_service import media
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from aiortc import RTCConfiguration
 
-
-@pytest.fixture
-def peers(monkeypatch: pytest.MonkeyPatch) -> list[RTCConfiguration]:
-    """The configurations the service builds its viewers' peers with."""
-    configurations: list[RTCConfiguration] = []
-    build_peer = media.RTCPeerConnection
-
-    def recording(configuration: RTCConfiguration) -> media.RTCPeerConnection:
-        configurations.append(configuration)
-        return build_peer(configuration)
-
-    monkeypatch.setattr(media, "RTCPeerConnection", recording)
-    return configurations
+_STUN_MAGIC_COOKIE = 0x2112A442
+_STUN_HEADER = struct.Struct("!HHI")
+_STUN_CLASS_BITS = 14
 
 
-@pytest.fixture
-def stun_servers(monkeypatch: pytest.MonkeyPatch) -> list[object]:
-    """The STUN server each ICE connection of the process is built with."""
-    chosen: list[object] = []
-    build_connection = rtcicetransport.Connection
+class _RecordingPeers:
+    """A peer factory that notes the configuration of every peer it builds."""
 
-    def recording(**options: Any) -> rtcicetransport.Connection:  # noqa: ANN401 - aioice's own keywords
-        chosen.append(options.get("stun_server"))
-        return build_connection(**options)
+    def __init__(self) -> None:
+        self.configurations: list[RTCConfiguration] = []
 
-    monkeypatch.setattr(rtcicetransport, "Connection", recording)
-    return chosen
+    def __call__(self, configuration: RTCConfiguration) -> RTCPeerConnection:
+        self.configurations.append(configuration)
+        return RTCPeerConnection(configuration)
 
 
-def test_an_empty_ice_server_list_stays_empty_and_no_stun_server_is_used(
+class _StunEgress:
+    """Where the STUN packets sent from the event loop's UDP sockets go.
+
+    Every ICE agent of the process, the service's and the test viewer's, opens its
+    sockets through the loop's datagram endpoints, so this sees each STUN packet as
+    it leaves its socket, and the address each socket is bound to.
+    """
+
+    def __init__(self, loop: asyncio.AbstractEventLoop) -> None:
+        self.destinations: list[str] = []
+        self.own_addresses: set[str] = set()
+        self._open_endpoint = loop.create_datagram_endpoint
+        loop.create_datagram_endpoint = self._recording_endpoint
+
+    async def _recording_endpoint(
+        self, *args: object, **options: object
+    ) -> tuple[asyncio.DatagramTransport, asyncio.DatagramProtocol]:
+        transport, protocol = await self._open_endpoint(*args, **options)
+        self.own_addresses.add(transport.get_extra_info("sockname")[0])
+        send = transport.sendto
+
+        def sendto(data: bytes, address: tuple[str, int] | None = None) -> None:
+            if _is_stun(data) and address is not None:
+                self.destinations.append(address[0])
+            send(data, address)
+
+        transport.sendto = sendto
+        return transport, protocol
+
+
+def _is_stun(data: bytes) -> bool:
+    """Whether `data` is a STUN message (RFC 8489, section 5)."""
+    if len(data) < _STUN_HEADER.size:
+        return False
+    kind, _length, cookie = _STUN_HEADER.unpack_from(data)
+    return not kind >> _STUN_CLASS_BITS and cookie == _STUN_MAGIC_COOKIE
+
+
+def test_an_empty_ice_server_list_stays_empty_and_no_stun_packet_leaves_the_host(
     live: Callable[..., None],
-    peers: list[RTCConfiguration],
-    stun_servers: list[object],
 ) -> None:
+    peers = _RecordingPeers()
+
     async def scenario(service: Service) -> None:
+        egress = _StunEgress(asyncio.get_running_loop())
         session = await service.open_session()
 
-        await service.post(session, await offer_of())
+        watcher = await service.watch(session)
+        await watcher.received.until(lambda received: bool(received.video_pts))
 
-        (configuration,) = peers
+        (configuration,) = peers.configurations
         assert configuration.iceServers == []
-        assert stun_servers
-        assert not any(stun_servers)
+        assert egress.destinations
+        assert set(egress.destinations) <= egress.own_addresses
 
-    live(scenario)
+    live(scenario, peers=peers)
 
 
 def test_the_session_s_ice_servers_and_policy_are_the_peer_s(
-    live: Callable[..., None], peers: list[RTCConfiguration]
+    live: Callable[..., None],
 ) -> None:
+    peers = _RecordingPeers()
+
     async def scenario(service: Service) -> None:
         session = await service.open_session(update=False)
         await session.update(ICE_SERVERS, "relay")
 
         await service.post(session, await offer_of())
 
-        (configuration,) = peers
+        (configuration,) = peers.configurations
         assert [
             (server.urls, server.username, server.credential)
             for server in configuration.iceServers
@@ -82,4 +111,4 @@ def test_the_session_s_ice_servers_and_policy_are_the_peer_s(
         ]
         assert configuration.iceTransportPolicy.value == "relay"
 
-    live(scenario)
+    live(scenario, peers=peers)

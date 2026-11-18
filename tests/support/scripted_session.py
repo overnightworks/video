@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING, cast
 
+from aiortc import RTCPeerConnection
+
 from support.scripted_socket import ScriptedSocket
 from support.session_support import EVENT_WITHIN_SECONDS, update_event
 from video_client.wire import VideoFormat
@@ -46,6 +48,7 @@ def play(
             max_queued_audio_seconds=30, max_lag_ms=max_lag_ms, max_viewers=1
         ),
         pacing=pacing,
+        peers=RTCPeerConnection,
         draining=asyncio.Event(),
         release=lambda: None,
     )

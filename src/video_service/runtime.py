@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from functools import partial
 from typing import TYPE_CHECKING, Final
 
+from aiortc import RTCPeerConnection
 from logline import StepTimer
 from video_provider_contract import ProviderFailedError
 
@@ -52,6 +53,7 @@ if TYPE_CHECKING:
 
     from video_service.config import Settings
     from video_service.looks import LookSource
+    from video_service.media import PeerFactory
     from video_service.providers import ProviderName
     from video_service.session import Session
 
@@ -145,6 +147,7 @@ class Place:
         video: VideoFormat,
         limits: SessionLimits,
         pacing: Pacing,
+        peers: PeerFactory,
         draining: asyncio.Event,
         release: Callable[[], None],
     ) -> None:
@@ -154,6 +157,7 @@ class Place:
         self.video = video
         self.limits = limits
         self.pacing = pacing
+        self.peers = peers
         self.draining = draining
         self._release = release
 
@@ -175,6 +179,7 @@ class Runtime:
         max_sessions: int,
         session_limits: SessionLimits,
         pacing: Pacing = REAL_TIME,
+        peers: PeerFactory = RTCPeerConnection,
         memory_probe: Callable[[], int] = card_memory_mb,
     ) -> None:
         """Offer the keys of `looks`, none of them ready until `load` ends."""
@@ -185,6 +190,7 @@ class Runtime:
         self._max_sessions = max_sessions
         self._session_limits = session_limits
         self._pacing = pacing
+        self._peers = peers
         self._memory_probe = memory_probe
         self._lock = threading.Lock()
         self._provider_info: ProviderInfo | None = None
@@ -283,6 +289,7 @@ class Runtime:
             video=admitted,
             limits=self._session_limits,
             pacing=self._pacing,
+            peers=self._peers,
             draining=self._drain_begun,
             release=self._give_back,
         )

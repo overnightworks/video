@@ -185,7 +185,7 @@ class Session:
         self._draining = False
         self._schedule = _Schedule(1 / self._frame_rate)
         self._sentence_count = 0
-        self._media = Media(place.video, place.limits.max_viewers)
+        self._media = Media(place.video, place.limits.max_viewers, place.peers)
         self.opener = opener
 
     @property
