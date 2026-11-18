@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import struct
 from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
@@ -40,6 +41,7 @@ WITHIN_SECONDS: Final = 15.0
 FRAME_RATE: Final = 25
 VIDEO_TICKS_PER_FRAME: Final = 90_000 // FRAME_RATE
 BEEP_PEAK: Final = 20_000
+TONE_HZ: Final = 1_000
 _LOUD_AUDIO: Final = 2_000
 _BRIGHT_LUMA: Final = 128
 _LUMA_SAMPLE: Final = 64
@@ -50,6 +52,21 @@ def beep(milliseconds: int, rate: int = 16_000) -> bytes:
     """Loud PCM16 mono audio of `milliseconds`: a square wave."""
     samples = rate * milliseconds // 1000
     return struct.pack(f"<{samples}h", *([BEEP_PEAK, -BEEP_PEAK] * samples)[:samples])
+
+
+def tone(tone_ms: int, total_ms: int, rate: int = 16_000) -> bytes:
+    """PCM16 mono audio of `total_ms`: a 1 kHz sine for `tone_ms`, then silence."""
+    samples = rate * total_ms // 1000
+    loud = rate * tone_ms // 1000
+    return struct.pack(
+        f"<{samples}h",
+        *(
+            int(BEEP_PEAK * math.sin(2 * math.pi * TONE_HZ * index / rate))
+            if index < loud
+            else 0
+            for index in range(samples)
+        ),
+    )
 
 
 class Logged(logging.Handler):
@@ -70,9 +87,11 @@ class Logged(logging.Handler):
         """The lines of `event` written so far."""
         return [record for record in self.records if record.getMessage() == event]
 
-    async def wait_for(self, event: str, count: int = 1) -> list[logging.LogRecord]:
+    async def wait_for(
+        self, event: str, count: int = 1, within_seconds: float = WITHIN_SECONDS
+    ) -> list[logging.LogRecord]:
         """The lines of `event` once `count` of them are written."""
-        async with asyncio.timeout(WITHIN_SECONDS):
+        async with asyncio.timeout(within_seconds):
             while len(self.lines(event)) < count:
                 self._written.clear()
                 await self._written.wait()
@@ -218,6 +237,10 @@ class Service:
     http: httpx2.AsyncClient
     logged: Logged
     stack: AsyncExitStack
+
+    def viewer_ends(self) -> list[str]:
+        """What ended each viewer, in the order of the `viewer.ended` lines."""
+        return [line.ended_by for line in self.logged.lines("viewer.ended")]
 
     async def open_session(
         self, headers: dict[str, str] | None = None, *, update: bool = True

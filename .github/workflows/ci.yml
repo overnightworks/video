@@ -51,14 +51,166 @@ jobs:
       - name: Upload the coverage report
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: coverage
+          name: coverage-root
           path: coverage-root.xml
+          if-no-files-found: error
+
+  browser-package:
+    name: "Video: browser package"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: packages/browser
+    steps:
+      - name: Check out the event commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6
+        with:
+          package_json_file: packages/browser/package.json
+
+      - name: Install Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version-file: packages/browser/package.json
+          check-latest: true
+          cache: pnpm
+          cache-dependency-path: packages/browser/pnpm-lock.yaml
+
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Check types
+        run: pnpm run check
+
+      - name: Pack the tarball and install it into an empty project
+        env:
+          MCR_LCOV_FILE: coverage-browser-pack.lcov
+        run: pnpm exec mcr -c mcr.config.js node scripts/pack-release.js "$RUNNER_TEMP/release-files"
+
+      - name: Upload the pack script's coverage report
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-browser-pack
+          path: packages/browser/coverage-scripts/coverage-browser-pack.lcov
+          if-no-files-found: error
+
+  browser-layer:
+    name: "Video: browser layer"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out the event commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+          version: "0.10.9"
+
+      - name: Install locked dependencies
+        run: uv sync --locked --all-groups --no-build
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6
+        with:
+          package_json_file: packages/browser/package.json
+
+      - name: Install Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version-file: packages/browser/package.json
+          check-latest: true
+          cache: pnpm
+          cache-dependency-path: packages/browser/pnpm-lock.yaml
+
+      - name: Build the browser package
+        working-directory: packages/browser
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm run build
+
+      - name: Cache Chromium
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: ms-playwright-${{ runner.os }}-${{ hashFiles('uv.lock') }}
+
+      # The build is the one the locked playwright downloads, so it matches the
+      # driver; no operating-system package is installed, so apt is not on this path.
+      - name: Install Chromium
+        timeout-minutes: 5
+        run: uv run --locked --no-build playwright install chromium
+
+      - name: Run the browser layer
+        timeout-minutes: 8
+        env:
+          VIDEO_BROWSER_COVERAGE_DIR: ${{ runner.temp }}/browser-coverage-raw
+        # pytest-workers: one worker, the scenarios measure real-time audio and picture
+        run: uv run --locked --no-build pytest -q -m browser tests
+
+      - name: Convert the page coverage to lcov
+        working-directory: packages/browser
+        env:
+          VIDEO_BROWSER_COVERAGE_DIR: ${{ runner.temp }}/browser-coverage-raw
+          MCR_LCOV_FILE: coverage-browser-report.lcov
+        run: pnpm exec mcr -c mcr.config.js node scripts/page-coverage-report.js "${VIDEO_BROWSER_COVERAGE_DIR}"
+
+      - name: Upload the coverage report
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-browser
+          path: packages/browser/coverage/coverage-browser.lcov
+          if-no-files-found: error
+
+      - name: Upload the report script's coverage report
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-browser-report
+          path: packages/browser/coverage-scripts/coverage-browser-report.lcov
+          if-no-files-found: error
+
+  coverage:
+    name: coverage
+    needs:
+      - video
+      - browser-package
+      - browser-layer
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Download the coverage reports
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: coverage-*
+          merge-multiple: true
+
+      - name: Upload the coverage reports for the quality gate
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage
+          path: |
+            coverage-root.xml
+            coverage-browser.lcov
+            coverage-browser-pack.lcov
+            coverage-browser-report.lcov
           if-no-files-found: error
 
   quality:
     name: quality
     needs:
       - video
+      - browser-package
+      - browser-layer
+      - coverage
     if: always()
     uses: overnightworks/quality/.github/workflows/gate.yml@1d66f90569946cf182634a3372e1e183cec8353b # v0.22.0
     with:

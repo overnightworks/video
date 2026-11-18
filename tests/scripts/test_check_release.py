@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING
 
 import pytest
@@ -19,10 +20,18 @@ def _project(root: Path, directory: str, version: str) -> None:
     )
 
 
+def _package(root: Path, directory: str, version: str) -> None:
+    (root / directory).mkdir(parents=True, exist_ok=True)
+    (root / directory / "package.json").write_text(
+        json.dumps({"name": "x", "version": version}), encoding="utf-8"
+    )
+
+
 @pytest.fixture
 def repository(tmp_path: Path) -> Path:
     _project(tmp_path, ".", "1.2.3")
     _project(tmp_path, "packages/client", "1.2.3")
+    _package(tmp_path, "packages/browser", "1.2.3")
     _project(tmp_path, "providers/fake", "1.2.3")
     return tmp_path
 
@@ -38,6 +47,15 @@ def test_a_project_at_another_version_is_named(repository: Path) -> None:
     assert release_faults(repository, None)
     assert release_faults(repository, "1.2.3") == [
         "providers/fake/pyproject.toml stands at 1.2.4, the release is 1.2.3"
+    ]
+
+
+def test_a_package_at_another_version_is_named(repository: Path) -> None:
+    _package(repository, "packages/browser", "1.2.4")
+
+    assert release_faults(repository, None)
+    assert release_faults(repository, "1.2.3") == [
+        "packages/browser/package.json stands at 1.2.4, the release is 1.2.3"
     ]
 
 

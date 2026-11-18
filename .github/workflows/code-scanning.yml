@@ -23,4 +23,4 @@ jobs:
       actions: read
     uses: overnightworks/quality/.github/workflows/codeql.yml@1d66f90569946cf182634a3372e1e183cec8353b # v0.22.0
     with:
-      languages: '["actions", "python"]'
+      languages: '["actions", "javascript-typescript", "python"]'

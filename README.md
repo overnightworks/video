@@ -12,8 +12,8 @@ sessions over `WS /v1/sessions`: an app opens one on a look with two tokens, que
 sentences of audio, clears them, and reads when each starts and stops. The session's
 opener adds viewers over `POST /v1/sessions/{id}/viewers` with a WebRTC offer and gets
 one Opus and VP8 stream of the provider's picture and sound, with the idle picture
-and silence between sentences. A real model and the browser package are not built.
-The service downloads no weights and has no image to deploy.
+and silence between sentences. The browser package shows that stream in a page. A real
+model is not built. The service downloads no weights and has no image to deploy.
 
 ## Quick start
 
@@ -119,12 +119,39 @@ dependencies = [
 It holds the wire types (health, refusals, the session's events and the viewer
 paths) and `fetch_health`. Its only dependency is pydantic.
 
+## Install the browser package
+
+A page shows a session with `overnightworks-video-browser`, which has no runtime
+dependency. The release notes give its tarball URL and integrity; add it to the app's
+front end as pnpm writes it into the lockfile:
+
+```sh
+pnpm add https://github.com/overnightworks/video/releases/download/vX.Y.Z/overnightworks-video-browser-X.Y.Z.tgz
+```
+
+```ts
+import { watch } from "overnightworks-video-browser";
+
+const watching = watch(host, "/video/viewers", iceServers, (state) => {
+  // "loading", then "drawn" once a frame is painted; "ended" for good on any failure,
+  // which deletes the viewer the route made
+});
+watching.stop(); // ends the viewer and deletes it
+```
+
+`watch` posts the browser's offer to the app's own route `path`, so the app relays it
+to the service with the session's tokens and the browser never holds one. The route's
+contract is [WIRE-14](docs/wire.md#the-apps-route). A page needs the user to have
+interacted with it before `watch` plays sound; otherwise the browser refuses the
+playback and the state is `ended`.
+
 ## Release
 
 Dispatch `.github/workflows/release.yml` with the version `X.Y.Z`, which every
-`pyproject.toml` of the repository must stand at (`uv run python
-scripts/check_release.py X.Y.Z` checks it). The release proves the client installs
-by its Git pin at the gated commit and tags it.
+`pyproject.toml` and `packages/*/package.json` of the repository must stand at
+(`uv run python scripts/check_release.py X.Y.Z` checks it). The release proves the
+client installs by its Git pin at the gated commit, packs the browser package as a
+tarball release file and proves it installs, and tags the commit.
 
 ## Documentation
 

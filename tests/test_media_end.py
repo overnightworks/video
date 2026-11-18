@@ -19,10 +19,6 @@ if TYPE_CHECKING:
 _FRAMES_AFTER = 5
 
 
-def _ended_by(service: Service) -> list[str]:
-    return [line.ended_by for line in service.logged.lines("viewer.ended")]
-
-
 def test_a_viewer_whose_peer_closes_ends_and_the_session_keeps_serving_the_others(
     live: Callable[..., None],
 ) -> None:
@@ -40,7 +36,7 @@ def test_a_viewer_whose_peer_closes_ends_and_the_session_keeps_serving_the_other
         )
         replacement = await service.post(session, await offer_of())
 
-        assert _ended_by(service) == [ViewerEnd.PEER_CLOSED]
+        assert service.viewer_ends() == [ViewerEnd.PEER_CLOSED]
         assert replacement.status_code == HTTPStatus.CREATED
 
     live(scenario, max_viewers=2)
@@ -80,6 +76,6 @@ def test_every_viewer_ends_with_its_session(
         await ending(session, service)
 
         await service.logged.wait_for("viewer.ended", 2)
-        assert _ended_by(service) == [ViewerEnd.SESSION_ENDED] * 2
+        assert service.viewer_ends() == [ViewerEnd.SESSION_ENDED] * 2
 
     live(scenario)

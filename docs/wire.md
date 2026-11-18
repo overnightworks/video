@@ -179,8 +179,12 @@ the first of:
 viewer and answers 200; an unknown or ended viewer is `not_found`. PATCH, like any
 other method a path does not offer, is `not_found` (WIRE-1). A viewer also ends when
 its peer closes (DTLS close or ICE failure), and with its session, whatever ends
-the session. ICE consent expiry ends a viewer through the ICE failure it causes, as
-WHEP requires of a server; its timing is the ICE library's.
+the session. A connected peer that goes silent without a DTLS close, a browser
+killed for one, ends its viewer through ICE consent expiry (RFC 7675), as WHEP
+requires of a server; its timing is the ICE library's, about 39 s at worst with
+aioice 0.13.0. The service sets no deadline on a connection that is never
+established: a viewer whose peer never applies the answer holds its place until it
+is deleted or its session ends.
 
 **WIRE-10** A viewer receives one Opus audio track and one VP8 video track in one
 stream with one CNAME, so the browser keeps sound and picture together (RFC 3550,
@@ -201,6 +205,35 @@ refused, with outcome `refused` and the refusal's code as `reason`. The session'
 line carries `viewer_count`, the viewers admitted over its life. The offer, the
 answer, the candidates, the ICE credentials and the tokens are never logged, at any
 `LOG_LEVEL`.
+
+## The app's route
+
+**WIRE-14** The browser package's `watch(host, path, iceServers, show)` calls the
+app's own route at `path`, never the service, so no token reaches a browser; the
+route relays to WIRE-9 with the session's tokens. Its contract:
+
+- `POST path` with `Content-Type: application/sdp` and the browser's non-trickle
+  offer as body (every candidate is in it) answers 201 with the SDP answer as body
+  and `Location`, the app's own path of the viewer. The route bounds the body as
+  WIRE-9 does (`MAX_OFFER_BYTES`) and rewrites the service's `Location`.
+- `DELETE` on that `Location` ends the viewer and answers 2xx, relayed to WIRE-9.
+- An answer other than 201 (the service's `busy` or `unavailable` relayed, or the
+  app's own refusal), a 201 with no `Location` or an answer that does not set, a
+  route that cannot be reached, a refused `play()` (the autoplay policy) and a peer
+  connection that fails or closes each end the viewer: `show` gets `ended`, once,
+  and `watch` throws nothing. `show` otherwise gets `loading`, then `drawn` once a
+  frame is painted. A refused `play()` is `ended`, never a muted picture.
+- Every end after the route has answered 201, a failure as much as `stop()`, sends
+  the `DELETE` to its `Location`, so the viewer frees its place without the app.
+- `stop()` sends the `DELETE` and reports `ended` at once. A `stop()` before the POST
+  has answered waits for the answer, then deletes: an aborted POST may already have
+  made a viewer, which would hold one of the session's `VIDEO_MAX_VIEWERS` places
+  until it is deleted or its session ends (WIRE-9).
+- `watch` sets no deadline on the POST: a route that never answers stays `loading`
+  until the app calls `stop()`.
+- `watch` waits for ICE gathering to complete before the POST, with no deadline
+  either: with STUN or TURN servers that do not answer, the page stays `loading`
+  until the browser gives up on them, about 40 s in Chromium.
 
 ## Drain
 
