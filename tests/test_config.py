@@ -129,8 +129,10 @@ def test_an_empty_look_file_offers_no_look(tmp_path: Path) -> None:
 def test_a_look_file_that_breaks_the_form_stops_the_start(
     text: str, tmp_path: Path
 ) -> None:
+    path = _look_file(tmp_path, text)
+
     with pytest.raises(ValueError, match=r"VIDEO_LOOKS_FILE"):
-        read_look_file(_look_file(tmp_path, text))
+        read_look_file(path)
 
 
 @pytest.mark.parametrize("content", [None, b"\xff\xfe"], ids=["missing", "not-utf8"])
