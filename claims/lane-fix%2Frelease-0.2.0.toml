@@ -1,8 +1,0 @@
-claim_id = "763199c834c340049d03b56e0b632982"
-agent = "Claude 21fd863e-01fb-442b-a634-e988b43fd9d7"
-role = "builder"
-base = "5194bfa48d320a980aca0c00673a2673f1a3eb01"
-branch = "fix/release-0.2.0"
-scope = ["packages/client/pyproject.toml", "providers/fake/pyproject.toml", "providers/provider-contract/pyproject.toml", "pyproject.toml", "uv.lock"]
-opened_commit = "3c5aeadb5ea0bce1fa8b1a5e31b92b4bd6df419d"
-whole_reason = "Every pyproject.toml stands at one version (check_release.py), so the release bump touches all four plus uv.lock"
