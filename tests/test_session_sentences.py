@@ -122,7 +122,7 @@ def test_a_sentence_whose_audio_comes_late_is_not_a_provider_lag(
         session.send_bytes(pcm(_CHUNK_MS))
         assert isinstance(receive(session), OutputAudioBufferStarted)
         # The client's audio stalls for longer than the lag the service bounds.
-        clock.advance(_STALL_SECONDS)
+        clock.stall(_STALL_SECONDS)
         session.send_bytes(pcm(_CHUNK_MS))
         session.send_json(end)
 

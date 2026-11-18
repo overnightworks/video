@@ -210,7 +210,7 @@ class Session:
         self._worker.stop()
         try:
             # Shielded: an ending of this task never drops the close still queued.
-            await asyncio.wait_for(
+            await self._place.pacing.deadline(
                 asyncio.shield(asyncio.wrap_future(closing)), self._lag_limit
             )
         except TimeoutError:
@@ -487,7 +487,7 @@ class Session:
     async def _call[Result](self, work: Callable[[], Result], within: float) -> Result:
         """Run `work` on the provider thread; late, the session is unavailable."""
         try:
-            return await asyncio.wait_for(
+            return await self._place.pacing.deadline(
                 asyncio.wrap_future(self._worker.submit(work)), within
             )
         except TimeoutError:

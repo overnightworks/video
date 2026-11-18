@@ -18,7 +18,7 @@ import logging
 import threading
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Final, Protocol
 
 from logline import StepTimer
 from video_provider_contract import ProviderFailedError
@@ -61,12 +61,22 @@ class SessionLimits:
     max_lag_ms: int
 
 
+class Deadline(Protocol):
+    """Awaits a call for at most the seconds given, or raises `TimeoutError`."""
+
+    async def __call__[Result](
+        self, awaited: Awaitable[Result], seconds: float, /
+    ) -> Result:
+        """The result of `awaited`, which must not take longer than `seconds`."""
+
+
 @dataclass(frozen=True, slots=True)
 class Pacing:
-    """The clock a session paces its frames on, and how it waits for a frame's time."""
+    """The session's clock: its time, its wait for a frame and its bound on a call."""
 
     now: Callable[[], float] = time.perf_counter
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep
+    deadline: Deadline = asyncio.wait_for
 
 
 REAL_TIME: Final = Pacing()
