@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 from typing import TYPE_CHECKING, cast
 
 from video_provider_fake import FakeProvider
@@ -15,7 +16,11 @@ from support.session_support import (
     sentence_events,
     update_event,
 )
-from video_client.session_wire import ErrorEvent, ServerEvent
+from video_client.session_wire import (
+    ErrorEvent,
+    OutputAudioBufferStopped,
+    ServerEvent,
+)
 from video_client.wire import RefusalCode, VideoFormat
 from video_service.runtime import Pacing, Place, SessionLimits
 from video_service.session import Session
@@ -23,13 +28,18 @@ from video_service.session import Session
 if TYPE_CHECKING:
     from starlette.websockets import WebSocket
 
+    from support.scripted_socket import Step
+
 _FRAME_MS = 40
 _RENDER_SECONDS = 0.1
 _MAX_LAG_MS = 150
+_PARTIAL_FRAME_MS = 50
+_END_DURING_FRAME_SECONDS = 0.09
+_SLOW_CLIENT_MAX_LAG_MS = 1000
 
 
 def _played(
-    script: list[dict[str, object] | bytes],
+    script: list[dict[str, object] | bytes | Step],
     sentences: int,
     *,
     provider: FakeProvider,
@@ -84,3 +94,64 @@ def test_queued_audio_keeps_the_lag_the_frames_before_it_built_up() -> None:
     failure = events[-1]
     assert isinstance(failure, ErrorEvent)
     assert failure.error.code is RefusalCode.UNAVAILABLE
+
+
+def test_a_sentence_ended_while_its_first_frame_draws_keeps_that_frames_lag() -> None:
+    clock = FakeClock()
+    drawing = threading.Event()
+    ended = threading.Event()
+
+    def draw(seconds: float) -> None:
+        if drawing.is_set():
+            clock.advance(seconds)
+            return
+        clock.advance(_END_DURING_FRAME_SECONDS)
+        drawing.set()
+        ended.wait(EVENT_WITHIN_SECONDS)
+        clock.advance(seconds - _END_DURING_FRAME_SECONDS)
+
+    async def while_the_first_frame_draws(_socket: ScriptedSocket) -> None:
+        await asyncio.to_thread(drawing.wait, EVENT_WITHIN_SECONDS)
+
+    async def once_ended(_socket: ScriptedSocket) -> None:
+        ended.set()
+
+    start, end = sentence_events("a")
+    events = _played(
+        [
+            start,
+            pcm(_PARTIAL_FRAME_MS),
+            while_the_first_frame_draws,
+            end,
+            once_ended,
+        ],
+        sentences=1,
+        provider=FakeProvider(render_seconds=_RENDER_SECONDS, sleep=draw),
+        pacing=clock.pacing,
+        max_lag_ms=_MAX_LAG_MS,
+    )
+
+    failure = events[-1]
+    assert isinstance(failure, ErrorEvent)
+    assert failure.error.code is RefusalCode.UNAVAILABLE
+
+
+def test_a_client_that_ends_a_sentence_after_its_frames_left_adds_no_lag() -> None:
+    clock = FakeClock()
+
+    async def stall_once_playing(socket: ScriptedSocket) -> None:
+        await socket.started.wait()
+        clock.advance(2 * _SLOW_CLIENT_MAX_LAG_MS / 1000)
+
+    start, end = sentence_events("a")
+    events = _played(
+        [start, pcm(_FRAME_MS), stall_once_playing, end],
+        sentences=1,
+        provider=FakeProvider(),
+        pacing=clock.pacing,
+        max_lag_ms=_SLOW_CLIENT_MAX_LAG_MS,
+    )
+
+    stopped = events[-1]
+    assert isinstance(stopped, OutputAudioBufferStopped)
+    assert stopped.audio_end_ms == _FRAME_MS

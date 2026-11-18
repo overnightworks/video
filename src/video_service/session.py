@@ -5,8 +5,8 @@ sentences one after another on the frame clock; the drain watcher ends the sessi
 once a drain has let the playing sentence finish. The first of them to end decides
 how the session ends. Every call into the provider session runs on one thread of
 the session's own, so the provider is never entered twice and a call that a clear
-or an ending abandons still finishes before the next one starts. A call that is
-not back when the session's lag budget is spent ends the session `unavailable`.
+or an ending abandons still finishes before the next one starts. A call that has
+not returned within the lag limit ends the session `unavailable`.
 """
 
 from __future__ import annotations
@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import math
 import queue
 import threading
 import time
@@ -117,6 +118,34 @@ class _Sentence:
         return self.samples * _MS_PER_SECOND // self.rate
 
 
+@dataclass(slots=True)
+class _Schedule:
+    """When the next frame is due on the audio's clock, and how late the last one left.
+
+    Input that arrives after the last frame has left restarts the clock, as the wait
+    for it is the client's, yet keeps the lateness that frame had; input that was
+    already there keeps the lag the frames before it built up.
+    """
+
+    frame_seconds: float
+    due: float = 0.0
+    released_at: float = -math.inf
+    behind: float = 0.0
+
+    def input_arrived(self, at: float) -> None:
+        """Note input that arrived at `at`."""
+        if at > self.released_at:
+            self.due = max(self.due, at - self.behind)
+
+    def release(self, now: float) -> float:
+        """Let the next frame leave at `now`; how late it is, early when negative."""
+        lateness = now - self.due
+        self.behind = max(lateness, 0.0)
+        self.released_at = max(now, self.due)
+        self.due += self.frame_seconds
+        return lateness
+
+
 class _ProviderThread:
     """The daemon thread that makes a session's provider calls one at a time.
 
@@ -180,7 +209,7 @@ class Session:
         self._open: _Sentence | None = None
         self._playing: _Sentence | None = None
         self._draining = False
-        self._playhead = 0.0
+        self._schedule = _Schedule(1 / self._frame_rate)
         self._sentence_count = 0
         self._ice: IceConfiguration | None = None
 
@@ -210,10 +239,9 @@ class Session:
         closing = self._worker.submit(self._place.session.close)
         self._worker.stop()
         try:
-            # Shielded: an ending of this task never drops the close still queued.
-            await self._place.pacing.deadline(
-                asyncio.shield(asyncio.wrap_future(closing)), self._lag_limit
-            )
+            async with asyncio.timeout(self._lag_limit):
+                # Shielded: the timeout never drops the close still queued.
+                await asyncio.shield(asyncio.wrap_future(closing))
         except TimeoutError:
             logger.warning("provider_session.close_stuck")
 
@@ -231,7 +259,7 @@ class Session:
                 return update
             trace.enter_context(unit_trace(update.traceparent))
             self._ice = update.session
-            await self._call(self._place.session.idle_frame, self._lag_limit)
+            await self._call(self._place.session.idle_frame)
             await self._send(SessionUpdated())
             return await self._converse()
         except _Failure as failure:
@@ -388,22 +416,18 @@ class Session:
                 ) as step:
                     await self._render(sentence, step, chunk)
             if sentence.dropped:
-                await self._call(self._place.session.clear, self._lag_limit)
-                await self._call(self._place.session.idle_frame, self._lag_limit)
+                await self._call(self._place.session.clear)
+                await self._call(self._place.session.idle_frame)
 
     async def _next_chunk(self, sentence: _Sentence) -> bytes | None:
         """The next audio of `sentence`, or `None` once it is complete or dropped."""
         while not sentence.dropped:
             if sentence.chunks:
                 chunk = sentence.chunks.popleft()
-                # Audio the client sent late is no lag of the provider's, while audio
-                # that was already queued keeps the lag the frames before it built up.
-                self._playhead = max(self._playhead, chunk.arrived_at)
+                self._schedule.input_arrived(chunk.arrived_at)
                 return chunk.pcm
             if sentence.ended:
-                # The last partial frame cannot come before the client ends the
-                # sentence: the wait for that is no lag of the provider's either.
-                self._playhead = max(self._playhead, sentence.ended_at)
+                self._schedule.input_arrived(sentence.ended_at)
                 return None
             await self._wait()
         return None
@@ -411,14 +435,12 @@ class Session:
     async def _render(self, sentence: _Sentence, step: StepTimer, chunk: bytes) -> None:
         provider = self._place.session
         while chunk is not None:
-            frames = await self._in_playback(
-                partial(provider.feed, chunk, sentence.rate)
-            )
+            frames = await self._call(partial(provider.feed, chunk, sentence.rate))
             await self._send_frames(sentence, step, frames)
             chunk = await self._next_chunk(sentence)
         if not sentence.dropped:
             await self._send_frames(
-                sentence, step, await self._in_playback(provider.finish_sentence)
+                sentence, step, await self._call(provider.finish_sentence)
             )
             await self._stop(sentence)
         step.add(
@@ -433,21 +455,18 @@ class Session:
         self, sentence: _Sentence, step: StepTimer, frames: Iterator[Frame]
     ) -> None:
         """Release each frame of `frames` at its time on the audio's clock."""
-        limit = self._lag_limit
         while (
             not sentence.dropped
-            and await self._in_playback(partial(next, frames, None)) is not None
+            and await self._call(partial(next, frames, None)) is not None
         ):
-            due = self._playhead
-            behind = self._place.pacing.now() - due
-            if behind > limit:
+            lateness = self._schedule.release(self._place.pacing.now())
+            if lateness > self._lag_limit:
                 raise _Failure(RefusalCode.UNAVAILABLE)
-            if behind > 0:
+            if lateness > 0:
                 sentence.late_frames += 1
             else:
-                await self._place.pacing.sleep(-behind)
+                await self._place.pacing.sleep(-lateness)
             await self._leave(sentence, step)
-            self._playhead = due + 1 / self._frame_rate
 
     async def _leave(self, sentence: _Sentence, step: StepTimer) -> None:
         """A frame leaves for the viewers; the sentence's first one starts it."""
@@ -484,17 +503,11 @@ class Session:
     def _lag_limit(self) -> float:
         return self._place.limits.max_lag_ms / _MS_PER_SECOND
 
-    async def _in_playback[Result](self, work: Callable[[], Result]) -> Result:
-        """Run `work` in the time left before the playhead's frame is too late."""
-        left = self._playhead + self._lag_limit - self._place.pacing.now()
-        return await self._call(work, max(left, 0.0))
-
-    async def _call[Result](self, work: Callable[[], Result], within: float) -> Result:
-        """Run `work` on the provider thread; late, the session is unavailable."""
+    async def _call[Result](self, work: Callable[[], Result]) -> Result:
+        """Run `work` on the provider thread; not back within the lag limit, fail."""
         try:
-            return await self._place.pacing.deadline(
-                asyncio.wrap_future(self._worker.submit(work)), within
-            )
+            async with asyncio.timeout(self._lag_limit):
+                return await asyncio.wrap_future(self._worker.submit(work))
         except TimeoutError:
             raise _Failure(RefusalCode.UNAVAILABLE) from None
 
