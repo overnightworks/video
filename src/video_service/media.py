@@ -282,7 +282,7 @@ class Media:
         self._viewers[viewer_id] = viewer
         try:
             answer = await viewer.answer()
-        except Exception:  # noqa: BLE001 - as for the offer, aiortc fails any way
+        except Exception:  # noqa: BLE001 - aiortc fails an answer it cannot give any way
             return RefusalCode.INVALID_REQUEST
         return RefusalCode.NOT_FOUND if self._closed else answer
 
