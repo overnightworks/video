@@ -16,6 +16,7 @@ import pytest
 from video_provider_contract import DecodedImage, ProviderFailedError
 
 from support.scripted_session import played
+from support.session_support import pcm, sentence_events
 from support.worker_support import (
     CALL_SECONDS,
     SHORT_BOUNDS,
@@ -23,7 +24,7 @@ from support.worker_support import (
     install_worker,
     is_gone,
 )
-from video_client.session_wire import ErrorEvent
+from video_client.session_wire import ErrorEvent, OutputAudioBufferStopped
 from video_client.wire import RefusalCode
 from video_service.provider_process import (
     ProcessBounds,
@@ -44,6 +45,8 @@ _IMAGE = DecodedImage(2, 2, bytes(12))
 _LOUD = b"\xff\x7f" * (_RATE // 25)
 _QUIET = bytes(2 * (_RATE // 25))
 _MOZART = "mozart"
+# One binary message longer than a frame of the protocol holds.
+_LONG_MESSAGE_MS = 2_500
 
 # A service that starts the worker it is given, says so and waits to be killed.
 _SERVICE = """
@@ -347,10 +350,31 @@ def test_a_request_the_protocol_cannot_hold_fails_that_call_not_the_provider(
     session = provider.open_session(_MOZART)
 
     with pytest.raises(ProviderFailedError):
-        session.feed(bytes(1 << 20), _RATE)
+        session.feed(_LOUD, 0)
 
     assert session.idle_frame()
     assert not provider.failed
+
+
+def test_a_sentence_in_one_binary_message_of_any_length_plays_to_its_end(
+    make_provider: MakeProvider,
+) -> None:
+    provider = make_provider(bounds=ProcessBounds())
+    provider.start()
+    provider.prepare(_MOZART, _IMAGE)
+    start, end = sentence_events("s1")
+
+    events = played(
+        [start, pcm(_LONG_MESSAGE_MS), end],
+        1,
+        provider=provider,
+        pacing=REAL_TIME,
+        max_lag_ms=5_000,
+    )
+
+    stopped = events[-1]
+    assert isinstance(stopped, OutputAudioBufferStopped)
+    assert stopped.audio_end_ms == _LONG_MESSAGE_MS
 
 
 def test_a_provider_that_is_closed_does_not_start_and_serves_no_session(
