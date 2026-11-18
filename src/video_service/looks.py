@@ -25,6 +25,7 @@ from pydantic import (
     ConfigDict,
     StringConstraints,
     TypeAdapter,
+    ValidationError,
 )
 from video_provider_contract import DecodedImage
 
@@ -93,7 +94,15 @@ def read_look_file(path: Path) -> dict[str, LookSource]:
         document = tomllib.loads(path.read_text(encoding="utf-8"))
     except OSError, UnicodeDecodeError, tomllib.TOMLDecodeError:
         raise ValueError(_LOOK_FILE_ERROR) from None
-    return _LOOK_FILE.validate_python(document)
+    try:
+        return _LOOK_FILE.validate_python(document)
+    except ValidationError as error:
+        faults = "; ".join(
+            f"{'.'.join(map(str, fault['loc']))}: {fault['msg']}"
+            for fault in error.errors(include_input=False, include_url=False)
+        )
+        message = f"VIDEO_LOOKS_FILE breaks the look file form ({faults})"
+        raise ValueError(message) from None
 
 
 class LookFailure(StrEnum):

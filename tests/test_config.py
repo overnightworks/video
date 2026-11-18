@@ -129,7 +129,7 @@ def test_an_empty_look_file_offers_no_look(tmp_path: Path) -> None:
 def test_a_look_file_that_breaks_the_form_stops_the_start(
     text: str, tmp_path: Path
 ) -> None:
-    with pytest.raises(ValueError, match=r"."):
+    with pytest.raises(ValueError, match=r"VIDEO_LOOKS_FILE"):
         read_look_file(_look_file(tmp_path, text))
 
 
