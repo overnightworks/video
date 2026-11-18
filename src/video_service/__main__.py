@@ -7,9 +7,7 @@ import contextlib
 import logging
 import signal
 import socket
-import threading
 import time
-from concurrent.futures import Future
 from typing import TYPE_CHECKING, Final
 
 import uvicorn
@@ -19,10 +17,10 @@ from webauth.https_client import fetch_key_set_over_https
 from video_service.app import create_app
 from video_service.callers import VideoCallers
 from video_service.config import Settings, load_caller_config, load_settings
-from video_service.runtime import Runtime
+from video_service.runtime import Runtime, in_daemon_thread
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import Iterator
 
 _SERVICE_NAME: Final = "video"
 # The most of the drain kept for closing the sessions left when it runs out.
@@ -75,23 +73,9 @@ class _ServiceServer(uvicorn.Server):
         yield
 
 
-def _in_daemon_thread[Result](work: Callable[[], Result], name: str) -> Future[Result]:
-    """Run `work` on a daemon thread, which never holds the process back at its exit."""
-    outcome: Future[Result] = Future()
-
-    def run() -> None:
-        try:
-            outcome.set_result(work())
-        except Exception as error:  # noqa: BLE001 - handed to the waiting coroutine
-            outcome.set_exception(error)
-
-    threading.Thread(target=run, daemon=True, name=name).start()
-    return outcome
-
-
 async def _load(runtime: Runtime, fatal: asyncio.Event) -> None:
     try:
-        await asyncio.wrap_future(_in_daemon_thread(runtime.load, "load"))
+        await asyncio.wrap_future(in_daemon_thread(runtime.load, "load"))
     except Exception:
         _LOGGER.exception("load.failed")
         fatal.set()
@@ -157,7 +141,7 @@ async def serve(
         await _within(deadline, server_task)
     with contextlib.suppress(TimeoutError):
         async with asyncio.timeout_at(deadline):
-            await asyncio.wrap_future(_in_daemon_thread(runtime.close, "close"))
+            await asyncio.wrap_future(in_daemon_thread(runtime.close, "close"))
     _LOGGER.info("process.stopped", extra={"exit_code": result})
     return result
 

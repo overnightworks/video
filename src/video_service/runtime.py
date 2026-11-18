@@ -75,6 +75,25 @@ class Pacing:
 REAL_TIME: Final = Pacing()
 
 
+def in_daemon_thread[Result](work: Callable[[], Result], name: str) -> Future[Result]:
+    """Run `work` on a daemon thread, which never holds the process back at its exit.
+
+    A call on the loop's default executor would: `asyncio.run` joins it at the end.
+    """
+    outcome: Future[Result] = Future()
+
+    def run() -> None:
+        if not outcome.set_running_or_notify_cancel():
+            return
+        try:
+            outcome.set_result(work())
+        except Exception as error:  # noqa: BLE001 - handed to the waiting coroutine
+            outcome.set_exception(error)
+
+    threading.Thread(target=run, daemon=True, name=name).start()
+    return outcome
+
+
 class ProviderThread:
     """The daemon thread that makes one session's provider calls one at a time.
 

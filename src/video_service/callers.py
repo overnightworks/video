@@ -9,6 +9,7 @@ from a token leaves it.
 from __future__ import annotations
 
 import asyncio
+from functools import partial
 from typing import TYPE_CHECKING, Final
 
 from webauth.admission import AdmissionConfig, NoAdmins
@@ -25,6 +26,7 @@ from video_client.wire import (
     WORKLOAD_TOKEN_HEADER,
     RefusalCode,
 )
+from video_service.runtime import in_daemon_thread
 
 if TYPE_CHECKING:
     from starlette.datastructures import Headers
@@ -89,10 +91,16 @@ class VideoCallers:
 
     async def refusal(self, headers: Headers) -> RefusalCode | None:
         """The refusal the request's tokens earn, or `None` for a person call."""
-        caller = await asyncio.to_thread(
-            self._check.person_caller,
-            headers.get(WORKLOAD_TOKEN_HEADER),
-            _bearer_token(headers.get(AUTHORIZATION_HEADER)),
+        # A daemon thread, since a key-set fetch can outlast the drain.
+        caller = await asyncio.wrap_future(
+            in_daemon_thread(
+                partial(
+                    self._check.person_caller,
+                    headers.get(WORKLOAD_TOKEN_HEADER),
+                    _bearer_token(headers.get(AUTHORIZATION_HEADER)),
+                ),
+                "callers",
+            )
         )
         if not isinstance(caller, PersonCaller):
             return _REFUSAL_CODE[caller.refusal_class]

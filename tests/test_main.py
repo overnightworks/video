@@ -19,7 +19,12 @@ from video_provider_fake import FakeProvider, FakeSession
 from websockets.asyncio.client import connect
 from websockets.exceptions import ConnectionClosed
 
-from support.identity_support import callers_over, valid_headers, write_caller_config
+from support.identity_support import (
+    KeySet,
+    callers_over,
+    valid_headers,
+    write_caller_config,
+)
 from support.images import picture
 from support.session_support import (
     pcm,
@@ -257,14 +262,17 @@ def test_a_runtime_closes_its_provider(build_runtime: BuildRuntime) -> None:
 
 
 async def _serving(
-    runtime: Runtime, settings: Settings, stop: asyncio.Event
+    runtime: Runtime,
+    settings: Settings,
+    stop: asyncio.Event,
+    key_set: KeySet | None = None,
 ) -> tuple[asyncio.Task[int], str]:
     """Start `serve` on a free port and return its task and its session URL."""
     ready = _ReadyAnnouncement()
     logger = logging.getLogger("video_service.__main__")
     logger.addHandler(ready)
     logger.setLevel(logging.INFO)
-    task = asyncio.create_task(serve(settings, runtime, callers_over(), stop))
+    task = asyncio.create_task(serve(settings, runtime, callers_over(key_set), stop))
     try:
         assert await asyncio.to_thread(ready.announced.wait, READY_WITHIN_SECONDS)
     finally:
@@ -405,6 +413,54 @@ def test_a_stop_ends_the_process_within_the_drain_bound_while_a_provider_call_is
 
     assert result == 0
     assert close_code == DRAIN_CLOSE_CODE
+    assert took < _DRAIN_SECONDS + _EXIT_SLACK_SECONDS
+
+
+class _KeySetStuck(KeySet):
+    """An issuer whose key set does not come back until `held`, or long after."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.held = threading.Event()
+        self.fetching = threading.Event()
+
+    def __call__(self, url: str) -> bytes:
+        self.fetching.set()
+        self.held.wait(3 * (_DRAIN_SECONDS + _EXIT_SLACK_SECONDS))
+        return super().__call__(url)
+
+
+def test_a_stop_ends_the_process_within_the_drain_bound_while_a_key_fetch_is_stuck(
+    source: LookServer, build_runtime: BuildRuntime
+) -> None:
+    runtime = build_runtime({"mozart": source.host("mozart.png", picture().data)})
+    settings = Settings(
+        provider=ProviderName.FAKE, port=_free_port(), drain_seconds=_DRAIN_SECONDS
+    )
+    key_set = _KeySetStuck()
+    stopped_at: list[float] = []
+
+    async def drive() -> int:
+        stop = asyncio.Event()
+        serving, url = await _serving(runtime, settings, stop, key_set)
+        upgrade = asyncio.ensure_future(
+            connect(url, additional_headers=valid_headers())
+        )
+        assert await asyncio.to_thread(key_set.fetching.wait, READY_WITHIN_SECONDS)
+        stopped_at.append(time.monotonic())
+        stop.set()
+        result = await serving
+        upgrade.cancel()
+        await asyncio.gather(upgrade, return_exceptions=True)
+        return result
+
+    try:
+        result = asyncio.run(drive())
+        took = time.monotonic() - stopped_at[0]
+    finally:
+        key_set.held.set()
+
+    assert result == 0
     assert took < _DRAIN_SECONDS + _EXIT_SLACK_SECONDS
 
 
