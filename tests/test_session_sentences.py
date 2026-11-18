@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from typing import TYPE_CHECKING
 
 import pytest
@@ -285,6 +286,28 @@ def test_a_provider_that_falls_behind_or_fails_ends_the_session_unavailable(
     assert error.error.type == "server_error"
     with opened(client):
         pass
+
+
+def test_a_provider_that_never_answers_ends_the_session_unavailable_and_frees_the_place(
+    started: Callable[..., Runtime], wire: Callable[[Runtime], TestClient]
+) -> None:
+    held = threading.Event()
+    client = wire(
+        started(FakeProvider(finish_gate=held), max_lag_ms=50, max_sessions=1)
+    )
+    try:
+        with opened(client) as session:
+            _speak(session, "a", _CHUNK_MS)
+            error = next_error(session)
+            with pytest.raises(WebSocketDisconnect):
+                session.receive_text()
+
+        with opened(client):
+            pass
+    finally:
+        held.set()
+
+    assert error.error.code is RefusalCode.UNAVAILABLE
 
 
 def test_a_client_that_leaves_while_a_sentence_plays_frees_the_place(

@@ -5,7 +5,8 @@ sentences one after another on the frame clock; the drain watcher ends the sessi
 once a drain has let the playing sentence finish. The first of them to end decides
 how the session ends. Every call into the provider session runs on one thread of
 the session's own, so the provider is never entered twice and a call that a clear
-or an ending abandons still finishes before the next one starts.
+or an ending abandons still finishes before the next one starts. A call that is
+not back when the session's lag budget is spent ends the session `unavailable`.
 """
 
 from __future__ import annotations
@@ -13,9 +14,11 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import queue
+import threading
 import time
 from collections import deque
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future
 from dataclasses import dataclass, field
 from functools import partial
 from typing import TYPE_CHECKING, Final, Never
@@ -111,6 +114,61 @@ class _Sentence:
         return self.samples * _MS_PER_SECOND // self.rate
 
 
+class _ProviderThread:
+    """The daemon thread that makes a session's provider calls one at a time.
+
+    A daemon, so a call that never returns holds back neither the end of its session
+    nor the exit of the process.
+    """
+
+    def __init__(self) -> None:
+        self._jobs: queue.SimpleQueue[Callable[[], None] | None] = queue.SimpleQueue()
+        self._lock = threading.Lock()
+        self._unfinished = 0
+        threading.Thread(target=self._run, daemon=True, name="provider").start()
+
+    @property
+    def busy(self) -> bool:
+        """Whether a call is running or waiting for its turn."""
+        with self._lock:
+            return self._unfinished > 0
+
+    def submit[Result](self, work: Callable[[], Result]) -> Future[Result]:
+        """Queue `work`; cancelling its future before its turn drops it."""
+        outcome: Future[Result] = Future()
+        with self._lock:
+            self._unfinished += 1
+        self._jobs.put(partial(self._call, work, outcome))
+        return outcome
+
+    def stop(self) -> None:
+        """End the thread once the calls queued before this one are done."""
+        self._jobs.put(None)
+
+    def _run(self) -> None:
+        while (job := self._jobs.get()) is not None:
+            job()
+
+    def _call[Result](
+        self, work: Callable[[], Result], outcome: Future[Result]
+    ) -> None:
+        if not outcome.set_running_or_notify_cancel():
+            self._finished()
+            return
+        try:
+            result = work()
+        except Exception as error:  # noqa: BLE001 - handed to the awaiting session
+            self._finished()
+            outcome.set_exception(error)
+        else:
+            self._finished()
+            outcome.set_result(result)
+
+    def _finished(self) -> None:
+        with self._lock:
+            self._unfinished -= 1
+
+
 class Session:
     """The state machine of one accepted session; `run` serves it to its end."""
 
@@ -130,9 +188,7 @@ class Session:
         self._socket = socket
         self._place = place
         self._frame_rate = place.video.frame_rate
-        self._executor = ThreadPoolExecutor(
-            max_workers=1, thread_name_prefix="provider"
-        )
+        self._worker = _ProviderThread()
         self._lock = asyncio.Lock()
         self._woken = asyncio.Event()
         self._drained = asyncio.Event()
@@ -161,10 +217,25 @@ class Session:
                 await self._finish(step, end)
         finally:
             try:
-                await self._call(self._place.session.close)
+                await self._close_provider_session()
             finally:
-                self._executor.shutdown(wait=False)
                 self._place.release()
+
+    async def _close_provider_session(self) -> None:
+        """Close the provider session, waiting for it only while its thread is free."""
+        stuck = self._worker.busy
+        closing = self._worker.submit(self._place.session.close)
+        self._worker.stop()
+        if stuck:
+            logger.warning("provider_session.stuck")
+            return
+        try:
+            # Shielded: an ending of this task never drops the close still queued.
+            await asyncio.wait_for(
+                asyncio.shield(asyncio.wrap_future(closing)), self._lag_limit
+            )
+        except TimeoutError:
+            logger.warning("provider_session.close_stuck")
 
     async def _serve(self, trace: contextlib.ExitStack) -> _End:
         try:
@@ -180,7 +251,7 @@ class Session:
                 return update
             trace.enter_context(unit_trace(update.traceparent))
             self._ice = update.session
-            await self._call(self._place.session.idle_frame)
+            await self._call(self._place.session.idle_frame, self._lag_limit)
             await self._send(SessionUpdated())
             return await self._converse()
         except _Failure as failure:
@@ -340,7 +411,7 @@ class Session:
                 ) as step:
                     await self._render(sentence, step, chunk)
             if sentence.dropped:
-                await self._call(self._place.session.clear)
+                await self._call(self._place.session.clear, self._lag_limit)
 
     async def _next_chunk(self, sentence: _Sentence) -> bytes | None:
         """The next audio of `sentence`, or `None` once it is complete or dropped."""
@@ -359,12 +430,14 @@ class Session:
     async def _render(self, sentence: _Sentence, step: StepTimer, chunk: bytes) -> None:
         provider = self._place.session
         while chunk is not None:
-            frames = await self._call(partial(provider.feed, chunk, sentence.rate))
+            frames = await self._in_playback(
+                partial(provider.feed, chunk, sentence.rate)
+            )
             await self._send_frames(sentence, step, frames)
             chunk = await self._next_chunk(sentence)
         if not sentence.dropped:
             await self._send_frames(
-                sentence, step, await self._call(provider.finish_sentence)
+                sentence, step, await self._in_playback(provider.finish_sentence)
             )
             await self._stop(sentence)
         step.add(
@@ -379,10 +452,10 @@ class Session:
         self, sentence: _Sentence, step: StepTimer, frames: Iterator[Frame]
     ) -> None:
         """Release each frame of `frames` at its time on the audio's clock."""
-        limit = self._place.limits.max_lag_ms / _MS_PER_SECOND
+        limit = self._lag_limit
         while (
             not sentence.dropped
-            and await self._call(partial(next, frames, None)) is not None
+            and await self._in_playback(partial(next, frames, None)) is not None
         ):
             due = self._playhead
             behind = self._place.pacing.now() - due
@@ -426,8 +499,23 @@ class Session:
         with contextlib.suppress(WebSocketDisconnect):
             await self._socket.send_text(event.model_dump_json())
 
-    async def _call[Result](self, work: Callable[[], Result]) -> Result:
-        return await asyncio.get_running_loop().run_in_executor(self._executor, work)
+    @property
+    def _lag_limit(self) -> float:
+        return self._place.limits.max_lag_ms / _MS_PER_SECOND
+
+    async def _in_playback[Result](self, work: Callable[[], Result]) -> Result:
+        """Run `work` in the time left before the playhead's frame is too late."""
+        left = self._playhead + self._lag_limit - self._place.pacing.now()
+        return await self._call(work, max(left, 0.0))
+
+    async def _call[Result](self, work: Callable[[], Result], within: float) -> Result:
+        """Run `work` on the provider thread; late, the session is unavailable."""
+        try:
+            return await asyncio.wait_for(
+                asyncio.wrap_future(self._worker.submit(work)), within
+            )
+        except TimeoutError:
+            raise _Failure(RefusalCode.UNAVAILABLE) from None
 
 
 def _parse(text: str) -> ClientEvent:
