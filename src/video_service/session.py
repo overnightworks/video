@@ -125,21 +125,11 @@ class _ProviderThread:
 
     def __init__(self) -> None:
         self._jobs: queue.SimpleQueue[Callable[[], None] | None] = queue.SimpleQueue()
-        self._lock = threading.Lock()
-        self._unfinished = 0
         threading.Thread(target=self._run, daemon=True, name="provider").start()
-
-    @property
-    def busy(self) -> bool:
-        """Whether a call is running or waiting for its turn."""
-        with self._lock:
-            return self._unfinished > 0
 
     def submit[Result](self, work: Callable[[], Result]) -> Future[Result]:
         """Queue `work`; cancelling its future before its turn drops it."""
         outcome: Future[Result] = Future()
-        with self._lock:
-            self._unfinished += 1
         self._jobs.put(partial(self._call, work, outcome))
         return outcome
 
@@ -155,20 +145,11 @@ class _ProviderThread:
         self, work: Callable[[], Result], outcome: Future[Result]
     ) -> None:
         if not outcome.set_running_or_notify_cancel():
-            self._finished()
             return
         try:
-            result = work()
+            outcome.set_result(work())
         except Exception as error:  # noqa: BLE001 - handed to the awaiting session
-            self._finished()
             outcome.set_exception(error)
-        else:
-            self._finished()
-            outcome.set_result(result)
-
-    def _finished(self) -> None:
-        with self._lock:
-            self._unfinished -= 1
 
 
 class Session:
@@ -224,13 +205,9 @@ class Session:
                 self._place.release()
 
     async def _close_provider_session(self) -> None:
-        """Close the provider session, waiting for it only while its thread is free."""
-        stuck = self._worker.busy
+        """Close the provider session, waiting for it no longer than the lag limit."""
         closing = self._worker.submit(self._place.session.close)
         self._worker.stop()
-        if stuck:
-            logger.warning("provider_session.stuck")
-            return
         try:
             # Shielded: an ending of this task never drops the close still queued.
             await asyncio.wait_for(
