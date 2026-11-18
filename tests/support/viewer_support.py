@@ -247,7 +247,8 @@ class Service:
         return await self.http.post(
             viewers_path(session_id),
             content=offer,
-            headers=(headers or valid_headers()) | {"Content-Type": content_type},
+            headers=(valid_headers() if headers is None else headers)
+            | {"Content-Type": content_type},
         )
 
     async def watch(self, session: OpenSession, **sections: int) -> Watcher:
@@ -301,3 +302,22 @@ async def run_live(
         root.setLevel(level)
         stop.set()
         await serving
+
+
+async def offer_of(
+    *,
+    audio: int = 1,
+    video: int = 1,
+    audio_codecs: list[str] | None = None,
+    video_codecs: list[str] | None = None,
+) -> str:
+    """An offer with `audio` audio and `video` video sections, all recvonly."""
+    watcher = Watcher(audio=audio, video=video)
+    if audio_codecs is not None:
+        watcher.prefer("audio", audio_codecs)
+    if video_codecs is not None:
+        watcher.prefer("video", video_codecs)
+    try:
+        return await watcher.offer()
+    finally:
+        await watcher.close()
