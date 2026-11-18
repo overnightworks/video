@@ -71,7 +71,7 @@ testpaths = ["tests", "packages/client/tests", "providers/fake/tests"]
 [tool.coverage.run]
 branch = true
 patch = ["subprocess"]
-include = ["src/*", "packages/*/src/*", "providers/*/src/*"]
+include = ["src/*", "packages/*/src/*", "providers/*/src/*", "scripts/*"]
 
 [tool.ruff]
 target-version = "py314"
