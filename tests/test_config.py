@@ -7,8 +7,13 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from support.identity_support import (
+    APP,
+    caller_config_text,
+    write_caller_config,
+)
 from support.images import picture
-from video_service.config import load_settings
+from video_service.config import load_caller_config, load_settings
 from video_service.looks import read_look_file
 from video_service.providers import ProviderName
 from video_service.runtime import Runtime
@@ -49,6 +54,11 @@ def test_a_missing_provider_names_its_setting() -> None:
         ("VIDEO_PORT", "0"),
         ("VIDEO_PORT", "not-a-port"),
         ("VIDEO_MAX_SESSIONS", "0"),
+        ("VIDEO_MAX_QUEUED_AUDIO_SECONDS", "-1"),
+        ("VIDEO_MAX_QUEUED_AUDIO_SECONDS", "nan"),
+        ("VIDEO_MAX_LAG_MS", "0"),
+        ("VIDEO_DRAIN_SECONDS", "-1"),
+        ("VIDEO_CONFIG_FILE", "relative/config.toml"),
         ("VIDEO_LOOK_MAX_BYTES", "0"),
         ("VIDEO_LOOK_MAX_PIXELS", "0"),
         ("VIDEO_LOOKS_FILE", "relative/looks.toml"),
@@ -177,3 +187,62 @@ def test_the_runtime_offers_no_look_without_a_look_file(
     runtime.load()
 
     assert runtime.health().looks == {}
+
+
+def test_the_caller_file_names_the_issuer_and_the_apps(tmp_path: Path) -> None:
+    config = load_caller_config(write_caller_config(tmp_path))
+
+    assert list(config.apps) == [APP]
+
+
+@pytest.mark.parametrize(
+    ("text", "named"),
+    [
+        (caller_config_text(identity="extra = 1"), "extra"),
+        (caller_config_text(apps=""), "apps"),
+        (
+            caller_config_text(
+                apps="[apps.a]\nworkload_client = 'x'\n"
+                "[apps.b]\nworkload_client = 'x'\n"
+            ),
+            "workload_client",
+        ),
+        (caller_config_text(apps="[apps.'a/b']\nworkload_client = 'x'\n"), "apps"),
+        (caller_config_text().replace("https://", "http://"), "jwks_url"),
+        (caller_config_text().replace("/services/", "services/"), "service_group"),
+        (
+            caller_config_text().replace("/services/video-service", "/services//x"),
+            "service_group",
+        ),
+    ],
+    ids=[
+        "unknown-key",
+        "no-app",
+        "shared-client",
+        "app-name",
+        "jwks-not-https",
+        "group-not-a-path",
+        "group-empty-segment",
+    ],
+)
+def test_a_caller_file_that_breaks_the_form_names_the_field_and_echoes_no_value(
+    text: str, named: str, tmp_path: Path
+) -> None:
+    path = write_caller_config(tmp_path, text)
+
+    with pytest.raises(ValueError, match=named) as stopped:
+        load_caller_config(path)
+
+    assert "SENTINEL" not in str(stopped.value)
+
+
+@pytest.mark.parametrize("content", [None, b"\xff\xfe", b"not toml ["])
+def test_a_caller_file_that_cannot_be_read_names_its_setting(
+    content: bytes | None, tmp_path: Path
+) -> None:
+    path = tmp_path / "caller-config.toml"
+    if content is not None:
+        path.write_bytes(content)
+
+    with pytest.raises(ValueError, match=r"VIDEO_CONFIG_FILE"):
+        load_caller_config(path)

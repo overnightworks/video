@@ -11,14 +11,35 @@ import socket
 import subprocess
 import sys
 import threading
+import time
 from typing import TYPE_CHECKING
 
 import pytest
-from video_provider_fake import FakeProvider
+from video_provider_fake import FakeProvider, FakeSession
+from websockets.asyncio.client import connect
+from websockets.exceptions import ConnectionClosed
 
+from support.identity_support import (
+    KeySet,
+    callers_over,
+    valid_headers,
+    write_caller_config,
+)
 from support.images import picture
+from support.session_support import (
+    pcm,
+    sentence_events,
+    session_url,
+    update_event,
+)
 from video_client.health import fetch_health
-from video_client.wire import Health
+from video_client.session_wire import (
+    OutputAudioBufferStarted,
+    OutputAudioBufferStopped,
+    ServerEvent,
+    parse_server_event,
+)
+from video_client.wire import DRAIN_CLOSE_CODE, Health
 from video_service.__main__ import main, serve
 from video_service.config import Settings
 from video_service.providers import ProviderName
@@ -26,12 +47,21 @@ from video_service.providers import ProviderName
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from video_provider_contract import DecodedImage, ProviderInfo
+    from video_provider_contract import (
+        DecodedImage,
+        Frame,
+        ProviderInfo,
+        ProviderSession,
+    )
+    from websockets.asyncio.client import ClientConnection
 
     from support.look_server import LookServer
     from support.runtime_support import BuildRuntime
+    from video_service.runtime import Runtime
 
 READY_WITHIN_SECONDS = 20.0
+_DRAIN_SECONDS = 1.0
+_EXIT_SLACK_SECONDS = 5.0
 
 
 class _ExplodingProvider:
@@ -85,7 +115,7 @@ def test_the_service_answers_health_ready_and_stops_clean_on_request(
 
     async def drive() -> tuple[int, Health | None, bool]:
         stop = asyncio.Event()
-        serving = asyncio.create_task(serve(settings, runtime, stop))
+        serving = asyncio.create_task(serve(settings, runtime, callers_over(), stop))
         announced = await asyncio.to_thread(ready.announced.wait, READY_WITHIN_SECONDS)
         health = await asyncio.to_thread(_health, port)
         stop.set()
@@ -114,7 +144,7 @@ def test_a_load_that_fails_ends_the_process_nonzero(
     runtime = build_runtime({}, provider=_ExplodingProvider())
     settings = Settings(provider=ProviderName.FAKE, port=_free_port())
 
-    result = asyncio.run(serve(settings, runtime, asyncio.Event()))
+    result = asyncio.run(serve(settings, runtime, callers_over(), asyncio.Event()))
 
     assert result == 1
 
@@ -128,7 +158,7 @@ def test_a_port_that_is_taken_ends_the_process_nonzero(
         taken.listen()
         settings = Settings(provider=ProviderName.FAKE, port=taken.getsockname()[1])
 
-        result = asyncio.run(serve(settings, runtime, asyncio.Event()))
+        result = asyncio.run(serve(settings, runtime, callers_over(), asyncio.Event()))
 
     assert result == 1
 
@@ -145,6 +175,7 @@ def test_the_process_serves_the_configured_looks_and_stops_on_a_signal(
     )
     port = _free_port()
     monkeypatch.setenv("VIDEO_PROVIDER", "fake")
+    monkeypatch.setenv("VIDEO_CONFIG_FILE", str(write_caller_config(tmp_path)))
     monkeypatch.setenv("VIDEO_PORT", str(port))
     monkeypatch.setenv("VIDEO_LOOKS_FILE", str(looks_file))
     monkeypatch.setenv("VIDEO_LOOK_SOURCES", json.dumps([source.base_url]))
@@ -189,12 +220,22 @@ def test_the_process_serves_the_configured_looks_and_stops_on_a_signal(
     ("environment", "named"),
     [
         ({}, "VIDEO_PROVIDER"),
+        ({"VIDEO_PROVIDER": "fake"}, "VIDEO_CONFIG_FILE"),
+        (
+            {"VIDEO_PROVIDER": "fake", "VIDEO_CONFIG_FILE": "/no/such/config.toml"},
+            "VIDEO_CONFIG_FILE",
+        ),
         (
             {"VIDEO_PROVIDER": "fake", "VIDEO_LOOKS_FILE": "/no/such/looks.toml"},
             "VIDEO_LOOKS_FILE",
         ),
     ],
-    ids=["no-provider", "unreadable-look-file"],
+    ids=[
+        "no-provider",
+        "no-config-file",
+        "unreadable-config-file",
+        "unreadable-look-file",
+    ],
 )
 def test_main_refuses_to_start_on_a_bad_setting_and_names_it(
     environment: dict[str, str],
@@ -218,3 +259,250 @@ def test_a_runtime_closes_its_provider(build_runtime: BuildRuntime) -> None:
     build_runtime({}, provider=provider).close()
 
     assert provider.closed
+
+
+async def _serving(
+    runtime: Runtime,
+    settings: Settings,
+    stop: asyncio.Event,
+    key_set: KeySet | None = None,
+) -> tuple[asyncio.Task[int], str]:
+    """Start `serve` on a free port and return its task and its session URL."""
+    ready = _ReadyAnnouncement()
+    logger = logging.getLogger("video_service.__main__")
+    logger.addHandler(ready)
+    logger.setLevel(logging.INFO)
+    task = asyncio.create_task(serve(settings, runtime, callers_over(key_set), stop))
+    try:
+        assert await asyncio.to_thread(ready.announced.wait, READY_WITHIN_SECONDS)
+    finally:
+        logger.removeHandler(ready)
+        logger.setLevel(logging.NOTSET)
+    return task, f"ws://127.0.0.1:{settings.port}{session_url()}"
+
+
+async def _open_playing(url: str, milliseconds: int) -> ClientConnection:
+    """Open a session at `url` and speak one sentence; return once it plays."""
+    session = await connect(url, additional_headers=valid_headers())
+    await session.recv()
+    await session.send(json.dumps(update_event()))
+    await session.recv()
+    start, end = sentence_events("playing")
+    await session.send(json.dumps(start))
+    await session.send(pcm(milliseconds))
+    await session.send(json.dumps(end))
+    assert isinstance(
+        parse_server_event(str(await session.recv())), OutputAudioBufferStarted
+    )
+    return session
+
+
+def test_a_stop_lets_the_playing_sentence_finish_then_closes_the_session(
+    source: LookServer, build_runtime: BuildRuntime
+) -> None:
+    runtime = build_runtime({"mozart": source.host("mozart.png", picture().data)})
+    settings = Settings(provider=ProviderName.FAKE, port=_free_port())
+
+    async def drive() -> tuple[int, ServerEvent, int | None]:
+        stop = asyncio.Event()
+        serving, url = await _serving(runtime, settings, stop)
+        session = await _open_playing(url, 200)
+        stop.set()
+        stopped = parse_server_event(str(await session.recv()))
+        with pytest.raises(ConnectionClosed):
+            await session.recv()
+        return await serving, stopped, session.close_code
+
+    result, stopped, close_code = asyncio.run(drive())
+
+    assert result == 0
+    assert isinstance(stopped, OutputAudioBufferStopped)
+    assert close_code == DRAIN_CLOSE_CODE
+
+
+def test_a_session_that_outlasts_the_drain_bound_is_cut_when_the_service_exits(
+    source: LookServer, build_runtime: BuildRuntime
+) -> None:
+    runtime = build_runtime({"mozart": source.host("mozart.png", picture().data)})
+    settings = Settings(
+        provider=ProviderName.FAKE, port=_free_port(), drain_seconds=0.2
+    )
+
+    async def drive() -> tuple[int, int | None]:
+        stop = asyncio.Event()
+        serving, url = await _serving(runtime, settings, stop)
+        session = await _open_playing(url, 20_000)
+        stop.set()
+        async with asyncio.timeout(READY_WITHIN_SECONDS):
+            with pytest.raises(ConnectionClosed):
+                await session.recv()
+            return await serving, session.close_code
+
+    result, close_code = asyncio.run(drive())
+
+    assert result == 0
+    assert close_code == DRAIN_CLOSE_CODE
+
+
+class _SessionStuckAtRest(FakeSession):
+    """A provider session whose first idle frame does not come back until `held`."""
+
+    def __init__(
+        self, frame_rate: int, held: threading.Event, at_rest: threading.Event
+    ) -> None:
+        super().__init__(
+            frame_rate, 0.0, fails_to_draw=False, finish_gate=None, sleep=time.sleep
+        )
+        self.held = held
+        self.at_rest = at_rest
+
+    def idle_frame(self) -> Frame:
+        self.at_rest.set()
+        self.held.wait()
+        return super().idle_frame()
+
+
+class _ProviderStuckAtRest(FakeProvider):
+    """Opens sessions that are stuck in their first idle frame."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.held = threading.Event()
+        self.at_rest = threading.Event()
+
+    def open_session(self, look: str) -> ProviderSession:
+        del look
+        return _SessionStuckAtRest(
+            self.start().video.frame_rate, self.held, self.at_rest
+        )
+
+
+def test_a_stop_ends_the_process_within_the_drain_bound_while_a_provider_call_is_stuck(
+    source: LookServer, build_runtime: BuildRuntime
+) -> None:
+    provider = _ProviderStuckAtRest()
+    runtime = build_runtime(
+        {"mozart": source.host("mozart.png", picture().data)},
+        provider=provider,
+        max_lag_ms=60_000,
+    )
+    settings = Settings(
+        provider=ProviderName.FAKE, port=_free_port(), drain_seconds=_DRAIN_SECONDS
+    )
+    stopped_at: list[float] = []
+
+    async def drive() -> tuple[int, int | None]:
+        stop = asyncio.Event()
+        serving, url = await _serving(runtime, settings, stop)
+        session = await connect(url, additional_headers=valid_headers())
+        await session.recv()
+        await session.send(json.dumps(update_event()))
+        assert await asyncio.to_thread(provider.at_rest.wait, READY_WITHIN_SECONDS)
+        stopped_at.append(time.monotonic())
+        stop.set()
+        async with asyncio.timeout(READY_WITHIN_SECONDS):
+            with pytest.raises(ConnectionClosed):
+                await session.recv()
+            return await serving, session.close_code
+
+    try:
+        result, close_code = asyncio.run(drive())
+        took = time.monotonic() - stopped_at[0]
+    finally:
+        provider.held.set()
+
+    assert result == 0
+    assert close_code == DRAIN_CLOSE_CODE
+    assert took < _DRAIN_SECONDS + _EXIT_SLACK_SECONDS
+
+
+class _KeySetStuck(KeySet):
+    """An issuer whose key set does not come back until `held`, or long after."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.held = threading.Event()
+        self.fetching = threading.Event()
+
+    def __call__(self, url: str) -> bytes:
+        self.fetching.set()
+        self.held.wait(3 * (_DRAIN_SECONDS + _EXIT_SLACK_SECONDS))
+        return super().__call__(url)
+
+
+def test_a_stop_ends_the_process_within_the_drain_bound_while_a_key_fetch_is_stuck(
+    source: LookServer, build_runtime: BuildRuntime
+) -> None:
+    runtime = build_runtime({"mozart": source.host("mozart.png", picture().data)})
+    settings = Settings(
+        provider=ProviderName.FAKE, port=_free_port(), drain_seconds=_DRAIN_SECONDS
+    )
+    key_set = _KeySetStuck()
+    stopped_at: list[float] = []
+
+    async def drive() -> int:
+        stop = asyncio.Event()
+        serving, url = await _serving(runtime, settings, stop, key_set)
+        upgrade = asyncio.ensure_future(
+            connect(url, additional_headers=valid_headers())
+        )
+        assert await asyncio.to_thread(key_set.fetching.wait, READY_WITHIN_SECONDS)
+        stopped_at.append(time.monotonic())
+        stop.set()
+        result = await serving
+        upgrade.cancel()
+        await asyncio.gather(upgrade, return_exceptions=True)
+        return result
+
+    try:
+        result = asyncio.run(drive())
+        took = time.monotonic() - stopped_at[0]
+    finally:
+        key_set.held.set()
+
+    assert result == 0
+    assert took < _DRAIN_SECONDS + _EXIT_SLACK_SECONDS
+
+
+class _SessionLines(logging.Handler):
+    """Collects the `session.ended` records of the session logger."""
+
+    def __init__(self) -> None:
+        super().__init__(logging.INFO)
+        self.records: list[logging.LogRecord] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        if record.getMessage() == "session.ended":
+            self.records.append(record)
+
+
+def test_a_client_that_leaves_ends_its_session_ok_and_frees_its_place(
+    source: LookServer, build_runtime: BuildRuntime
+) -> None:
+    runtime = build_runtime(
+        {"mozart": source.host("mozart.png", picture().data)}, max_sessions=1
+    )
+    settings = Settings(provider=ProviderName.FAKE, port=_free_port())
+    lines = _SessionLines()
+    logger = logging.getLogger("video_service.session")
+    logger.addHandler(lines)
+    logger.setLevel(logging.INFO)
+
+    async def drive() -> int:
+        stop = asyncio.Event()
+        serving, url = await _serving(runtime, settings, stop)
+        session = await _open_playing(url, 20_000)
+        await session.close()
+        stop.set()
+        return await serving
+
+    try:
+        result = asyncio.run(drive())
+    finally:
+        logger.removeHandler(lines)
+        logger.setLevel(logging.NOTSET)
+
+    assert result == 0
+    (line,) = lines.records
+    assert line.outcome == "ok"
+    assert not hasattr(line, "close_code")

@@ -5,10 +5,12 @@ app hands it an agent's spoken sentences as audio and a few facts, and each view
 receives one live stream of picture and sound, with the model behind it chosen by
 setting. The operator starts and configures it; an app developer reads the wire.
 
-What runs today is the skeleton: one process that runs the provider
-`VIDEO_PROVIDER` names (only `fake` exists), fetches each look's image once at
-start, and answers `GET /health` with the provider's readiness, what it plays and
-each look's readiness. Sessions, media and a real model are not built yet. The
+What runs today: one process that runs the provider `VIDEO_PROVIDER` names (only
+`fake` exists), fetches each look's image once at start, answers `GET /health` with
+the provider's readiness, what it plays and each look's readiness, and serves
+sessions over `WS /v1/sessions`: an app opens one on a look with two tokens, queues
+sentences of audio, clears them, and reads when each starts and stops. The picture
+does not leave the process yet: viewers, media and a real model are not built. The
 service downloads no weights and has no image to deploy.
 
 ## Quick start
@@ -17,12 +19,37 @@ From the repository root, with [uv](https://docs.astral.sh/uv/):
 
 ```sh
 uv sync --locked --all-groups
-VIDEO_PROVIDER=fake uv run video-service
+VIDEO_PROVIDER=fake VIDEO_CONFIG_FILE=/abs/path/callers.toml uv run video-service
 curl http://127.0.0.1:8080/health
 ```
 
 The service listens on `127.0.0.1:8080` and answers health at once; `ready` turns
-true when the start is over. It stops on SIGINT or SIGTERM.
+true when the start is over. On SIGINT or SIGTERM it drains: it reports not ready,
+refuses new sessions, lets each playing sentence finish and exits, at the latest
+`VIDEO_DRAIN_SECONDS` after the signal, the last second of it spent cutting the
+sessions left.
+
+## Callers
+
+A session needs two tokens ([`docs/wire.md`](docs/wire.md#callers)), and the
+service starts only with `VIDEO_CONFIG_FILE`, an absolute path to a TOML file that
+says whom it trusts. `[identity]` names the issuer and the one group the people
+must belong to; each `[apps.<name>]` table registers an app by the client id of its
+workload token, and its people belong to the group `/apps/<name>`. Unknown keys stop
+the start, which names the field and never its value.
+
+```toml
+[identity]
+issuer = "https://identity.example/realms/apps"
+jwks_url = "https://identity.example/realms/apps/protocol/openid-connect/certs"  # https only
+audience = "video-service"
+workload_role = "video-workload"
+group_claim = "groups"
+service_group = "/services/video-service"
+
+[apps.hopin]
+workload_client = "hopin-workload"
+```
 
 ## Looks
 
@@ -66,7 +93,11 @@ holds the settings that shape the wire.
 | `VIDEO_LOOK_SOURCES` | `[]` | A JSON list of the URL prefixes a look's image may come from. Each is http or https with a lowercase host, no user, query or fragment, and a path that starts and ends with `/` and holds only ASCII letters, digits and `-._~/`, with no empty, `.` or `..` segment. A redirect is never followed. |
 | `VIDEO_LOOK_MAX_BYTES` | `8388608` | The most bytes an image may have. |
 | `VIDEO_LOOK_MAX_PIXELS` | `16777216` | The most pixels (width times height) an image may have. |
+| `VIDEO_CONFIG_FILE` | required | The absolute path of the caller file ([Callers](#callers)). |
 | `VIDEO_MAX_SESSIONS` | `1` | The sessions the service admits, reported in health. |
+| `VIDEO_MAX_QUEUED_AUDIO_SECONDS` | `30` | The most audio a session may queue. |
+| `VIDEO_MAX_LAG_MS` | `500` | The most a frame may be late, and the longest a provider call may take, before the session ends. |
+| `VIDEO_DRAIN_SECONDS` | `30` | The longest from the stop to the exit, the cut of the sessions left included. |
 
 The `fake` provider is a development dependency (`uv sync --all-groups` installs
 it) that no image installs.
@@ -82,7 +113,8 @@ dependencies = [
 ]
 ```
 
-It holds the wire types and `fetch_health`. Its only dependency is pydantic.
+It holds the wire types (health, refusals and the session's events) and
+`fetch_health`. Its only dependency is pydantic.
 
 ## Release
 
