@@ -100,7 +100,7 @@ holds the settings that shape the wire.
 | `VIDEO_MAX_SESSIONS` | `1` | The sessions the service admits, reported in health. |
 | `VIDEO_MAX_VIEWERS` | `5` | The most viewers a session admits. |
 | `VIDEO_MAX_QUEUED_AUDIO_SECONDS` | `30` | The most audio a session may queue. |
-| `VIDEO_MAX_LAG_MS` | `500` | The most a frame may be late, and the longest a provider call may take, before the session ends. |
+| `VIDEO_MAX_LAG_MS` | `500` | The most a frame may be late, and the longest a provider call may take, before the session ends. It also bounds how far the player draws ahead of the frames, so each session's frame memory. A provider that renders in chunks needs at least two renders plus one frame period. |
 | `VIDEO_DRAIN_SECONDS` | `30` | The longest from the stop to the exit, the cut of the sessions left included. |
 
 The `fake` provider is a development dependency (`uv sync --all-groups` installs

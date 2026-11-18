@@ -2,16 +2,20 @@
 
 from __future__ import annotations
 
-import asyncio
-import threading
 from typing import TYPE_CHECKING
 
+import pytest
 from video_provider_fake import FakeProvider
 
+from support.chunk_support import (
+    ENOUGH_LAG_MS,
+    TOO_LITTLE_LAG_MS,
+    play_chunked,
+    waiting,
+)
 from support.clock_support import FakeClock
 from support.scripted_session import played
 from support.session_support import (
-    EVENT_WITHIN_SECONDS,
     pcm,
     sentence_events,
 )
@@ -30,6 +34,13 @@ _MAX_LAG_MS = 150
 _PARTIAL_FRAME_MS = 50
 _END_DURING_FRAME_SECONDS = 0.09
 _SLOW_CLIENT_MAX_LAG_MS = 1000
+_CLEAR = {"type": "output_audio_buffer.clear"}
+_CHUNK_AUDIO_MS = 1920
+# The audio arrives while the provider draws no chunk and between two frames of
+# the face at rest, so its render starts at once, and the clear follows as it begins.
+_AUDIO_AFTER_IDLE_SECONDS = 0.54
+_CLEAR_DURING_FIRST_RENDER_SECONDS = 0.01
+_AFTER_THE_FACE_AT_REST_SECONDS = 2.0
 
 
 def _sentences(*ids: str) -> list[dict[str, object] | bytes]:
@@ -42,13 +53,14 @@ def _sentences(*ids: str) -> list[dict[str, object] | bytes]:
 
 def test_queued_audio_keeps_the_lag_the_frames_before_it_built_up() -> None:
     clock = FakeClock()
-    provider = FakeProvider(render_seconds=_RENDER_SECONDS, sleep=clock.advance)
+    provider = FakeProvider(render_seconds=_RENDER_SECONDS, sleep=clock.render)
 
     events = played(
         _sentences("a", "b"),
         sentences=2,
         provider=provider,
         pacing=clock.pacing,
+        worker=clock.worker(),
         max_lag_ms=_MAX_LAG_MS,
     )
 
@@ -59,36 +71,18 @@ def test_queued_audio_keeps_the_lag_the_frames_before_it_built_up() -> None:
 
 def test_a_sentence_ended_while_its_first_frame_draws_keeps_that_frames_lag() -> None:
     clock = FakeClock()
-    drawing = threading.Event()
-    ended = threading.Event()
-
-    def draw(seconds: float) -> None:
-        if drawing.is_set():
-            clock.advance(seconds)
-            return
-        clock.advance(_END_DURING_FRAME_SECONDS)
-        drawing.set()
-        ended.wait(EVENT_WITHIN_SECONDS)
-        clock.advance(seconds - _END_DURING_FRAME_SECONDS)
-
-    async def while_the_first_frame_draws(_socket: ScriptedSocket) -> None:
-        await asyncio.to_thread(drawing.wait, EVENT_WITHIN_SECONDS)
-
-    async def once_ended(_socket: ScriptedSocket) -> None:
-        ended.set()
-
     start, end = sentence_events("a")
     events = played(
         [
             start,
             pcm(_PARTIAL_FRAME_MS),
-            while_the_first_frame_draws,
+            waiting(clock, _END_DURING_FRAME_SECONDS),
             end,
-            once_ended,
         ],
         sentences=1,
-        provider=FakeProvider(render_seconds=_RENDER_SECONDS, sleep=draw),
+        provider=FakeProvider(render_seconds=_RENDER_SECONDS, sleep=clock.render),
         pacing=clock.pacing,
+        worker=clock.worker(),
         max_lag_ms=_MAX_LAG_MS,
     )
 
@@ -116,3 +110,33 @@ def test_a_client_that_ends_a_sentence_after_its_frames_left_adds_no_lag() -> No
     stopped = events[-1]
     assert isinstance(stopped, OutputAudioBufferStopped)
     assert stopped.audio_end_ms == _FRAME_MS
+
+
+@pytest.mark.parametrize(
+    ("max_lag_ms", "ends_unavailable"),
+    [(ENOUGH_LAG_MS, False), (TOO_LITTLE_LAG_MS, True)],
+    ids=["above-the-worst-case", "below-the-worst-case"],
+)
+def test_a_clear_that_waits_for_two_renders_ends_the_session_only_below_the_worst_case(
+    max_lag_ms: int, *, ends_unavailable: bool
+) -> None:
+    clock = FakeClock()
+    start, end = sentence_events("a")
+
+    events = play_chunked(
+        clock,
+        [
+            waiting(clock, _AUDIO_AFTER_IDLE_SECONDS),
+            start,
+            pcm(_CHUNK_AUDIO_MS),
+            end,
+            waiting(clock, _CLEAR_DURING_FIRST_RENDER_SECONDS),
+            _CLEAR,
+            waiting(clock, _AFTER_THE_FACE_AT_REST_SECONDS),
+        ],
+        sentences=0,
+        max_lag_ms=max_lag_ms,
+    )
+
+    failed = isinstance(events[-1], ErrorEvent)
+    assert failed is ends_unavailable

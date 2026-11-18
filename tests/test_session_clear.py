@@ -8,6 +8,14 @@ from typing import TYPE_CHECKING
 import pytest
 from video_provider_fake import FakeProvider
 
+from support.chunk_support import (
+    ENOUGH_LAG_MS,
+    chunked,
+    record_leaves,
+    waiting,
+)
+from support.clock_support import FakeClock
+from support.scripted_session import played
 from support.session_support import (
     EVENT_WITHIN_SECONDS,
     failure_of,
@@ -17,6 +25,7 @@ from support.session_support import (
     sentence_events,
 )
 from video_client.session_wire import (
+    ErrorEvent,
     OutputAudioBufferCleared,
     OutputAudioBufferStarted,
     OutputAudioBufferStopped,
@@ -32,6 +41,10 @@ if TYPE_CHECKING:
     from video_service.runtime import Runtime
 
 _LONG_MS = 10_000
+_START_UP_SECONDS = 3.0
+_SENTENCE_MS = 3840
+_CLEAR_AFTER_SECONDS = 1.5
+_AFTER_THE_CLEAR_SECONDS = 2.0
 _CLEAR = {"type": "output_audio_buffer.clear"}
 
 
@@ -179,3 +192,42 @@ def test_a_clear_while_the_last_frames_are_drawn_leaves_no_stop_behind(
 
     assert isinstance(after, OutputAudioBufferStarted)
     assert after.response_id == "next"
+
+
+def test_a_clear_while_a_chunk_renders_drops_every_frame_of_the_sentence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = FakeClock()
+    chunked_provider = chunked(clock)
+    leaves = record_leaves(monkeypatch, clock)
+    cleared_at: list[float] = []
+
+    async def note_the_clear(_socket: object) -> None:
+        cleared_at.append(clock.now())
+
+    start, end = sentence_events("a")
+    events = played(
+        [
+            waiting(clock, _START_UP_SECONDS),
+            start,
+            pcm(_SENTENCE_MS),
+            end,
+            waiting(clock, _CLEAR_AFTER_SECONDS),
+            note_the_clear,
+            _CLEAR,
+            waiting(clock, _AFTER_THE_CLEAR_SECONDS),
+        ],
+        sentences=0,
+        provider=chunked_provider,
+        pacing=clock.pacing,
+        worker=clock.worker(),
+        max_lag_ms=ENOUGH_LAG_MS,
+    )
+
+    (clear,) = cleared_at
+    assert not any(isinstance(event, ErrorEvent) for event in events)
+    assert any(leave.speech and leave.at < clear for leave in leaves)
+    assert not any(leave.speech and leave.at >= clear for leave in leaves)
+    assert chunked_provider.sessions[0].clears == 1
+    resumed = min(leave.at for leave in leaves if not leave.speech and leave.at > clear)
+    assert resumed - clear <= ENOUGH_LAG_MS / 1000

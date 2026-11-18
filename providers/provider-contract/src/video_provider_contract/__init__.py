@@ -7,8 +7,9 @@ provider never touches the network or an untrusted file.
 
 A session is one open look: sentence audio goes in and frames come out on the
 audio's timeline, at the frame rate the provider reported. The service calls a
-session from one thread at a time, and paces the frames it gets; the provider
-never sleeps to keep time.
+session from one thread at a time, draws ahead of the frames' time and paces the
+frames it gets; the provider never sleeps to keep time. A call returns every frame
+it draws, and a provider draws nothing between calls.
 
 A provider runs in a process of its own: `protocol` is the private frame protocol
 between that process and the service, and `worker` the loop that serves a
@@ -74,12 +75,18 @@ class ProviderSession(Protocol):
     """One open look: it draws the face idle and plays one sentence at a time."""
 
     def idle_frame(self) -> Frame:
-        """Draw the next frame of the face at rest."""
+        """Draw the next frame of the face at rest.
+
+        It may be called while a sentence is open: it takes none of the sentence's
+        audio.
+        """
 
     def feed(self, pcm: bytes, rate: int) -> Iterator[Frame]:
         """Take PCM16 little-endian mono audio of the open sentence at `rate` Hz.
 
-        The frames of the audio fed so far that are not yet drawn come out in order.
+        The frames the call draws come out in order, none when it draws none, as a
+        provider that renders in chunks does until a chunk of audio is there. The
+        service feeds at most one frame period of audio a call.
         """
 
     def finish_sentence(self) -> Iterator[Frame]:
