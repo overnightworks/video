@@ -1,0 +1,113 @@
+name: Release
+
+# The release of the client distribution: one X.Y.Z, every project of the
+# repository at that version and the client proven installable by Git pin at the
+# gated commit, then the git tag. Every quality call below is pinned at a quality
+# release.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "The version to release, X.Y.Z"
+        required: true
+        type: string
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  gate:
+    name: Gate
+    uses: overnightworks/quality/.github/workflows/release-gate.yml@1d66f90569946cf182634a3372e1e183cec8353b # v0.22.0
+    permissions:
+      actions: read
+      checks: read
+      contents: read
+      pull-requests: read
+    with:
+      version: ${{ inputs.version }}
+
+  build:
+    name: Build
+    needs: gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    outputs:
+      notes: ${{ steps.notes.outputs.notes }}
+    env:
+      VERSION: ${{ inputs.version }}
+      COMMIT: ${{ needs.gate.outputs.commit }}
+    steps:
+      - name: Check out the dispatch commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Refuse unless the checkout is the commit the gate judged
+        run: |
+          head=$(git rev-parse HEAD)
+          if [ "$head" != "$COMMIT" ]; then
+            echo "Refused: the checkout is $head, not the gated commit $COMMIT." >&2
+            exit 1
+          fi
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.10.9"
+          enable-cache: false
+
+      - name: Refuse unless every project stands at the version
+        run: python3 scripts/check_release.py "$VERSION"
+
+      - name: Install the client by its Git pin into an empty project
+        run: |
+          host="$RUNNER_TEMP/host-client"
+          mkdir "$host"
+          cp "$GITHUB_WORKSPACE/.python-version" "$host/"
+          requires_python="$(python3 -c 'import sys, tomllib; print(tomllib.load(open(sys.argv[1], "rb"))["project"]["requires-python"])' "$GITHUB_WORKSPACE/packages/client/pyproject.toml")"
+          pin="overnightworks-video-client @ git+https://github.com/$GITHUB_REPOSITORY@$COMMIT#subdirectory=packages/client"
+          printf '%s\n' \
+            '[project]' \
+            'name = "host-client"' \
+            'version = "0"' \
+            "requires-python = \"$requires_python\"" \
+            "dependencies = [\"$pin\"]" \
+            '' \
+            '[tool.uv]' \
+            'package = false' \
+            'no-binary-package = ["overnightworks-video-client"]' \
+            > "$host/pyproject.toml"
+          cd "$host"
+          uv lock
+          uv sync --locked --no-build
+          uv run --locked --no-build python -c "import video_client"
+
+      - name: Write the notes
+        id: notes
+        run: |
+          delimiter="notes-$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+          {
+            echo "notes<<$delimiter"
+            printf 'Install by Git pin at this tag:\n\n'
+            printf -- '- `overnightworks-video-client @ git+https://github.com/%s@v%s#subdirectory=packages/client`\n' "$GITHUB_REPOSITORY" "$VERSION"
+            echo "$delimiter"
+          } >> "$GITHUB_OUTPUT"
+
+  tag:
+    name: Tag
+    needs:
+      - gate
+      - build
+    permissions:
+      contents: write
+    uses: overnightworks/quality/.github/workflows/release-tag.yml@1d66f90569946cf182634a3372e1e183cec8353b # v0.22.0
+    with:
+      version: ${{ inputs.version }}
+      commit: ${{ needs.gate.outputs.commit }}
+      notes: ${{ needs.build.outputs.notes }}

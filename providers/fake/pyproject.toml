@@ -1,0 +1,15 @@
+[build-system]
+requires = ["hatchling==1.33.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "overnightworks-video-provider-fake"
+version = "0.1.0"
+description = "A provider that prepares nothing and draws nothing, for the service's own tests and a run from source."
+requires-python = ">=3.14"
+dependencies = [
+    "overnightworks-video-provider-contract",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/video_provider_fake"]

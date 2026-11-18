@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+# A pull request collapses onto its newest push, but every push to main keeps a
+# group of its own so no landing is ever cancelled by the next one.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  video:
+    name: "Video: lint, tests"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out the event commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+          version: "0.10.9"
+
+      - name: Verify the dependency lock
+        run: uv lock --check
+
+      - name: Install locked dependencies
+        run: uv sync --locked --all-groups --no-build
+
+      - name: Check source
+        run: uv run --locked --no-build ruff check
+
+      - name: Check formatting
+        run: uv run --locked --no-build ruff format --check
+
+      - name: Test
+        run: uv run --locked --no-build pytest -q -n auto --cov --cov-report=xml:coverage-root.xml
+
+      - name: Upload the coverage report
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage
+          path: coverage-root.xml
+          if-no-files-found: error
+
+  quality:
+    name: quality
+    needs:
+      - video
+    if: always()
+    uses: overnightworks/quality/.github/workflows/gate.yml@1d66f90569946cf182634a3372e1e183cec8353b # v0.22.0
+    with:
+      coverage-artifact: coverage
+    permissions:
+      contents: read
+      actions: read
+    secrets:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
