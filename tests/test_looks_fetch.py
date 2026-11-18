@@ -6,6 +6,7 @@ import logging
 from typing import TYPE_CHECKING
 
 import pytest
+from PIL import Image
 
 from support.images import noisy_picture, picture, webp_claiming_a_canvas
 from support.look_server import hosted_picture
@@ -26,6 +27,17 @@ def test_each_image_format_a_look_may_have_is_ready(
     build_runtime: BuildRuntime,
 ) -> None:
     runtime = build_runtime({"mozart": source.host("face", picture(fmt=fmt).data)})
+
+    runtime.load()
+
+    assert ready_looks(runtime.health()) == {"mozart": True}
+
+
+def test_the_pixel_cap_holds_above_the_pillow_default(
+    source: LookServer, build_runtime: BuildRuntime, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 1)
+    runtime = build_runtime({"mozart": hosted_picture(source)})
 
     runtime.load()
 

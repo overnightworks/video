@@ -52,6 +52,8 @@ def test_a_missing_provider_names_its_setting() -> None:
         ("VIDEO_LOOK_MAX_BYTES", "0"),
         ("VIDEO_LOOK_MAX_PIXELS", "0"),
         ("VIDEO_LOOKS_FILE", "relative/looks.toml"),
+        ("VIDEO_LOOK_SOURCES", "not-json"),
+        ("VIDEO_LOOK_SOURCES", "[1]"),
         ("VIDEO_LOOK_SOURCES", '["ftp://images.example/looks/"]'),
         ("VIDEO_LOOK_SOURCES", '["https://images.example/looks"]'),
         ("VIDEO_LOOK_SOURCES", '["https://Images.example/looks/"]'),

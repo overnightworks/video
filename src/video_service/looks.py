@@ -187,6 +187,9 @@ def _webp_canvas_pixels(data: bytes) -> int | None:
 
 
 def _decode(data: bytes, max_pixels: int) -> DecodedImage:
+    # Pillow's own cap would refuse above the operator's setting as not an image; the
+    # setting is the only pixel cap, and it is checked before any pixel is decoded.
+    Image.MAX_IMAGE_PIXELS = None
     # Pillow allocates a WebP's whole canvas when it opens the file, so the cap is
     # checked on the header first; PNG and JPEG open without allocating pixels.
     pixels = _webp_canvas_pixels(data)

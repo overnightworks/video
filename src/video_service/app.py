@@ -36,7 +36,7 @@ def _refused(request: Request, _error: Exception) -> JSONResponse:
         else RefusalCode.NOT_FOUND
     )
     return JSONResponse(
-        refusal(code).model_dump(mode="json"), status_code=REFUSAL_STATUS[code]
+        refusal(code).model_dump(mode="json"), status_code=int(REFUSAL_STATUS[code])
     )
 
 
