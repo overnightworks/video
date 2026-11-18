@@ -61,6 +61,7 @@ class FakeSession:
         self._bright = Frame(b"\xff" * (_WIDTH * _HEIGHT * _BYTES_PER_PIXEL))
         self._audio = bytearray()
         self._samples = 0
+        self._taken = 0
         self._rate = 1
         self._drawn = 0
         self.finishing = threading.Event()
@@ -100,21 +101,25 @@ class FakeSession:
         self._reset()
 
     def close(self) -> None:
-        """Note that the service closed the session."""
+        """Note that the service closed the session, and forget its audio."""
         self.closed = True
+        self._reset()
 
     def _until(self, total: int) -> Iterator[Frame]:
         while self._drawn < total:
             self._sleep(self._render_seconds)
-            period = self._period(self._drawn)
+            period = self._take_period()
             self._drawn += 1
             yield self._bright if self._is_loud(period) else self._dark
 
-    def _period(self, index: int) -> bytes:
-        """The audio of frame period `index`, which may be short at a sentence's end."""
-        first = index * self._rate // self._frame_rate
-        last = (index + 1) * self._rate // self._frame_rate
-        return bytes(self._audio[first * _BYTES_PER_SAMPLE : last * _BYTES_PER_SAMPLE])
+    def _take_period(self) -> bytes:
+        """Take out the next period's audio, which may be short at a sentence's end."""
+        last = (self._drawn + 1) * self._rate // self._frame_rate
+        size = (last - self._taken) * _BYTES_PER_SAMPLE
+        period = bytes(self._audio[:size])
+        self._audio = self._audio[size:]
+        self._taken += len(period) // _BYTES_PER_SAMPLE
+        return period
 
     @staticmethod
     def _is_loud(period: bytes) -> bool:
@@ -122,8 +127,9 @@ class FakeSession:
         return any(abs(sample) >= _LOUD_SAMPLE for sample in samples)
 
     def _reset(self) -> None:
-        self._audio.clear()
+        self._audio = bytearray()
         self._samples = 0
+        self._taken = 0
         self._drawn = 0
 
 
