@@ -86,13 +86,19 @@ class _End:
     failure: _Failure | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class _Chunk:
+    arrived_at: float
+    pcm: bytes
+
+
 @dataclass(slots=True)
 class _Sentence:
     id: str
     rate: int
     traceparent: str | None
     first_audio_at: float = 0.0
-    chunks: deque[bytes] = field(default_factory=deque)
+    chunks: deque[_Chunk] = field(default_factory=deque)
     samples: int = 0
     ended: bool = False
     dropped: bool = False
@@ -274,7 +280,7 @@ class Session:
         if sentence.samples == 0:
             # logline reads the start of the sentence's line off its own clock.
             sentence.first_audio_at = time.perf_counter()
-        sentence.chunks.append(pcm)
+        sentence.chunks.append(_Chunk(self._place.pacing.now(), pcm))
         sentence.samples += len(pcm) // _BYTES_PER_SAMPLE
         if self._queued_seconds() > self._place.limits.max_queued_audio_seconds:
             raise _Failure(RefusalCode.TOO_LARGE)
@@ -340,9 +346,11 @@ class Session:
         """The next audio of `sentence`, or `None` once it is complete or dropped."""
         while not sentence.dropped:
             if sentence.chunks:
-                # A chunk that arrives after the last frame's time restarts the clock.
-                self._playhead = max(self._playhead, self._place.pacing.now())
-                return sentence.chunks.popleft()
+                chunk = sentence.chunks.popleft()
+                # Audio the client sent late is no lag of the provider's, while audio
+                # that was already queued keeps the lag the frames before it built up.
+                self._playhead = max(self._playhead, chunk.arrived_at)
+                return chunk.pcm
             if sentence.ended:
                 return None
             await self._wait()
