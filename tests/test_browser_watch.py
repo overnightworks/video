@@ -97,7 +97,7 @@ def _answered_with_what_does_not_set(page: Stage) -> str:
             _NOT_AN_ANSWER,
             HTTPStatus.CREATED,
             media_type=SDP_CONTENT_TYPE,
-            headers={LOCATION_HEADER: relayed.headers[LOCATION_HEADER]},
+            headers={LOCATION_HEADER: page.app.location_of(relayed)},
         )
 
     page.app.alter = alter
@@ -134,6 +134,24 @@ def test_a_route_that_does_not_give_a_viewer_reports_ended_and_throws_nothing(
             seen = await page.read()
             assert seen.states == ["loading", "ended"]
             assert seen.thrown == []
+
+    live_in_browser(scenario)
+
+
+def test_a_stop_after_the_viewer_ended_deletes_what_the_route_made_and_reports_nothing(
+    live_in_browser: Callable[..., None], tmp_path: Path
+) -> None:
+    async def scenario(service: Service) -> None:
+        session = await service.open_session()
+        async with stage(service, session, tmp_path / "profile") as page:
+            await page.begin(_answered_with_what_does_not_set(page))
+            await page.until("seen.states.includes('ended')")
+
+            await page.page.evaluate("stage.stop()")
+            await service.logged.wait_for("viewer.ended")
+
+            assert await page.states() == ["loading", "ended"]
+            assert service.viewer_ends() == [ViewerEnd.DELETED]
 
     live_in_browser(scenario)
 

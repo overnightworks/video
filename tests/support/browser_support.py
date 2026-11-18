@@ -86,7 +86,7 @@ class StandInApp:
             relayed.content,
             status_code=relayed.status_code,
             media_type=SDP_CONTENT_TYPE,
-            headers={LOCATION_HEADER: self._location(relayed)},
+            headers={LOCATION_HEADER: self.location_of(relayed)},
         )
 
     async def _delete(self, request: Request) -> Response:
@@ -97,7 +97,8 @@ class StandInApp:
         return Response(status_code=relayed.status_code)
 
     @staticmethod
-    def _location(relayed: httpx2.Response) -> str:
+    def location_of(relayed: httpx2.Response) -> str:
+        """The app's own path of the viewer the service's answer to the relay names."""
         return f"{VIEWERS_PATH}/{relayed.headers[LOCATION_HEADER].rpartition('/')[2]}"
 
 
@@ -147,6 +148,7 @@ class Stage:
     app: StandInApp
     profile: Path
     address: str
+    killed: bool = False
     requests: list[tuple[str, dict[str, str]]] = field(default_factory=list)
 
     async def begin(self, path: str = VIEWERS_PATH) -> None:
@@ -175,6 +177,7 @@ class Stage:
 
     def kill(self) -> None:
         """Kill Chromium with SIGKILL, so it can send no DTLS close."""
+        self.killed = True
         for pid in _tree_of(self.profile):
             with suppress(ProcessLookupError):
                 os.kill(pid, KILL_SIGNAL)
@@ -243,7 +246,8 @@ async def stage(
             page.on("request", lambda r: watched.requests.append((r.url, r.headers)))
             await page.goto(address)
             yield watched
-            await coverage.write()
+            if not watched.killed:
+                await coverage.write()
         finally:
             with suppress(Exception):
                 await asyncio.wait_for(context.close(), timeout=5)

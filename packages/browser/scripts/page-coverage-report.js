@@ -1,6 +1,6 @@
-// Turns the raw V8 coverage the browser flows collected from Chromium into an lcov of the page's own sources.
+// Turns the raw V8 coverage the browser layer collected from Chromium into an lcov of the package's sources.
 // Usage: node scripts/page-coverage-report.js <raw coverage directory>
-// It writes coverage/flow/coverage-browser-flow.lcov.
+// It writes coverage/coverage-browser.lcov, with paths from the repository root.
 import { existsSync } from "node:fs";
 import { readFile, readdir, rm } from "node:fs/promises";
 import path from "node:path";
@@ -8,10 +8,10 @@ import { CoverageReport } from "monocart-coverage-reports";
 
 const [rawDirectory] = process.argv.slice(2);
 // The report empties its directory before it writes, so the directory is its own.
-const REPORT_DIRECTORY = "coverage/flow";
-const LCOV_FILE = "coverage-browser-flow.lcov";
-// The unit lcov measures the resampler and the generated module; this one measures the rest.
-const MEASURED = ["src/capture.ts", "src/capture-worklet.ts", "src/player.ts", "src/index.ts"];
+const REPORT_DIRECTORY = "coverage";
+const LCOV_FILE = "coverage-browser.lcov";
+// index.ts only re-exports, so it has no statements for the report to list.
+const MEASURED = ["src/watch.ts"];
 const BUILD_PATH = "/dist/";
 const repositoryRoot = path.resolve("../..");
 const lcovPath = path.join(REPORT_DIRECTORY, LCOV_FILE);
@@ -19,7 +19,7 @@ const lcovPath = path.join(REPORT_DIRECTORY, LCOV_FILE);
 await rm(lcovPath, { force: true });
 
 const report = new CoverageReport({
-  name: "Browser flows",
+  name: "Browser layer",
   outputDir: REPORT_DIRECTORY,
   // The maps name sources relative to the package; the lcov names them from the repository root.
   reports: [["lcovonly", { file: LCOV_FILE, projectRoot: repositoryRoot }]],
