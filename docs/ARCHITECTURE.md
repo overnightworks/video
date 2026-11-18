@@ -77,7 +77,9 @@ one before, a chunk of audio the client sent late restarts it, and a frame produ
 Every call into the provider's session runs on a daemon thread of the session's own,
 so the provider is never entered twice and a call that never returns holds back
 neither the session's end nor the process's exit: a call not back when its frame is
-`VIDEO_MAX_LAG_MS` late ends the session `unavailable`, and the session gives up its
+`VIDEO_MAX_LAG_MS` late, or a call outside the audio's clock (the first idle frame, the
+return to idle after a clear) not back within `VIDEO_MAX_LAG_MS`, ends the session
+`unavailable`, and the session gives up its
 place once the close of the provider session has taken that long. A clear lets the call in flight
 finish before it asks the provider to return to idle. A sentence's `started`, `stopped`
 and `cleared` are sent under one lock that also decides whether the sentence was

@@ -93,7 +93,8 @@ exchange starts like this:
   a one-host test sends `all`. The service keeps the configuration for the viewers'
   media and never logs it; a credential appears in no line and no error.
 - The service answers `session.updated` once the provider has drawn the look's first
-  idle frame.
+  idle frame; a first idle frame not drawn within `VIDEO_MAX_LAG_MS` ends the session
+  with `unavailable` (WIRE-7).
 - A first client event of another type (a binary message included), or a second
   `session.update`, ends the session with an `error` (`invalid_request`, `param`
   `type`).
@@ -136,7 +137,9 @@ real time by more than `VIDEO_MAX_LAG_MS`, or that fails to draw, ends it with
 `unavailable`. The lag is how far a frame is produced after its time on the audio's
 clock, a provider call that has not returned by then included; a client whose audio
 arrives late restarts the clock and is not a lag, while audio already queued keeps
-the lag the frames before it built up. A client that disconnects gets no event.
+the lag the frames before it built up. A provider call outside the audio's clock, the first idle frame and
+the return to idle after a clear, that has not returned within `VIDEO_MAX_LAG_MS` ends
+the session with `unavailable` too. A client that disconnects gets no event.
 
 **Trace.** The session's lines (`session.ended`) are written in the trace of
 `session.update`'s `traceparent`, and a sentence's line (`sentence.ended`, with
@@ -201,5 +204,5 @@ The looks are what the operator's look file names.
 |---|---|---|
 | `VIDEO_MAX_SESSIONS` | `1` | `sessions.limit`, at least 1; one more is `busy` (WIRE-3). |
 | `VIDEO_MAX_QUEUED_AUDIO_SECONDS` | `30` | The most queued audio a session holds, above 0 (WIRE-5). |
-| `VIDEO_MAX_LAG_MS` | `500` | The most a frame may be late before the session ends `unavailable`, at least 1 (WIRE-7). |
+| `VIDEO_MAX_LAG_MS` | `500` | The most a frame may be late, and the longest a provider call outside the audio's clock may take, before the session ends `unavailable`, at least 1 (WIRE-7). |
 | `VIDEO_DRAIN_SECONDS` | `30` | The longest the stop waits for the open sessions, above 0 (WIRE-11). |

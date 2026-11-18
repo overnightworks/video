@@ -95,7 +95,7 @@ holds the settings that shape the wire.
 | `VIDEO_CONFIG_FILE` | required | The absolute path of the caller file ([Callers](#callers)). |
 | `VIDEO_MAX_SESSIONS` | `1` | The sessions the service admits, reported in health. |
 | `VIDEO_MAX_QUEUED_AUDIO_SECONDS` | `30` | The most audio a session may queue. |
-| `VIDEO_MAX_LAG_MS` | `500` | The most a frame may be late before the session ends. |
+| `VIDEO_MAX_LAG_MS` | `500` | The most a frame may be late, and the longest a provider call outside the audio's clock may take, before the session ends. |
 | `VIDEO_DRAIN_SECONDS` | `30` | The longest the stop waits for open sessions. |
 
 The `fake` provider is a development dependency (`uv sync --all-groups` installs
