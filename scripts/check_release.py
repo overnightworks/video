@@ -1,4 +1,4 @@
-"""Check that every project and package of the repository stands at the released version.
+"""Check that every project and package stands at the released version.
 
 The release workflow runs this with the version before it creates the tag. Without a
 version the check only requires that they agree, which the default test run
