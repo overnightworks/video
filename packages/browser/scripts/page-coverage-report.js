@@ -38,12 +38,17 @@ async function withBuildAndMap(entry) {
   };
 }
 
-for (const file of await readdir(rawDirectory)) {
-  const { result } = JSON.parse(await readFile(path.join(rawDirectory, file), "utf8"));
-  const built = result.filter((entry) => entry.url.startsWith("http") && new URL(entry.url).pathname.startsWith(BUILD_PATH));
-  if (built.length > 0) {
-    await report.add(await Promise.all(built.map(withBuildAndMap)));
-  }
+const files = await readdir(rawDirectory);
+const entriesByFile = await Promise.all(
+  files.map(async (file) => {
+    const { result } = JSON.parse(await readFile(path.join(rawDirectory, file), "utf8"));
+    const built = result.filter((entry) => entry.url.startsWith("http") && new URL(entry.url).pathname.startsWith(BUILD_PATH));
+    return Promise.all(built.map(withBuildAndMap));
+  }),
+);
+const entries = entriesByFile.flat();
+if (entries.length > 0) {
+  await report.add(entries);
 }
 await report.generate();
 
