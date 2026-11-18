@@ -46,7 +46,7 @@ overnightworks-video-provider-fake = { workspace = true }
 
 [tool.pytest.ini_options]
 addopts = "--strict-config --strict-markers --import-mode=importlib"
-pythonpath = [".", "tests"]
+pythonpath = [".", "scripts", "tests"]
 testpaths = ["tests", "packages/client/tests"]
 
 [tool.coverage.run]
@@ -58,7 +58,7 @@ include = ["src/*", "packages/*/src/*", "providers/*/src/*"]
 target-version = "py314"
 src = [".", "scripts", "src", "packages/client/src", "tests", "packages/client/tests"]
 # The gate's layout rules forbid package markers in these directories.
-namespace-packages = ["scripts", "tests/support", "packages/client/tests/support"]
+namespace-packages = ["scripts", "tests/scripts", "tests/support", "packages/client/tests/support"]
 
 [tool.ruff.lint]
 select = ["ALL"]

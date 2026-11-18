@@ -26,8 +26,8 @@ if TYPE_CHECKING:
 
     from video_provider_contract import DecodedImage, ProviderInfo
 
-    from conftest import BuildRuntime
     from support.look_server import LookServer
+    from support.runtime_support import BuildRuntime
 
 READY_WITHIN_SECONDS = 20.0
 

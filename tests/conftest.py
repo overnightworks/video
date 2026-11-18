@@ -9,6 +9,13 @@ from fastapi.testclient import TestClient
 from video_provider_fake import FakeProvider
 
 from support.look_server import LookServer, look_server
+from support.runtime_support import (
+    CARD_MEMORY_MB,
+    MAX_BYTES,
+    MAX_PIXELS,
+    MAX_SESSIONS,
+    BuildRuntime,
+)
 from video_service.app import create_app
 from video_service.looks import LookLimits, LookSource
 from video_service.providers import ProviderName
@@ -19,20 +26,12 @@ if TYPE_CHECKING:
 
     from video_provider_contract import Provider
 
-MAX_BYTES = 4 * 1024
-MAX_PIXELS = 10_000
-MAX_SESSIONS = 2
-CARD_MEMORY_MB = 4096
-
 
 @pytest.fixture
 def source() -> Iterator[LookServer]:
     """A look source that serves what a test puts into it."""
     with look_server() as served:
         yield served
-
-
-type BuildRuntime = Callable[..., Runtime]
 
 
 @pytest.fixture

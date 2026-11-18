@@ -9,6 +9,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import TYPE_CHECKING
 
+from support.images import picture
 from video_service.looks import LookSource
 
 if TYPE_CHECKING:
@@ -81,3 +82,8 @@ def look_server() -> Iterator[LookServer]:
         server.shutdown()
         server.server_close()
         thread.join()
+
+
+def hosted_picture(source: LookServer, name: str = "mozart.png") -> LookSource:
+    """A small PNG that `source` serves as `name`, as a look names it."""
+    return source.host(name, picture().data)

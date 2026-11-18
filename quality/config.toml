@@ -1,0 +1,10 @@
+[gate]
+mandatory_jobs = ["Video: lint, tests"]
+
+[[root.allow]]
+entry = "packages/"
+reason = "the client package an app builds on"
+
+[[root.allow]]
+entry = "providers/"
+reason = "the provider port and the providers, each its own distribution in the uv workspace"

@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 
     from fastapi.testclient import TestClient
 
-    from conftest import BuildRuntime
+    from support.runtime_support import BuildRuntime
     from video_service.runtime import Runtime
 
 
