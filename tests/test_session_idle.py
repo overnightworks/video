@@ -10,7 +10,7 @@ from video_provider_fake import FakeProvider
 
 from support.clock_support import FakeClock
 from support.scripted_session import FRAME_RATE, play, played, scripted
-from support.session_support import EVENT_WITHIN_SECONDS
+from support.session_support import EVENT_WITHIN_SECONDS, sentence_events
 from video_client.session_wire import ErrorEvent, SessionCreated, SessionUpdated
 from video_client.wire import RefusalCode
 from video_service.runtime import Pacing
@@ -50,6 +50,37 @@ def test_idle_frames_leave_one_frame_period_apart_while_the_session_is_open() ->
 
     assert left_at[:_IDLE_FRAMES] == pytest.approx(
         [step * _FRAME_SECONDS for step in range(_IDLE_FRAMES)]
+    )
+
+
+def test_idle_frames_keep_leaving_while_a_sentence_lacks_audio_for_a_frame() -> None:
+    clock = FakeClock()
+    left = asyncio.Condition()
+    frames_left = 0
+
+    async def note_each_frame_leaving(seconds: float) -> None:
+        nonlocal frames_left
+        await clock.sleep(seconds)
+        async with left:
+            frames_left += 1
+            left.notify_all()
+
+    async def once_idle_frames_have_left_after_the_short_audio(
+        _socket: ScriptedSocket,
+    ) -> None:
+        async with asyncio.timeout(EVENT_WITHIN_SECONDS), left:
+            expected = frames_left + _IDLE_FRAMES
+            await left.wait_for(lambda: frames_left >= expected)
+
+    start, end = sentence_events("short")
+    one_sample = bytes(2)
+
+    played(
+        [start, one_sample, once_idle_frames_have_left_after_the_short_audio, end],
+        sentences=1,
+        provider=FakeProvider(),
+        pacing=Pacing(now=clock.now, sleep=note_each_frame_leaving),
+        max_lag_ms=_MAX_LAG_MS,
     )
 
 

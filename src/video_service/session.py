@@ -425,7 +425,11 @@ class Session:
                 await self._call(self._place.session.clear)
 
     async def _next_chunk(self, sentence: _Sentence) -> bytes | None:
-        """The next audio of `sentence`, or `None` once it is complete or dropped."""
+        """The next audio of `sentence`, or `None` once it is complete or dropped.
+
+        Until the sentence's first frame has left, the face at rest goes on while
+        its audio is awaited.
+        """
         while not sentence.dropped:
             if sentence.chunks:
                 chunk = sentence.chunks.popleft()
@@ -434,7 +438,10 @@ class Session:
             if sentence.ended:
                 self._schedule.input_arrived(sentence.ended_at)
                 return None
-            await self._wait()
+            if sentence.started:
+                await self._wait()
+            else:
+                await self._idle_step()
         return None
 
     async def _render(
