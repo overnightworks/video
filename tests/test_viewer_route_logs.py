@@ -88,7 +88,7 @@ def test_a_post_whose_client_drops_its_body_still_writes_its_viewer_line(
 
     (line,) = written(capsys.readouterr().out, "viewer.ended")
     assert line["trace_id"] == _ABORTED_TRACE
-    assert line["outcome"] != Outcome.OK
+    assert line["outcome"] == Outcome.FAILED
 
 
 def _candidate_addresses(sdp: str) -> set[str]:

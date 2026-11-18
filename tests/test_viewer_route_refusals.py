@@ -10,11 +10,11 @@ from typing import TYPE_CHECKING
 
 import pytest
 from aiortc import RTCPeerConnection
-from starlette.requests import Request
 
 from support.identity_support import (
     OTHER_APP,
     OTHER_CLIENT,
+    callers_over,
     headers_of,
     valid_headers,
 )
@@ -24,17 +24,19 @@ from video_client.wire import (
     BUSY_RETRY_AFTER_SECONDS,
     MAX_OFFER_BYTES,
     RETRY_AFTER_HEADER,
+    SDP_CONTENT_TYPE,
     Refusal,
     RefusalCode,
     viewer_path,
     viewers_path,
 )
-from video_service.viewer_route import _offer_of
+from video_service.app import create_app
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable
 
     import httpx2
+    from starlette.types import Message
 
 _TOO_LARGE = b"v=0\r\n" * (MAX_OFFER_BYTES // 3)
 _NOT_SDP = "text/plain"
@@ -306,26 +308,56 @@ def test_a_body_sent_in_chunks_is_cut_off_at_the_cap(live: Callable[..., None]) 
     live(scenario)
 
 
-def test_a_chunk_past_the_cap_is_refused_before_it_is_copied_into_the_offer() -> None:
+def test_a_chunk_past_the_cap_is_refused_before_it_is_copied_into_the_offer(
+    live: Callable[..., None],
+) -> None:
     oversized = b"v" * (64 * MAX_OFFER_BYTES)
-    headers = [(b"content-type", b"application/sdp")]
+    sent: list[Message] = []
 
-    async def receive() -> dict[str, object]:
+    async def receive() -> Message:
         return {"type": "http.request", "body": oversized, "more_body": True}
 
-    async def read() -> tuple[object, int]:
-        request = Request({"type": "http", "headers": headers}, receive)
-        tracemalloc.start()
+    async def send(message: Message) -> None:
+        sent.append(message)
+
+    async def scenario(service: Service) -> None:
+        session = await service.open_session()
+        app = create_app(service.runtime, callers_over())
+        headers = valid_headers() | {"content-type": SDP_CONTENT_TYPE}
+        scope = {
+            "type": "http",
+            "asgi": {"version": "3.0"},
+            "http_version": "1.1",
+            "method": "POST",
+            "scheme": "http",
+            "path": viewers_path(session.session_id),
+            "raw_path": viewers_path(session.session_id).encode(),
+            "query_string": b"",
+            "root_path": "",
+            "headers": [
+                (name.lower().encode(), value.encode())
+                for name, value in headers.items()
+            ],
+            "client": ("127.0.0.1", 0),
+            "server": ("127.0.0.1", 80),
+        }
+        traced_before = tracemalloc.is_tracing()
+        if not traced_before:
+            tracemalloc.start()
+        tracemalloc.reset_peak()
+        held_before = tracemalloc.get_traced_memory()[0]
         try:
-            offer = await _offer_of(request)
-            return offer, tracemalloc.get_traced_memory()[1]
+            await app(scope, receive, send)
+            peak_bytes = tracemalloc.get_traced_memory()[1] - held_before
         finally:
-            tracemalloc.stop()
+            if not traced_before:
+                tracemalloc.stop()
 
-    offer, peak_bytes = asyncio.run(read())
+        (start, *_) = sent
+        assert start["status"] == HTTPStatus.CONTENT_TOO_LARGE
+        assert peak_bytes < len(oversized)
 
-    assert offer is RefusalCode.TOO_LARGE
-    assert peak_bytes < len(oversized)
+    live(scenario)
 
 
 def test_a_viewer_whose_session_ends_while_its_offer_is_negotiated_is_not_found(
