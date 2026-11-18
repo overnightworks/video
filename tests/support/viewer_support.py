@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import struct
 from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
@@ -40,6 +41,7 @@ WITHIN_SECONDS: Final = 15.0
 FRAME_RATE: Final = 25
 VIDEO_TICKS_PER_FRAME: Final = 90_000 // FRAME_RATE
 BEEP_PEAK: Final = 20_000
+TONE_HZ: Final = 1_000
 _LOUD_AUDIO: Final = 2_000
 _BRIGHT_LUMA: Final = 128
 _LUMA_SAMPLE: Final = 64
@@ -50,6 +52,21 @@ def beep(milliseconds: int, rate: int = 16_000) -> bytes:
     """Loud PCM16 mono audio of `milliseconds`: a square wave."""
     samples = rate * milliseconds // 1000
     return struct.pack(f"<{samples}h", *([BEEP_PEAK, -BEEP_PEAK] * samples)[:samples])
+
+
+def tone(tone_ms: int, total_ms: int, rate: int = 16_000) -> bytes:
+    """PCM16 mono audio of `total_ms`: a 1 kHz sine for `tone_ms`, then silence."""
+    samples = rate * total_ms // 1000
+    loud = rate * tone_ms // 1000
+    return struct.pack(
+        f"<{samples}h",
+        *(
+            int(BEEP_PEAK * math.sin(2 * math.pi * TONE_HZ * index / rate))
+            if index < loud
+            else 0
+            for index in range(samples)
+        ),
+    )
 
 
 class Logged(logging.Handler):

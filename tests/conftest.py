@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack
 from typing import TYPE_CHECKING
 
@@ -101,6 +102,22 @@ def live(source: LookServer, build_runtime: BuildRuntime) -> Callable[..., None]
             {"mozart": hosted_picture(source)}, provider=provider, **limits
         )
         asyncio.run(asyncio.wait_for(run_live(runtime, scenario), LIVE_WITHIN_SECONDS))
+
+    return run
+
+
+@pytest.fixture
+def live_in_browser(live: Callable[..., None]) -> Callable[..., None]:
+    """Run a scenario as `live` does, on a thread of its own.
+
+    aioice binds the lock of its mDNS resolver to the first event loop that contends
+    for it, on that thread, and Chromium's candidates are mDNS names; a thread for
+    each scenario keeps the next scenario's loop clear of the last one's.
+    """
+
+    def run(scenario: Callable[[Service], Awaitable[None]], **limits: object) -> None:
+        with ThreadPoolExecutor(max_workers=1) as thread:
+            thread.submit(live, scenario, **limits).result()
 
     return run
 
