@@ -14,6 +14,7 @@ from uuid import uuid4
 
 from pydantic import (
     BaseModel,
+    BeforeValidator,
     ConfigDict,
     Field,
     StrictInt,
@@ -30,26 +31,29 @@ _MAX_ICE_URLS: Final = 8
 _MAX_TEXT_CHARACTERS: Final = 1024
 
 
+_Text = Annotated[str, Field(max_length=_MAX_TEXT_CHARACTERS)]
+
+
 class _ClientModel(BaseModel):
     model_config = ConfigDict(
         extra="forbid", frozen=True, strict=True, hide_input_in_errors=True
     )
 
 
+def _as_list(urls: object) -> object:
+    return [urls] if isinstance(urls, str) else urls
+
+
 class IceServer(_ClientModel):
     """One entry of W3C `RTCConfiguration.iceServers`; the credential is never shown."""
 
-    urls: (
-        Annotated[str, Field(max_length=_MAX_TEXT_CHARACTERS)]
-        | Annotated[
-            list[Annotated[str, Field(max_length=_MAX_TEXT_CHARACTERS)]],
-            Field(min_length=1, max_length=_MAX_ICE_URLS),
-        ]
-    )
-    username: Annotated[str, Field(max_length=_MAX_TEXT_CHARACTERS)] | None = None
-    credential: str | None = Field(
-        default=None, max_length=_MAX_TEXT_CHARACTERS, repr=False
-    )
+    urls: Annotated[
+        list[_Text],
+        BeforeValidator(_as_list),
+        Field(min_length=1, max_length=_MAX_ICE_URLS),
+    ]
+    username: _Text | None = None
+    credential: _Text | None = Field(default=None, repr=False)
 
 
 class IceConfiguration(_ClientModel):
@@ -67,11 +71,10 @@ class PcmFormat(_ClientModel):
 
 
 SentenceId = Annotated[str, Field(min_length=1, max_length=128)]
-Traceparent = Annotated[str, Field(max_length=_MAX_TEXT_CHARACTERS)]
 
 
 class _ClientEvent(_ClientModel):
-    event_id: Annotated[str, Field(max_length=_MAX_TEXT_CHARACTERS)] | None = None
+    event_id: _Text | None = None
 
 
 class SessionUpdate(_ClientEvent):
@@ -79,7 +82,7 @@ class SessionUpdate(_ClientEvent):
 
     type: Literal["session.update"]
     session: IceConfiguration
-    traceparent: Traceparent | None = None
+    traceparent: _Text | None = None
 
 
 class SentenceStart(_ClientEvent):
@@ -88,7 +91,7 @@ class SentenceStart(_ClientEvent):
     type: Literal["sentence.start"]
     sentence: SentenceId
     format: PcmFormat
-    traceparent: Traceparent | None = None
+    traceparent: _Text | None = None
 
 
 class SentenceEnd(_ClientEvent):
