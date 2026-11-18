@@ -16,7 +16,7 @@ from video_service.session import Session
 
 if TYPE_CHECKING:
     from starlette.websockets import WebSocket
-    from video_provider_fake import FakeProvider
+    from video_provider_contract import Provider
 
     from support.scripted_socket import Step
     from video_client.session_wire import ServerEvent
@@ -35,7 +35,7 @@ def scripted(
 def play(
     socket: ScriptedSocket,
     *,
-    provider: FakeProvider,
+    provider: Provider,
     pacing: Pacing,
     max_lag_ms: int,
 ) -> list[ServerEvent]:
@@ -72,7 +72,7 @@ def played(
     script: list[dict[str, object] | bytes | Step],
     sentences: int,
     *,
-    provider: FakeProvider,
+    provider: Provider,
     pacing: Pacing,
     max_lag_ms: int,
 ) -> list[ServerEvent]:

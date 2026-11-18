@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
 from http import HTTPStatus
 from typing import TYPE_CHECKING
 
+from video_provider_contract import ProviderVerb
 from video_provider_fake import FakeProvider
 
 from support.look_server import hosted_picture
 from support.runtime_support import CARD_MEMORY_MB, MAX_SESSIONS, ready_looks
-from video_client.wire import Health
+from video_client.wire import Health, RefusalCode, Verb
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -18,6 +20,7 @@ if TYPE_CHECKING:
 
     from support.look_server import LookServer
     from support.runtime_support import BuildRuntime
+    from support.worker_support import MakeProvider
     from video_service.runtime import Runtime
 
 
@@ -133,3 +136,34 @@ def test_a_provider_that_fails_to_start_leaves_every_look_unready_and_fetches_no
     assert not health.provider.ready
     assert ready_looks(health) == {"mozart": False}
     assert source.requested == []
+
+
+def test_every_verb_a_provider_reports_is_a_verb_of_the_wire() -> None:
+    assert {verb.value for verb in ProviderVerb} <= {verb.value for verb in Verb}
+
+
+def test_a_provider_that_fails_after_its_start_makes_health_and_every_look_unavailable(
+    source: LookServer,
+    build_runtime: BuildRuntime,
+    make_provider: MakeProvider,
+    wire: Callable[[Runtime], TestClient],
+) -> None:
+    provider = make_provider("ready(); serve(1); request(); os._exit(1)")
+    runtime = build_runtime(
+        {"mozart": hosted_picture(source)},
+        provider=provider,
+        provider_failed=lambda: provider.failed,
+    )
+    runtime.load()
+    before = _health(wire(runtime))
+
+    refusal = asyncio.run(runtime.open_session("mozart"))
+    after = _health(wire(runtime))
+
+    assert before.provider.ready
+    assert refusal is RefusalCode.UNAVAILABLE
+    assert not after.ready
+    assert not after.provider.ready
+    assert after.provider.plays == []
+    assert after.provider.video is None
+    assert ready_looks(after) == {"mozart": False}

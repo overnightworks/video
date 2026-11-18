@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack
 from typing import TYPE_CHECKING
@@ -25,16 +26,24 @@ from support.runtime_support import (
     BuildRuntime,
 )
 from support.viewer_support import Service, run_live
+from support.worker_support import CALL_SECONDS, SHORT_BOUNDS, install_worker, is_gone
 from video_service.app import create_app
 from video_service.looks import LookLimits, LookSource
-from video_service.providers import ProviderName
+from video_service.provider_process import (
+    ProcessBounds,
+    ProcessProvider,
+    ProviderLaunch,
+)
+from video_service.providers import ProviderName, worker_executable
 from video_service.runtime import REAL_TIME, Pacing, Runtime, SessionLimits
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Iterator, Mapping
+    from pathlib import Path
 
     from video_provider_contract import Provider
 
+    from support.worker_support import MakeProvider
     from video_service.media import PeerFactory
 
 
@@ -56,6 +65,7 @@ def build_runtime(source: LookServer) -> BuildRuntime:
         looks: Mapping[str, LookSource],
         *,
         provider: Provider | None = None,
+        provider_failed: Callable[[], bool] = lambda: False,
         sources: tuple[str, ...] | None = None,
         max_pixels: int = MAX_PIXELS,
         max_sessions: int = MAX_SESSIONS,
@@ -68,6 +78,7 @@ def build_runtime(source: LookServer) -> BuildRuntime:
         return Runtime(
             provider_name=ProviderName.FAKE,
             provider=provider or FakeProvider(),
+            provider_failed=provider_failed,
             looks=looks,
             limits=LookLimits(
                 sources=(source.base_url,) if sources is None else sources,
@@ -149,3 +160,44 @@ def started(source: LookServer, build_runtime: BuildRuntime) -> Callable[..., Ru
         return runtime
 
     return start
+
+
+@pytest.fixture
+def stub_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """The pid file and the pipe a scripted worker reports through; the pid file."""
+    pidfile = tmp_path / "worker.pid"
+    fifo = tmp_path / "worker.fifo"
+    os.mkfifo(fifo)
+    monkeypatch.setenv("STUB_PIDFILE", str(pidfile))
+    monkeypatch.setenv("STUB_FIFO", str(fifo))
+    return pidfile
+
+
+@pytest.fixture
+def make_provider(stub_environment: Path, tmp_path: Path) -> Iterator[MakeProvider]:
+    """Build a provider; at the end each is closed and no worker of it is left."""
+    made: list[ProcessProvider] = []
+
+    def build(
+        body: str | None = None,
+        bounds: ProcessBounds = SHORT_BOUNDS,
+        call_seconds: float = CALL_SECONDS,
+    ) -> ProcessProvider:
+        executable = (
+            worker_executable(ProviderName.FAKE, None)
+            if body is None
+            else install_worker(tmp_path / "root", body)
+        )
+        provider = ProcessProvider(
+            ProviderLaunch(executable=executable, max_image_pixels=1_000_000),
+            bounds,
+            call_seconds,
+        )
+        made.append(provider)
+        return provider
+
+    yield build
+    for provider in made:
+        provider.close()
+    if stub_environment.exists():
+        assert is_gone(int(stub_environment.read_text(encoding="utf-8")))

@@ -42,6 +42,15 @@ def test_the_provider_alone_is_enough_to_start(monkeypatch: pytest.MonkeyPatch) 
     assert settings.look_sources == ()
 
 
+def test_the_provider_root_is_an_absolute_path(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("VIDEO_PROVIDER", "fake")
+    monkeypatch.setenv("VIDEO_PROVIDER_ROOT", str(tmp_path))
+
+    assert load_settings().provider_root == tmp_path
+
+
 def test_a_missing_provider_names_its_setting() -> None:
     with pytest.raises(ValueError, match=r"VIDEO_PROVIDER"):
         load_settings()
@@ -63,6 +72,7 @@ def test_a_missing_provider_names_its_setting() -> None:
         ("VIDEO_LOOK_MAX_BYTES", "0"),
         ("VIDEO_LOOK_MAX_PIXELS", "0"),
         ("VIDEO_LOOKS_FILE", "relative/looks.toml"),
+        ("VIDEO_PROVIDER_ROOT", "relative/providers"),
         ("VIDEO_LOOK_SOURCES", "not-json"),
         ("VIDEO_LOOK_SOURCES", "[1]"),
         ("VIDEO_LOOK_SOURCES", '["ftp://images.example/looks/"]'),

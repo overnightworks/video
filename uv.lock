@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = ">=3.14"
 
 [manifest]
@@ -526,12 +526,6 @@ requires-dist = [{ name = "pydantic", specifier = ">=2.13,<3" }]
 name = "overnightworks-video-provider-contract"
 version = "0.3.0"
 source = { editable = "providers/provider-contract" }
-dependencies = [
-    { name = "overnightworks-video-client" },
-]
-
-[package.metadata]
-requires-dist = [{ name = "overnightworks-video-client", editable = "packages/client" }]
 
 [[package]]
 name = "overnightworks-video-provider-fake"

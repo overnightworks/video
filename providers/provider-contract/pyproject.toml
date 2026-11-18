@@ -5,11 +5,16 @@ build-backend = "hatchling.build"
 [project]
 name = "overnightworks-video-provider-contract"
 version = "0.3.0"
-description = "The port between the video service and a provider: what a provider reports, prepares and refuses."
-requires-python = ">=3.14"
-dependencies = [
-    "overnightworks-video-client",
-]
+description = "The port between the video service and a provider, and the frame protocol of a provider's process."
+requires-python = ">=3.10"
+dependencies = []
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/video_provider_contract"]
+
+[tool.ruff]
+extend = "../../pyproject.toml"
+target-version = "py310"
+
+[tool.pytest.ini_options]
+addopts = "--strict-config --strict-markers --import-mode=importlib"

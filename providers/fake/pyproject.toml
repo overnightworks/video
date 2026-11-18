@@ -11,5 +11,8 @@ dependencies = [
     "overnightworks-video-provider-contract",
 ]
 
+[project.scripts]
+video-fake-worker = "video_provider_fake.worker:main"
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/video_provider_fake"]

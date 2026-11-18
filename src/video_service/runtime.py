@@ -34,6 +34,7 @@ from video_client.wire import (
     ProviderHealth,
     RefusalCode,
     SessionsHealth,
+    Verb,
     VideoFormat,
 )
 from video_service.card import card_memory_mb
@@ -67,6 +68,26 @@ class SessionLimits:
     max_queued_audio_seconds: float
     max_lag_ms: int
     max_viewers: int
+
+
+@dataclass(frozen=True, slots=True)
+class Offer:
+    """What a started provider plays and draws, as the wire names it."""
+
+    plays: tuple[Verb, ...]
+    video: VideoFormat
+
+
+def offer_of(info: ProviderInfo) -> Offer:
+    """The wire's form of what a provider reported, the one place it is mapped."""
+    return Offer(
+        plays=tuple(Verb(verb.value) for verb in info.plays),
+        video=VideoFormat(
+            width=info.video.width,
+            height=info.video.height,
+            frame_rate=info.video.frame_rate,
+        ),
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -174,6 +195,7 @@ class Runtime:
         *,
         provider_name: ProviderName,
         provider: Provider,
+        provider_failed: Callable[[], bool] = lambda: False,
         looks: Mapping[str, LookSource],
         limits: LookLimits,
         max_sessions: int,
@@ -185,6 +207,7 @@ class Runtime:
         """Offer the keys of `looks`, none of them ready until `load` ends."""
         self._provider_name = provider_name
         self._provider = provider
+        self._provider_failed = provider_failed
         self._looks = dict(looks)
         self._limits = limits
         self._max_sessions = max_sessions
@@ -193,7 +216,7 @@ class Runtime:
         self._peers = peers
         self._memory_probe = memory_probe
         self._lock = threading.Lock()
-        self._provider_info: ProviderInfo | None = None
+        self._offer: Offer | None = None
         self._ready_looks: set[str] = set()
         self._open = 0
         self._sessions: dict[str, Session] = {}
@@ -207,9 +230,11 @@ class Runtime:
         looks = (
             {} if settings.looks_file is None else read_look_file(settings.looks_file)
         )
+        provider = provider_for(settings)
         return cls(
             provider_name=settings.provider,
-            provider=provider_for(settings.provider),
+            provider=provider,
+            provider_failed=lambda: provider.failed,
             looks=looks,
             limits=LookLimits(
                 sources=settings.look_sources,
@@ -236,7 +261,7 @@ class Runtime:
             for name, source in self._looks.items():
                 self._prepare(name, source)
         with self._lock:
-            self._provider_info = info
+            self._offer = None if info is None else offer_of(info)
 
     def _start_provider(self) -> ProviderInfo | None:
         with StepTimer(
@@ -323,15 +348,19 @@ class Runtime:
 
     def _admit(self, look: str) -> VideoFormat | RefusalCode:
         """Take a place on `look` and return the picture it draws, or refuse."""
-        info = self._provider_info
+        offer = self._serving()
         if look not in self._looks:
             return RefusalCode.INVALID_REQUEST
-        if self._draining or info is None or look not in self._ready_looks:
+        if self._draining or offer is None or look not in self._ready_looks:
             return RefusalCode.UNAVAILABLE
         if self._open >= self._max_sessions:
             return RefusalCode.BUSY
         self._open += 1
-        return info.video
+        return offer.video
+
+    def _serving(self) -> Offer | None:
+        """What the provider offers; `None` before its start and after its failure."""
+        return None if self._provider_failed() else self._offer
 
     def _give_back(self) -> None:
         with self._lock:
@@ -342,21 +371,21 @@ class Runtime:
     def health(self) -> Health:
         """`GET /health` as the service answers it now."""
         with self._lock:
-            info = self._provider_info
+            offer = self._serving()
             ready_looks = frozenset(self._ready_looks)
             open_sessions = self._open
             draining = self._draining
         return Health(
-            ready=info is not None and not draining,
+            ready=offer is not None and not draining,
             provider=ProviderHealth(
                 name=self._provider_name.value,
-                ready=info is not None,
-                plays=[] if info is None else list(info.plays),
-                video=None if info is None else info.video,
+                ready=offer is not None,
+                plays=[] if offer is None else list(offer.plays),
+                video=None if offer is None else offer.video,
             ),
             looks={
                 name: LookHealth(
-                    ready=info is not None and not draining and name in ready_looks
+                    ready=offer is not None and not draining and name in ready_looks
                 )
                 for name in self._looks
             },

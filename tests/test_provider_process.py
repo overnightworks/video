@@ -1,0 +1,370 @@
+"""The process adapter against a real child: the fake provider, and scripted ones."""
+
+from __future__ import annotations
+
+import logging
+import os
+import select
+import subprocess
+import sys
+import threading
+from concurrent.futures import ThreadPoolExecutor
+from typing import TYPE_CHECKING
+
+import pytest
+from video_provider_contract import DecodedImage, ProviderFailedError
+
+from support.scripted_session import played
+from support.worker_support import (
+    CALL_SECONDS,
+    SHORT_BOUNDS,
+    MakeProvider,
+    install_worker,
+)
+from video_client.session_wire import ErrorEvent
+from video_client.wire import RefusalCode
+from video_service.provider_process import (
+    ProcessBounds,
+    ProcessFailure,
+    ProcessProvider,
+    ProviderLaunch,
+)
+from video_service.runtime import REAL_TIME
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from _pytest.mark.structures import ParameterSet
+
+_RATE = 16_000
+_WAIT_SECONDS = 20.0
+_IMAGE = DecodedImage(2, 2, bytes(12))
+_LOUD = b"\xff\x7f" * (_RATE // 25)
+_QUIET = bytes(2 * (_RATE // 25))
+_MOZART = "mozart"
+
+# A service that starts the worker it is given, says so and waits to be killed.
+_SERVICE = """
+import sys, threading
+from pathlib import Path
+from video_service.provider_process import (
+    ProcessBounds, ProcessProvider, ProviderLaunch,
+)
+
+provider = ProcessProvider(
+    ProviderLaunch(Path(sys.argv[1]), 1), ProcessBounds(), 5.0
+)
+provider.start()
+print("started", flush=True)
+threading.Event().wait()
+"""
+
+
+def _wait_for_worker(tmp_path: Path) -> None:
+    """Block until the scripted worker calls `tell()`."""
+    with (tmp_path / "worker.fifo").open("rb") as fifo:
+        fifo.read(1)
+
+
+def test_the_fake_child_serves_a_session_from_start_to_close(
+    make_provider: MakeProvider,
+) -> None:
+    provider = make_provider(bounds=ProcessBounds())
+
+    info = provider.start()
+    provider.prepare(_MOZART, _IMAGE)
+    session = provider.open_session(_MOZART)
+    at_rest = session.idle_frame()
+    played = [*session.feed(_LOUD, _RATE), *session.finish_sentence()]
+    session.clear()
+    session.close()
+
+    assert info.video.frame_rate > 0
+    assert len(at_rest.rgb) == info.video.width * info.video.height * 3
+    assert played
+    assert all(frame.rgb != at_rest.rgb for frame in played)
+    assert not provider.failed
+
+
+def test_two_sessions_share_one_child_without_mixing_their_frames(
+    make_provider: MakeProvider,
+) -> None:
+    provider = make_provider(bounds=ProcessBounds())
+    provider.start()
+    provider.prepare(_MOZART, _IMAGE)
+    loud = provider.open_session(_MOZART)
+    quiet = provider.open_session(_MOZART)
+    at_rest = loud.idle_frame()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        loud_frames = pool.submit(lambda: list(loud.feed(_LOUD, _RATE)))
+        quiet_frames = pool.submit(lambda: list(quiet.feed(_QUIET, _RATE)))
+
+    assert [frame.rgb != at_rest.rgb for frame in loud_frames.result()] == [True]
+    assert [frame.rgb == at_rest.rgb for frame in quiet_frames.result()] == [True]
+
+
+def test_a_failed_request_fails_that_call_and_the_provider_serves_on(
+    make_provider: MakeProvider,
+) -> None:
+    provider = make_provider(
+        """
+        ready()
+        request()
+        send(encode_failed(FailureCode.REQUEST))
+        serve()
+        """
+    )
+    provider.start()
+
+    with pytest.raises(ProviderFailedError):
+        provider.prepare(_MOZART, _IMAGE)
+    provider.prepare(_MOZART, _IMAGE)
+
+    assert not provider.failed
+
+
+def test_a_clear_fences_out_the_frames_of_a_request_sent_before_it(
+    make_provider: MakeProvider, tmp_path: Path
+) -> None:
+    provider = make_provider(
+        """
+        ready()
+        serve(2)
+        stale = request()
+        tell()
+        cleared = request()
+        send(ProtocolFrame(FrameKind.FRAMES, stale.payload[:4] + PICTURE))
+        answer(cleared)
+        serve()
+        """
+    )
+    provider.start()
+    provider.prepare(_MOZART, _IMAGE)
+    session = provider.open_session(_MOZART)
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        in_flight = pool.submit(lambda: list(session.feed(_LOUD, _RATE)))
+        _wait_for_worker(tmp_path)
+        session.clear()
+
+    assert in_flight.result() == []
+    assert session.idle_frame()
+    assert not provider.failed
+
+
+def _exercise(provider: ProcessProvider) -> None:
+    provider.start()
+    provider.prepare(_MOZART, _IMAGE)
+    session = provider.open_session(_MOZART)
+    session.feed(_LOUD, _RATE)
+    session.idle_frame()
+
+
+def _failure(
+    body: str, reason: ProcessFailure, bounds: ProcessBounds = SHORT_BOUNDS
+) -> ParameterSet:
+    return pytest.param(body, reason, bounds, id=body)
+
+
+@pytest.mark.parametrize(
+    ("body", "reason", "bounds"),
+    [
+        _failure("raise SystemExit(3)", ProcessFailure.EXITED),
+        _failure("hang()", ProcessFailure.TIMEOUT),
+        _failure("send(encode_failed(FailureCode.PROVIDER))", ProcessFailure.REPORTED),
+        _failure(
+            "sys.stderr.write('x' * (2 << 20)); sys.stderr.flush(); hang()",
+            ProcessFailure.STDERR_OVERSIZED,
+            ProcessBounds(start_seconds=_WAIT_SECONDS),
+        ),
+        _failure("ready(); serve(1); request(); os._exit(1)", ProcessFailure.EXITED),
+        _failure("ready(); request(); hang()", ProcessFailure.TIMEOUT),
+        _failure("ready(); serve(1); request(); hang()", ProcessFailure.TIMEOUT),
+        _failure("ready(); serve(2); request(); hang()", ProcessFailure.TIMEOUT),
+        _failure(
+            "ready(); serve(2); asked = request(); "
+            "send(encode_failed(FailureCode.PROVIDER, session_of(asked.payload)))",
+            ProcessFailure.REPORTED,
+        ),
+        _failure(
+            "ready(); raw(b'\\x63\\x00\\x00\\x00\\x00'); hang()",
+            ProcessFailure.PROTOCOL,
+        ),
+        _failure(
+            "ready(); raw(struct.pack('!BI', FrameKind.FRAMES, 1 << 30)); hang()",
+            ProcessFailure.PROTOCOL,
+        ),
+        _failure(
+            "ready(); raw(struct.pack('!BI', FrameKind.FRAMES, 16) + b'abc'); "
+            "os._exit(0)",
+            ProcessFailure.PROTOCOL,
+        ),
+        _failure(
+            "ready(); request(); send(encode_session(FrameKind.OPENED, 1)); hang()",
+            ProcessFailure.PROTOCOL,
+        ),
+        _failure(
+            "ready(); serve(3); send(encode_session(FrameKind.CLEARED, 1)); hang()",
+            ProcessFailure.PROTOCOL,
+        ),
+        _failure(
+            "ready(); serve(2); asked = request(); "
+            "send(encode_session(FrameKind.CLEARED, session_of(asked.payload)))",
+            ProcessFailure.PROTOCOL,
+        ),
+        _failure("os.close(0); ready(); hang()", ProcessFailure.EXITED),
+        _failure(
+            "ready(); request(); send(ProtocolFrame(FrameKind.PREPARED, b'x')); hang()",
+            ProcessFailure.PROTOCOL,
+        ),
+        _failure(
+            "ready(); serve(2); asked = request(); "
+            "send(ProtocolFrame(FrameKind.FRAMES, asked.payload[:4] + b'xx'))",
+            ProcessFailure.PROTOCOL,
+        ),
+        _failure(
+            "ready(); serve(3); asked = request(); "
+            "send(ProtocolFrame(FrameKind.FRAMES, asked.payload[:4] + PICTURE * 2))",
+            ProcessFailure.PROTOCOL,
+        ),
+    ],
+)
+def test_a_child_that_fails_ends_in_the_failed_path_without_a_hang(
+    body: str,
+    reason: ProcessFailure,
+    bounds: ProcessBounds,
+    make_provider: MakeProvider,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    provider = make_provider(body, bounds)
+
+    with caplog.at_level(logging.WARNING), pytest.raises(ProviderFailedError):
+        _exercise(provider)
+
+    assert provider.failed
+    logged = [r.reason for r in caplog.records if r.msg == "provider.failed"]
+    assert logged == [reason.value]
+    with pytest.raises(ProviderFailedError):
+        provider.open_session(_MOZART)
+
+
+@pytest.mark.parametrize("executable", ["missing", "not-executable"])
+def test_a_worker_that_cannot_run_fails_the_start(
+    executable: str, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    path = tmp_path / executable
+    if executable == "not-executable":
+        path.write_text("#!/bin/sh\n", encoding="utf-8")
+    provider = ProcessProvider(
+        ProviderLaunch(executable=path, max_image_pixels=1), SHORT_BOUNDS, CALL_SECONDS
+    )
+
+    with caplog.at_level(logging.WARNING), pytest.raises(ProviderFailedError):
+        provider.start()
+
+    assert provider.failed
+    assert [r.reason for r in caplog.records] == [ProcessFailure.UNAVAILABLE.value]
+
+
+def test_a_stop_during_the_load_ends_the_child_without_waiting_for_it(
+    make_provider: MakeProvider, tmp_path: Path
+) -> None:
+    provider = make_provider("tell(); hang()", ProcessBounds())
+    outcome: list[BaseException | None] = []
+
+    def start() -> None:
+        try:
+            provider.start()
+        except ProviderFailedError as error:
+            outcome.append(error)
+
+    loading = threading.Thread(target=start)
+    loading.start()
+    _wait_for_worker(tmp_path)
+
+    provider.close()
+    loading.join(timeout=_WAIT_SECONDS)
+
+    assert not loading.is_alive()
+    assert len(outcome) == 1
+
+
+@pytest.mark.usefixtures("stub_environment")
+def test_a_killed_service_leaves_no_child(tmp_path: Path) -> None:
+    worker = install_worker(
+        tmp_path / "root",
+        """
+        from video_provider_contract.worker import run_worker
+        from video_provider_fake import FakeProvider
+
+        hold()
+        run_worker(FakeProvider())
+        """,
+    )
+    service = subprocess.Popen(  # noqa: S603 - this interpreter, a fixed program
+        [sys.executable, "-c", _SERVICE, str(worker)],
+        stdout=subprocess.PIPE,
+    )
+    with service:
+        try:
+            assert service.stdout is not None
+            service.stdout.readline()
+            held = os.open(tmp_path / "worker.fifo", os.O_RDONLY | os.O_NONBLOCK)
+            service.kill()
+            service.wait()
+            try:
+                exited, _, _ = select.select([held], [], [], _WAIT_SECONDS)
+            finally:
+                os.close(held)
+        finally:
+            service.kill()
+
+    assert exited
+
+
+def test_a_session_ends_unavailable_when_its_child_dies(
+    make_provider: MakeProvider,
+) -> None:
+    provider = make_provider("ready(); serve(2); request(); os._exit(1)")
+    provider.start()
+    provider.prepare(_MOZART, _IMAGE)
+
+    events = played([], 0, provider=provider, pacing=REAL_TIME, max_lag_ms=5_000)
+
+    failure = events[-1]
+    assert isinstance(failure, ErrorEvent)
+    assert failure.error.code is RefusalCode.UNAVAILABLE
+
+
+def test_a_request_the_protocol_cannot_hold_fails_that_call_not_the_provider(
+    make_provider: MakeProvider,
+) -> None:
+    provider = make_provider(bounds=ProcessBounds())
+    provider.start()
+    session = provider.open_session(_MOZART)
+
+    with pytest.raises(ProviderFailedError):
+        session.feed(bytes(1 << 20), _RATE)
+
+    assert session.idle_frame()
+    assert not provider.failed
+
+
+def test_a_provider_that_is_closed_does_not_start_and_serves_no_session(
+    make_provider: MakeProvider,
+) -> None:
+    unstarted = make_provider(bounds=ProcessBounds())
+    started = make_provider(bounds=ProcessBounds())
+    started.start()
+    session = started.open_session(_MOZART)
+
+    unstarted.close()
+    session.close()
+    with pytest.raises(ProviderFailedError):
+        session.idle_frame()
+    with pytest.raises(ProviderFailedError):
+        unstarted.start()
+    started.close()
+    with pytest.raises(ProviderFailedError):
+        started.start()
