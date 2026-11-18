@@ -218,8 +218,8 @@ class ProcessProvider:
         try:
             _, pictures = decode_frames(answer.payload, self._ready_info().video)
         except ProtocolError:
-            pictures = []
-            expected = -1
+            self._fail(ProcessFailure.PROTOCOL)
+            raise ProviderFailedError from None
         if expected is not None and len(pictures) != expected:
             self._fail(ProcessFailure.PROTOCOL)
             raise ProviderFailedError
@@ -317,16 +317,20 @@ class ProcessProvider:
 
     def _read_answers(self, child: subprocess.Popen[bytes]) -> None:
         limits = FrameLimits()
+        stdout = _stream(child.stdout)
         try:
             while True:
-                frame = read_frame(_stream(child.stdout), limits, ANSWER_KINDS)
-                limits = self._dispatch(frame, limits)
+                limits = self._dispatch(
+                    read_frame(stdout, limits, ANSWER_KINDS), limits
+                )
         except _ReportedFailureError:
             self._fail(ProcessFailure.REPORTED)
         except ProtocolError:
             self._fail(ProcessFailure.PROTOCOL)
         except EOFError, OSError, ValueError:
             self._fail(ProcessFailure.EXITED)
+        finally:
+            stdout.close()
 
     def _dispatch(self, frame: ProtocolFrame, limits: FrameLimits) -> FrameLimits:
         """Hand `frame` to the request it answers; the limits for the next frame."""
@@ -352,10 +356,10 @@ class ProcessProvider:
 
     def _drain_stderr(self, child: subprocess.Popen[bytes]) -> None:
         """Read and drop the worker's stderr; before READY it may write only so much."""
-        stream = _stream(child.stderr)
+        stderr = _stream(child.stderr)
         total = 0
-        with suppress(OSError, ValueError):
-            while chunk := stream.read(_STDERR_CHUNK_BYTES):
+        with suppress(OSError, ValueError), stderr:
+            while chunk := stderr.read(_STDERR_CHUNK_BYTES):
                 total += len(chunk)
                 with self._lock:
                     ready = self._info is not None
@@ -394,13 +398,16 @@ class ProcessProvider:
             request.reject()
 
     def _reap(self, child: subprocess.Popen[bytes]) -> None:
-        """Kill the worker's process group, reap it and close its pipes."""
+        """Kill the worker's process group, reap it and close its input.
+
+        Its output pipes close in the threads that read them, which end at the end of
+        the output.
+        """
         with suppress(ProcessLookupError):
             os.killpg(child.pid, signal.SIGKILL)
         child.wait()
-        for stream in (child.stdin, child.stdout, child.stderr):
-            with suppress(OSError):
-                _stream(stream).close()
+        with suppress(OSError):
+            _stream(child.stdin).close()
 
     def _log_failure(
         self, reason: ProcessFailure, child: subprocess.Popen[bytes] | None
