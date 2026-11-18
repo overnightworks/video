@@ -19,8 +19,9 @@ conventions, with media as the part that differs.
 ```mermaid
 flowchart LR
     app[App] -->|GET /health, WS /v1/sessions, POST viewers| listener[TCP listener]
+    viewer[Browser] -->|offer, DELETE via the app's route| app
     listener --> service[video_service]
-    service -->|SRTP via TURN| viewer[Browser]
+    service -->|SRTP via TURN| viewer
     service -->|port| provider[Provider]
     service -->|fetch once at start| source[Look source]
     service -->|key set| issuer[Issuer]
@@ -44,6 +45,11 @@ flowchart LR
 - `packages/client` (`overnightworks-video-client`): the one owner of the wire's
   types (health, refusals, the session's events) and the bounded health fetch. The
   service and its callers import them.
+- `packages/browser` (`overnightworks-video-browser`): `watch`, the browser side of a
+  viewer. A receive-only peer with the app's ICE servers, one POST of its offer to
+  the app's own route, a `<video>` in the page and one signal, `loading`, `drawn`
+  or `ended`, with every failure `ended`. It holds no token and has no runtime
+  dependency: the app relays the offer ([WIRE-14](wire.md#the-apps-route)).
 - `providers/provider-contract`: the port. A provider reports what it plays and
   draws when it starts, prepares each look from a decoded image and opens a session
   on a look, which takes sentence audio and returns frames; the service fetches,
@@ -132,6 +138,8 @@ nonzero exit. A provider that fails inside a session ends that session
   service runs the same check and then requires the caller's client and subject to be
   the opener's. The media is DTLS-SRTP, and an offer is bounded input (16 KiB, recvonly,
   one Opus and one VP8 section).
+- No token reaches a browser. The browser package receives none and posts the offer to
+  the app's route, which relays it with the session's tokens.
 - Egress: the service reaches the look sources at start, the issuer's key set when it
   checks tokens and, for a viewer, the TURN servers the app hands over, and nothing
   else; the pod opens no inbound port.
@@ -143,8 +151,10 @@ nonzero exit. A provider that fails inside a session ends that session
 ## Delivery
 
 CI runs lint, format and the tests with branch coverage over the service, the
-client, the port and the fake provider, then the quality gate. The release
-publishes the client distribution at a tag by Git pin
+client, the port and the fake provider, the browser package's type check and
+pack-and-install proof, the browser layer, and then the quality gate, which reads the
+Python coverage and the browser layer's lcov. The release publishes the client
+distribution at a tag by Git pin and the browser package as a tarball beside it
 ([README](../README.md#release)). No image exists yet.
 
 ## Proofs
@@ -156,3 +166,12 @@ it with a signal, and `serve` under a real server with a WebSocket client for th
 drain; the viewer tests start `serve` on a loopback port and receive the stream with
 aiortc recvonly peers, deterministic by frame timestamps. The client's tests drive `fetch_health` against a raw listener and parse the
 session's events.
+
+The browser layer drives `packages/browser` in headless Chromium against the service
+from source with the fake provider and a throwaway issuer, through a stand-in app
+route that relays the offer with the session's tokens. It proves what only a browser
+shows: the states `show` reports, frames that advance, sound that arrives, the
+offset of the heard beep to the painted flash over fifty pairs against BT.1359's
+detectability window, the refusals, stop and its DELETE, the session's end, and ICE
+consent expiry for a Chromium killed without a DTLS close. It collects Chromium's V8
+coverage of `dist`, which a script turns into the package's lcov.
