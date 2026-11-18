@@ -3,6 +3,6 @@ agent = "Claude 21fd863e-01fb-442b-a634-e988b43fd9d7"
 role = "builder"
 base = "6fb18276e84a0a7a38718b356cbebeae67b18615"
 branch = "claude/issue-10-p2a-viewers-and-media"
-scope = ["README.md", "docs", "packages/client", "providers/fake/src/video_provider_fake/__init__.py", "pyproject.toml", "src/video_service", "tests", "uv.lock"]
+scope = ["README.md", "docs", "packages/client", "providers/fake/src/video_provider_fake/__init__.py", "providers/fake/tests/test_video_provider_fake.py", "pyproject.toml", "sonar-project.properties", "src/video_service", "tests", "uv.lock"]
 opened_commit = "25d391345acb9a3b1b9d979b38644ba4e48f899f"
 whole_reason = "P2a is one session's media path (the viewer route, the peers, the tracks and the idle on the frame clock): the route, the media and the player share one session's state and one proof at the WebRTC boundary, so they cannot be proven apart, and it passes 400 lines as section 8 foresees for the media path."
