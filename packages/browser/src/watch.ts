@@ -8,7 +8,7 @@ export interface Watching {
 
 const SDP_TYPE = "application/sdp";
 const CREATED = 201;
-const OVER = ["failed", "closed"];
+const OVER = new Set(["failed", "closed"]);
 
 /**
  * Watches a session through the app's own route: a receive-only peer, one POST of its
@@ -65,7 +65,7 @@ export function watch(
     // state follows it only after the ICE consent has lapsed.
     const check = (): void => {
       const dtls = connection.getReceivers()[0]!.transport!.state;
-      if (OVER.includes(connection.connectionState) || OVER.includes(dtls)) finish();
+      if (OVER.has(connection.connectionState) || OVER.has(dtls)) finish();
     };
     const gathered = new Promise<void>((resolve) => {
       connection.onicecandidate = ({ candidate }) => {
