@@ -138,9 +138,10 @@ def test_a_frame_longer_than_its_kind_allows_is_refused_from_its_header(
 ) -> None:
     kind = FrameKind.OPENED if payload_length > 0 else 99
     header_only = io.BytesIO(_HEADER.pack(kind, abs(payload_length)))
+    every_kind = frozenset(FrameKind)
 
     with pytest.raises(ProtocolError):
-        read_frame(header_only, _LIMITS, frozenset(FrameKind))
+        read_frame(header_only, _LIMITS, every_kind)
 
 
 @pytest.mark.parametrize(
@@ -157,9 +158,10 @@ def test_the_caps_follow_the_picture_the_image_and_the_audio(
     kind: FrameKind, limits: FrameLimits, length: int
 ) -> None:
     header_only = io.BytesIO(_HEADER.pack(kind, length))
+    every_kind = frozenset(FrameKind)
 
     with pytest.raises(ProtocolError):
-        read_frame(header_only, limits, frozenset(FrameKind))
+        read_frame(header_only, limits, every_kind)
 
 
 def test_a_kind_the_reader_does_not_accept_is_refused() -> None:
@@ -175,12 +177,16 @@ def test_a_frame_cut_short_is_refused_and_an_empty_stream_ends() -> None:
     whole = io.BytesIO()
     write_frame(whole, encode_session(FrameKind.IDLE, _SESSION))
 
+    missing_a_byte = io.BytesIO(whole.getvalue()[:-1])
+    missing_the_length = io.BytesIO(whole.getvalue()[:2])
+    empty = io.BytesIO()
+
     with pytest.raises(ProtocolError):
-        read_frame(io.BytesIO(whole.getvalue()[:-1]), _LIMITS, REQUEST_KINDS)
+        read_frame(missing_a_byte, _LIMITS, REQUEST_KINDS)
     with pytest.raises(ProtocolError):
-        read_frame(io.BytesIO(whole.getvalue()[:2]), _LIMITS, REQUEST_KINDS)
+        read_frame(missing_the_length, _LIMITS, REQUEST_KINDS)
     with pytest.raises(EOFError):
-        read_frame(io.BytesIO(), _LIMITS, REQUEST_KINDS)
+        read_frame(empty, _LIMITS, REQUEST_KINDS)
 
 
 @pytest.mark.parametrize(
