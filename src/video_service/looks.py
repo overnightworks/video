@@ -200,7 +200,7 @@ def _decode(data: bytes, max_pixels: int) -> DecodedImage:
             if image.width * image.height > max_pixels:
                 raise LookRefusedError(LookFailure.TOO_MANY_PIXELS)
             rgb = image.convert("RGB")
-    except OSError, SyntaxError, ValueError, Image.DecompressionBombError:
+    except OSError, SyntaxError, ValueError:
         raise LookRefusedError(LookFailure.NOT_AN_IMAGE) from None
     return DecodedImage(width=rgb.width, height=rgb.height, rgb=rgb.tobytes())
 

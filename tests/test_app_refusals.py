@@ -109,3 +109,14 @@ def test_a_refusal_never_echoes_the_request(client: TestClient) -> None:
 
     assert "unlikely" not in answer.text
     assert "hunter2" not in answer.text
+
+
+def test_a_refused_request_logs_its_status_as_a_plain_number(
+    client: TestClient, capsys: pytest.CaptureFixture[str]
+) -> None:
+    client.get("/nowhere")
+
+    (line,) = [
+        line for line in capsys.readouterr().out.splitlines() if "request.ended" in line
+    ]
+    assert " status=404 " in f"{line} "

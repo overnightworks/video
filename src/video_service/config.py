@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Annotated, Any, Final
+from typing import Annotated, Final
 
 from pydantic import Field, ValidationError, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
@@ -35,7 +35,7 @@ class Settings(BaseSettings):
 
     @field_validator("look_sources", mode="before")
     @classmethod
-    def _look_sources_are_json(cls, raw: Any) -> Any:  # noqa: ANN401 - the raw environment value
+    def _look_sources_are_json(cls, raw: object) -> object:
         if not isinstance(raw, str):
             return raw
         try:
