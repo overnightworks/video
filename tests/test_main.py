@@ -26,10 +26,15 @@ from support.identity_support import (
     write_caller_config,
 )
 from support.images import picture
+from support.service_support import (
+    READY_WITHIN_SECONDS,
+    ReadyAnnouncement,
+    free_port,
+    start_service,
+)
 from support.session_support import (
     pcm,
     sentence_events,
-    session_url,
     update_event,
 )
 from video_client.health import fetch_health
@@ -57,9 +62,7 @@ if TYPE_CHECKING:
 
     from support.look_server import LookServer
     from support.runtime_support import BuildRuntime
-    from video_service.runtime import Runtime
 
-READY_WITHIN_SECONDS = 20.0
 _DRAIN_SECONDS = 1.0
 _EXIT_SLACK_SECONDS = 5.0
 
@@ -76,24 +79,6 @@ class _ExplodingProvider:
         return None
 
 
-def _free_port() -> int:
-    with socket.socket() as bound:
-        bound.bind(("127.0.0.1", 0))
-        return bound.getsockname()[1]
-
-
-class _ReadyAnnouncement(logging.Handler):
-    """Sets an event when the service logs `process.ready`, which follows the load."""
-
-    def __init__(self) -> None:
-        super().__init__(logging.INFO)
-        self.announced = threading.Event()
-
-    def emit(self, record: logging.LogRecord) -> None:
-        if record.getMessage() == "process.ready":
-            self.announced.set()
-
-
 def _health(port: int) -> Health | None:
     outcome = fetch_health(
         f"http://127.0.0.1:{port}", deadline_seconds=2, cap_bytes=65536
@@ -108,10 +93,10 @@ def test_the_service_answers_health_ready_and_stops_clean_on_request(
     runtime = build_runtime(
         {"mozart": source.host("mozart.png", picture().data)}, provider=provider
     )
-    port = _free_port()
+    port = free_port()
     settings = Settings(provider=ProviderName.FAKE, port=port)
 
-    ready = _ReadyAnnouncement()
+    ready = ReadyAnnouncement()
 
     async def drive() -> tuple[int, Health | None, bool]:
         stop = asyncio.Event()
@@ -142,7 +127,7 @@ def test_a_load_that_fails_ends_the_process_nonzero(
     build_runtime: BuildRuntime,
 ) -> None:
     runtime = build_runtime({}, provider=_ExplodingProvider())
-    settings = Settings(provider=ProviderName.FAKE, port=_free_port())
+    settings = Settings(provider=ProviderName.FAKE, port=free_port())
 
     result = asyncio.run(serve(settings, runtime, callers_over(), asyncio.Event()))
 
@@ -173,7 +158,7 @@ def test_the_process_serves_the_configured_looks_and_stops_on_a_signal(
     looks_file.write_text(
         f'[mozart]\nurl = "{shown.url}"\nsha256 = "{shown.sha256}"\n', encoding="utf-8"
     )
-    port = _free_port()
+    port = free_port()
     monkeypatch.setenv("VIDEO_PROVIDER", "fake")
     monkeypatch.setenv("VIDEO_CONFIG_FILE", str(write_caller_config(tmp_path)))
     monkeypatch.setenv("VIDEO_PORT", str(port))
@@ -261,26 +246,6 @@ def test_a_runtime_closes_its_provider(build_runtime: BuildRuntime) -> None:
     assert provider.closed
 
 
-async def _serving(
-    runtime: Runtime,
-    settings: Settings,
-    stop: asyncio.Event,
-    key_set: KeySet | None = None,
-) -> tuple[asyncio.Task[int], str]:
-    """Start `serve` on a free port and return its task and its session URL."""
-    ready = _ReadyAnnouncement()
-    logger = logging.getLogger("video_service.__main__")
-    logger.addHandler(ready)
-    logger.setLevel(logging.INFO)
-    task = asyncio.create_task(serve(settings, runtime, callers_over(key_set), stop))
-    try:
-        assert await asyncio.to_thread(ready.announced.wait, READY_WITHIN_SECONDS)
-    finally:
-        logger.removeHandler(ready)
-        logger.setLevel(logging.NOTSET)
-    return task, f"ws://127.0.0.1:{settings.port}{session_url()}"
-
-
 async def _open_playing(url: str, milliseconds: int) -> ClientConnection:
     """Open a session at `url` and speak one sentence; return once it plays."""
     session = await connect(url, additional_headers=valid_headers())
@@ -301,11 +266,11 @@ def test_a_stop_lets_the_playing_sentence_finish_then_closes_the_session(
     source: LookServer, build_runtime: BuildRuntime
 ) -> None:
     runtime = build_runtime({"mozart": source.host("mozart.png", picture().data)})
-    settings = Settings(provider=ProviderName.FAKE, port=_free_port())
+    settings = Settings(provider=ProviderName.FAKE, port=free_port())
 
     async def drive() -> tuple[int, ServerEvent, int | None]:
         stop = asyncio.Event()
-        serving, url = await _serving(runtime, settings, stop)
+        serving, url = await start_service(runtime, settings, stop)
         session = await _open_playing(url, 200)
         stop.set()
         stopped = parse_server_event(str(await session.recv()))
@@ -324,13 +289,11 @@ def test_a_session_that_outlasts_the_drain_bound_is_cut_when_the_service_exits(
     source: LookServer, build_runtime: BuildRuntime
 ) -> None:
     runtime = build_runtime({"mozart": source.host("mozart.png", picture().data)})
-    settings = Settings(
-        provider=ProviderName.FAKE, port=_free_port(), drain_seconds=0.2
-    )
+    settings = Settings(provider=ProviderName.FAKE, port=free_port(), drain_seconds=0.2)
 
     async def drive() -> tuple[int, int | None]:
         stop = asyncio.Event()
-        serving, url = await _serving(runtime, settings, stop)
+        serving, url = await start_service(runtime, settings, stop)
         session = await _open_playing(url, 20_000)
         stop.set()
         async with asyncio.timeout(READY_WITHIN_SECONDS):
@@ -387,13 +350,13 @@ def test_a_stop_ends_the_process_within_the_drain_bound_while_a_provider_call_is
         max_lag_ms=60_000,
     )
     settings = Settings(
-        provider=ProviderName.FAKE, port=_free_port(), drain_seconds=_DRAIN_SECONDS
+        provider=ProviderName.FAKE, port=free_port(), drain_seconds=_DRAIN_SECONDS
     )
     stopped_at: list[float] = []
 
     async def drive() -> tuple[int, int | None]:
         stop = asyncio.Event()
-        serving, url = await _serving(runtime, settings, stop)
+        serving, url = await start_service(runtime, settings, stop)
         session = await connect(url, additional_headers=valid_headers())
         await session.recv()
         await session.send(json.dumps(update_event()))
@@ -435,14 +398,14 @@ def test_a_stop_ends_the_process_within_the_drain_bound_while_a_key_fetch_is_stu
 ) -> None:
     runtime = build_runtime({"mozart": source.host("mozart.png", picture().data)})
     settings = Settings(
-        provider=ProviderName.FAKE, port=_free_port(), drain_seconds=_DRAIN_SECONDS
+        provider=ProviderName.FAKE, port=free_port(), drain_seconds=_DRAIN_SECONDS
     )
     key_set = _KeySetStuck()
     stopped_at: list[float] = []
 
     async def drive() -> int:
         stop = asyncio.Event()
-        serving, url = await _serving(runtime, settings, stop, key_set)
+        serving, url = await start_service(runtime, settings, stop, key_set)
         upgrade = asyncio.ensure_future(
             connect(url, additional_headers=valid_headers())
         )
@@ -482,7 +445,7 @@ def test_a_client_that_leaves_ends_its_session_ok_and_frees_its_place(
     runtime = build_runtime(
         {"mozart": source.host("mozart.png", picture().data)}, max_sessions=1
     )
-    settings = Settings(provider=ProviderName.FAKE, port=_free_port())
+    settings = Settings(provider=ProviderName.FAKE, port=free_port())
     lines = _SessionLines()
     logger = logging.getLogger("video_service.session")
     logger.addHandler(lines)
@@ -490,7 +453,7 @@ def test_a_client_that_leaves_ends_its_session_ok_and_frees_its_place(
 
     async def drive() -> int:
         stop = asyncio.Event()
-        serving, url = await _serving(runtime, settings, stop)
+        serving, url = await start_service(runtime, settings, stop)
         session = await _open_playing(url, 20_000)
         await session.close()
         stop.set()

@@ -45,6 +45,7 @@ from video_client.session_wire import (
     parse_client_event,
 )
 from video_client.wire import DRAIN_CLOSE_CODE, RefusalCode
+from video_service.media import Media
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Iterator
@@ -54,7 +55,7 @@ if TYPE_CHECKING:
     from starlette.websockets import WebSocket
     from video_provider_contract import Frame
 
-    from video_client.session_wire import IceConfiguration
+    from video_service.callers import Opener
     from video_service.runtime import Place
 
 logger = logging.getLogger(__name__)
@@ -110,10 +111,20 @@ class _Sentence:
     started: bool = False
     frames_left: int = 0
     late_frames: int = 0
+    heard: bytearray = field(default_factory=bytearray)
 
     @property
     def audio_ms(self) -> int:
         return self.samples * _MS_PER_SECOND // self.rate
+
+    def take_period(self, frame_rate: int) -> bytes:
+        """The audio of the next frame to leave, off the audio the provider heard."""
+        first = self.frames_left * self.rate // frame_rate
+        last = (self.frames_left + 1) * self.rate // frame_rate
+        size = (last - first) * _BYTES_PER_SAMPLE
+        period = bytes(self.heard[:size])
+        del self.heard[:size]
+        return period
 
 
 @dataclass(slots=True)
@@ -145,7 +156,7 @@ class _Schedule:
 class Session:
     """The state machine of one accepted session; `run` serves it to its end."""
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 - the parts the route hands each session
         self,
         *,
         session_id: str,
@@ -153,8 +164,12 @@ class Session:
         provider: str,
         socket: WebSocket,
         place: Place,
+        opener: Opener,
     ) -> None:
-        """Serve `socket` on `place`; the session's line names `look` and `provider`."""
+        """Serve `socket` on `place`; the session's line names `look` and `provider`.
+
+        Only `opener`, the caller who opened the session, may add viewers to it.
+        """
         self._id = session_id
         self._look = look
         self._provider = provider
@@ -170,7 +185,13 @@ class Session:
         self._draining = False
         self._schedule = _Schedule(1 / self._frame_rate)
         self._sentence_count = 0
-        self._ice: IceConfiguration | None = None
+        self._media = Media(place.video, place.limits.max_viewers)
+        self.opener = opener
+
+    @property
+    def media(self) -> Media:
+        """The viewers of this session."""
+        return self._media
 
     async def run(self) -> None:
         """Serve the session from its accepted upgrade to its close; write its line.
@@ -186,8 +207,10 @@ class Session:
                 ) as step,
             ):
                 end = await self._serve(trace)
+                await self._media.close()
                 await self._finish(step, end)
         finally:
+            await self._media.close()
             closing = self._place.worker.submit(self._place.session.close)
             self._place.worker.stop()
             task = asyncio.current_task()
@@ -221,7 +244,7 @@ class Session:
             if isinstance(update, _End):
                 return update
             trace.enter_context(unit_trace(update.traceparent))
-            self._ice = update.session
+            self._media.configure(update.session)
             await self._idle_step()
             await self._send(SessionUpdated())
             return await self._converse()
@@ -232,7 +255,7 @@ class Session:
 
     async def _finish(self, step: StepTimer, end: _End) -> None:
         failure = end.failure
-        step.add(sentence_count=self._sentence_count)
+        step.add(sentence_count=self._sentence_count, viewer_count=self._media.admitted)
         if end.close_code is not None:
             step.add(close_code=end.close_code)
         if failure is not None:
@@ -383,8 +406,9 @@ class Session:
     async def _idle_step(self) -> None:
         """Draw the face at rest and let the frame leave at its time on the clock."""
         self._schedule.input_arrived(self._place.pacing.now())
-        await self._call(self._place.session.idle_frame)
+        frame = await self._call(self._place.session.idle_frame)
         await self._hold_to_due()
+        self._media.send_idle(frame)
 
     async def _wait(self) -> None:
         await self._woken.wait()
@@ -417,6 +441,7 @@ class Session:
     async def _render(self, sentence: _Sentence, step: StepTimer, chunk: bytes) -> None:
         provider = self._place.session
         while chunk is not None:
+            sentence.heard += chunk
             frames = await self._call(partial(provider.feed, chunk, sentence.rate))
             await self._send_frames(sentence, step, frames)
             chunk = await self._next_chunk(sentence)
@@ -437,13 +462,13 @@ class Session:
         self, sentence: _Sentence, step: StepTimer, frames: Iterator[Frame]
     ) -> None:
         """Release each frame of `frames` at its time on the audio's clock."""
-        while (
-            not sentence.dropped
-            and await self._call(partial(next, frames, None)) is not None
-        ):
+        while not sentence.dropped:
+            frame = await self._call(partial(next, frames, None))
+            if frame is None:
+                return
             if await self._hold_to_due():
                 sentence.late_frames += 1
-            await self._leave(sentence, step)
+            await self._leave(sentence, step, frame)
 
     async def _hold_to_due(self) -> bool:
         """Hold the frame until it is due; whether it was late, too late fails."""
@@ -455,11 +480,13 @@ class Session:
         await self._place.pacing.sleep(-lateness)
         return False
 
-    async def _leave(self, sentence: _Sentence, step: StepTimer) -> None:
+    async def _leave(self, sentence: _Sentence, step: StepTimer, frame: Frame) -> None:
         """A frame leaves for the viewers; the sentence's first one starts it."""
         async with self._lock:
             if sentence.dropped:
                 return
+            period = sentence.take_period(self._frame_rate)
+            self._media.send(frame, period, sentence.rate)
             sentence.frames_left += 1
             if not sentence.started:
                 sentence.started = True

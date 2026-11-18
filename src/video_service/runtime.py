@@ -7,8 +7,9 @@ stays not ready and the others serve; a provider that fails leaves every look no
 ready.
 
 A session takes a place while it runs: `open_session` checks the look and the
-limit in the order the wire refuses them, and `begin_drain` stops new places and
-tells every open session to finish.
+limit in the order the wire refuses them, and `begin_drain` stops new places and new
+viewers and tells every open session to finish. `enrol` makes an open session findable
+by its id, for the route of its viewers.
 """
 
 from __future__ import annotations
@@ -52,6 +53,7 @@ if TYPE_CHECKING:
     from video_service.config import Settings
     from video_service.looks import LookSource
     from video_service.providers import ProviderName
+    from video_service.session import Session
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +64,7 @@ class SessionLimits:
 
     max_queued_audio_seconds: float
     max_lag_ms: int
+    max_viewers: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -187,6 +190,7 @@ class Runtime:
         self._provider_info: ProviderInfo | None = None
         self._ready_looks: set[str] = set()
         self._open = 0
+        self._sessions: dict[str, Session] = {}
         self._draining = False
         self._drain_begun = asyncio.Event()
         self._idle = asyncio.Event()
@@ -210,6 +214,7 @@ class Runtime:
             session_limits=SessionLimits(
                 max_queued_audio_seconds=settings.max_queued_audio_seconds,
                 max_lag_ms=settings.max_lag_ms,
+                max_viewers=settings.max_viewers,
             ),
         )
 
@@ -281,6 +286,21 @@ class Runtime:
             draining=self._drain_begun,
             release=self._give_back,
         )
+
+    def enrol(self, session_id: str, session: Session) -> Callable[[], None]:
+        """Make `session` findable by its id; the returned call withdraws it."""
+        self._sessions[session_id] = session
+        return partial(self._sessions.pop, session_id, None)
+
+    def session(self, session_id: str) -> Session | None:
+        """The open session with this id, if any."""
+        return self._sessions.get(session_id)
+
+    @property
+    def accepts_viewers(self) -> bool:
+        """Whether a new viewer is admitted: not while the service drains."""
+        with self._lock:
+            return not self._draining
 
     def begin_drain(self) -> None:
         """Stop new sessions, report not ready, and tell the open sessions to finish."""

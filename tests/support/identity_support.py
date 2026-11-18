@@ -26,6 +26,8 @@ KEY_SET_ADDRESS: Final = "https://identity.test/certs?credential=SENTINEL"
 AUDIENCE: Final = "video-service"
 APP: Final = "quiz"
 CLIENT: Final = "quiz-client"
+OTHER_APP: Final = "chess"
+OTHER_CLIENT: Final = "chess-client"
 SERVICE_GROUP: Final = "/services/video-service"
 WORKLOAD_ROLE: Final = "workload"
 GROUP_CLAIM: Final = "groups"
@@ -78,7 +80,10 @@ def _caller_config() -> CallerConfig:
             group_claim=GROUP_CLAIM,
             service_group=SERVICE_GROUP,
         ),
-        apps={APP: AppConfig(workload_client=CLIENT)},
+        apps={
+            APP: AppConfig(workload_client=CLIENT),
+            OTHER_APP: AppConfig(workload_client=OTHER_CLIENT),
+        },
     )
 
 
@@ -140,6 +145,18 @@ def person_token(
 def valid_headers() -> dict[str, str]:
     """The headers of a session upgrade the scenario issuer vouches for."""
     return caller_headers(workload_token=workload_token(), person_token=person_token())
+
+
+def headers_of(
+    *, app: str = APP, client: str = CLIENT, subject: str = "quiz-player"
+) -> dict[str, str]:
+    """The headers of a call by `subject` through the registered `client` of `app`."""
+    return caller_headers(
+        workload_token=workload_token(azp=client, client_id=client),
+        person_token=person_token(
+            groups=(f"/apps/{app}", SERVICE_GROUP), azp=client, sub=subject
+        ),
+    )
 
 
 def caller_config_text(*, identity: str = "", apps: str | None = None) -> str:

@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from fastapi import FastAPI
     from starlette.websockets import WebSocket
 
-    from video_service.callers import VideoCallers
+    from video_service.callers import Opener, VideoCallers
     from video_service.runtime import Place, Runtime
 
 logger = logging.getLogger(__name__)
@@ -34,7 +34,12 @@ class _SessionRoute:
             "session.ended", logger, provider=self._runtime.provider_name
         )
         look = websocket.query_params.get(LOOK_PARAM, "")
-        placed = await self._placed(websocket, look)
+        opener = await self._callers.admit(websocket.headers)
+        placed = (
+            opener
+            if isinstance(opener, RefusalCode)
+            else await self._runtime.open_session(look)
+        )
         if isinstance(placed, RefusalCode):
             with refused:
                 refused.refuse(placed.value)
@@ -42,20 +47,26 @@ class _SessionRoute:
             await websocket.send_denial_response(refusal_response(placed, param))
             return
         await websocket.accept()
-        await Session(
-            session_id=uuid4().hex,
+        await self._run(websocket, look, placed, opener)
+
+    async def _run(
+        self, websocket: WebSocket, look: str, place: Place, opener: Opener
+    ) -> None:
+        """Serve the session, findable by its id for as long as it runs."""
+        session_id = uuid4().hex
+        session = Session(
+            session_id=session_id,
             look=look,
             provider=self._runtime.provider_name,
             socket=websocket,
-            place=placed,
-        ).run()
-
-    async def _placed(self, websocket: WebSocket, look: str) -> Place | RefusalCode:
-        """The place the upgrade earns, or its refusal in the wire's order."""
-        refusal = await self._callers.refusal(websocket.headers)
-        if refusal is not None:
-            return refusal
-        return await self._runtime.open_session(look)
+            place=place,
+            opener=opener,
+        )
+        withdraw = self._runtime.enrol(session_id, session)
+        try:
+            await session.run()
+        finally:
+            withdraw()
 
 
 async def _deny_upgrade(websocket: WebSocket) -> None:

@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, cast
 from support.scripted_socket import ScriptedSocket
 from support.session_support import EVENT_WITHIN_SECONDS, update_event
 from video_client.wire import VideoFormat
+from video_service.callers import Opener
 from video_service.runtime import Place, ProviderThread, SessionLimits
 from video_service.session import Session
 
@@ -38,7 +39,9 @@ def played(
         session=provider.open_session("mozart"),
         worker=ProviderThread(),
         video=VideoFormat(width=256, height=256, frame_rate=FRAME_RATE),
-        limits=SessionLimits(max_queued_audio_seconds=30, max_lag_ms=max_lag_ms),
+        limits=SessionLimits(
+            max_queued_audio_seconds=30, max_lag_ms=max_lag_ms, max_viewers=1
+        ),
         pacing=pacing,
         draining=asyncio.Event(),
         release=lambda: None,
@@ -53,6 +56,7 @@ def played(
                 provider="fake",
                 socket=cast("WebSocket", socket),
                 place=place,
+                opener=Opener("client", "subject"),
             ).run()
 
     asyncio.run(run())

@@ -3,12 +3,13 @@
 webauth proves the tokens (`ServiceCallerCheck.person_caller`); this module adds the
 policy that is the service's: only a person call is admitted, and the person must
 belong to exactly the configured service group. It logs nothing, and nothing taken
-from a token leaves it.
+from a token leaves it but the `Opener` the session keeps to know its viewers' caller.
 """
 
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass, field
 from functools import partial
 from typing import TYPE_CHECKING, Final
 
@@ -41,6 +42,14 @@ _REFUSAL_CODE: Final = {
     CallerRefusalClass.UNAVAILABLE: RefusalCode.UNAVAILABLE,
     CallerRefusalClass.FORBIDDEN: RefusalCode.FORBIDDEN,
 }
+
+
+@dataclass(frozen=True, slots=True)
+class Opener:
+    """The caller of a session: the app's client and the person's subject."""
+
+    client_id: str = field(repr=False)
+    subject: str = field(repr=False)
 
 
 class VideoCallers:
@@ -89,8 +98,8 @@ class VideoCallers:
         )
         return cls(check, identity.service_group)
 
-    async def refusal(self, headers: Headers) -> RefusalCode | None:
-        """The refusal the request's tokens earn, or `None` for a person call."""
+    async def admit(self, headers: Headers) -> Opener | RefusalCode:
+        """The caller of a person call, or the refusal the request's tokens earn."""
         # A daemon thread, since a key-set fetch can outlast the drain.
         caller = await asyncio.wrap_future(
             in_daemon_thread(
@@ -106,7 +115,7 @@ class VideoCallers:
             return _REFUSAL_CODE[caller.refusal_class]
         if self._service_group not in caller.groups:
             return RefusalCode.FORBIDDEN
-        return None
+        return Opener(caller.client_id, caller.principal.subject)
 
 
 def _bearer_token(authorization: str | None) -> str | None:
