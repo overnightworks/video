@@ -512,7 +512,7 @@ dependencies = [
 
 [[package]]
 name = "overnightworks-video-client"
-version = "0.2.0"
+version = "0.3.0"
 source = { editable = "packages/client" }
 dependencies = [
     { name = "pydantic" },
@@ -523,7 +523,7 @@ requires-dist = [{ name = "pydantic", specifier = ">=2.13,<3" }]
 
 [[package]]
 name = "overnightworks-video-provider-contract"
-version = "0.2.0"
+version = "0.3.0"
 source = { editable = "providers/provider-contract" }
 dependencies = [
     { name = "overnightworks-video-client" },
@@ -534,7 +534,7 @@ requires-dist = [{ name = "overnightworks-video-client", editable = "packages/cl
 
 [[package]]
 name = "overnightworks-video-provider-fake"
-version = "0.2.0"
+version = "0.3.0"
 source = { editable = "providers/fake" }
 dependencies = [
     { name = "overnightworks-video-provider-contract" },
@@ -545,7 +545,7 @@ requires-dist = [{ name = "overnightworks-video-provider-contract", editable = "
 
 [[package]]
 name = "overnightworks-video-service"
-version = "0.2.0"
+version = "0.3.0"
 source = { editable = "." }
 dependencies = [
     { name = "aiortc" },
