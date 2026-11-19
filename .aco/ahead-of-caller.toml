@@ -1,9 +1,24 @@
 [[code]]
 path = "providers/flashhead-lite/src/video_provider_flashhead_lite/driver.py"
 item = "#16"
-reason = "the driver is reached only by its tests until the torch renderer and the worker entry point land under P3b2c"
+reason = "the driver is reached only by its tests until the service starts the worker under P3b2d"
 
 [[code]]
 path = "providers/flashhead-lite/src/video_provider_flashhead_lite/upstream.py"
 item = "#16"
-reason = "the import owner is reached only by its tests until the torch renderer calls it under P3b2c"
+reason = "the import owner and the weights place are reached only by tests and the unstarted worker until the service starts it under P3b2d"
+
+[[code]]
+path = "providers/flashhead-lite/src/video_provider_flashhead_lite/worker.py"
+item = "#16"
+reason = "the worker entry point is started by nothing until the service starts it under P3b2d"
+
+[[code]]
+path = "providers/flashhead-lite/src/video_provider_flashhead_lite/upstream_renderer.py"
+item = "#16"
+reason = "the renderer is reached only by the unstarted worker and its tests until the service starts it under P3b2d"
+
+[[code]]
+path = "providers/flashhead-lite/src/video_provider_flashhead_lite/card.py"
+item = "#16"
+reason = "the card calls are reached only by the unstarted worker until the service starts it under P3b2d, and the card proof drives them under P3d"

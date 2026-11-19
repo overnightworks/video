@@ -37,6 +37,9 @@ dependencies = [
     "xfuser==0.4.5",
 ]
 
+[project.scripts]
+video-flashhead-lite-worker = "video_provider_flashhead_lite.worker:main"
+
 [tool.uv.sources]
 overnightworks-video-provider-contract = { path = "../provider-contract", editable = true }
 
@@ -61,6 +64,8 @@ dev = ["pytest==9.2.0", "pytest-cov==7.1.0", "ruff==0.17.5"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/video_provider_flashhead_lite"]
+# Upstream's tree carries three macOS `.DS_Store` files; the wheel leaves them out.
+exclude = [".DS_Store"]
 
 # Upstream has no pyproject, so the submodule's `flash_head` tree is packed into this
 # wheel; an install from a checkout without the submodule fails here, loudly.
