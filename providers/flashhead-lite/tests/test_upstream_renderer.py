@@ -329,10 +329,11 @@ def test_a_failed_prepare_leaves_no_descriptor_open_and_passes_the_error_on(
     rig = make_rig()
     rig.start()
     rig.pipeline.vae.fails = True
+    look = _look(10, 20, 30)
     before = _open_descriptors()
 
     with pytest.raises(StandInModelError):
-        rig.renderer.prepare("mozart", _look(10, 20, 30))
+        rig.renderer.prepare("mozart", look)
 
     assert _open_descriptors() == before
 
