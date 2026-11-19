@@ -271,9 +271,10 @@ def test_a_renderer_that_is_not_started_refuses_every_look(
     make_rig: Callable[..., _Rig],
 ) -> None:
     rig = make_rig()
+    look = _look(10, 20, 30)
 
     with pytest.raises(RenderError):
-        rig.renderer.prepare("mozart", _look(10, 20, 30))
+        rig.renderer.prepare("mozart", look)
     with pytest.raises(RenderError):
         rig.renderer.open_session("mozart")
 
