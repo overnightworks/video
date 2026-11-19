@@ -373,9 +373,10 @@ def test_a_memory_file_the_system_refuses_is_raised_with_its_errno(
 
     monkeypatch.setattr("ctypes.CDLL", lambda *_a, **_k: _RefusingLibrary())
     monkeypatch.setattr("ctypes.get_errno", lambda: errno.EMFILE)
+    look = _look(10, 20, 30)
 
     with pytest.raises(OSError, match="Too many open files") as raised:
-        rig.renderer.prepare("mozart", _look(10, 20, 30))
+        rig.renderer.prepare("mozart", look)
 
     assert raised.value.errno == errno.EMFILE
 
