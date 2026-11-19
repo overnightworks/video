@@ -27,7 +27,7 @@ from video_provider_contract.protocol import (
     read_frame,
     write_frame,
 )
-from video_provider_contract.worker import MAX_IMAGE_PIXELS_ENV
+from video_provider_contract.worker import CARD_MEMORY_MB_ENV, MAX_IMAGE_PIXELS_ENV
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -307,3 +307,49 @@ def test_a_worker_without_the_pixel_cap_ends_naming_the_setting(
 
     assert done.returncode != 0
     assert MAX_IMAGE_PIXELS_ENV.encode() in done.stderr
+
+
+_READ_CARD_MEMORY = (
+    "from video_provider_contract.worker import "
+    "CARD_MEMORY_MB_ENV, read_required_positive_integer;"
+    "print(read_required_positive_integer(CARD_MEMORY_MB_ENV))"
+)
+
+
+def _read_card_memory_setting() -> subprocess.CompletedProcess[bytes]:
+    return subprocess.run(  # noqa: S603 - this interpreter and a fixed program
+        [sys.executable, "-c", _READ_CARD_MEMORY],
+        capture_output=True,
+        check=False,
+        timeout=_EXIT_WITHIN_SECONDS,
+    )
+
+
+@pytest.mark.parametrize(
+    "value",
+    [None, "", "twelve", "1.5", "0", "-3"],
+    ids=["unset", "empty", "not-a-number", "fractional", "zero", "negative"],
+)
+def test_a_required_setting_that_is_no_positive_integer_ends_naming_only_the_variable(
+    value: str | None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv(CARD_MEMORY_MB_ENV, raising=False)
+    if value is not None:
+        monkeypatch.setenv(CARD_MEMORY_MB_ENV, value)
+
+    done = _read_card_memory_setting()
+
+    assert done.returncode != 0
+    assert done.stdout == b""
+    assert CARD_MEMORY_MB_ENV.encode() in done.stderr
+    assert not value or value.encode() not in done.stderr
+
+
+def test_a_required_setting_that_is_a_positive_integer_is_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(CARD_MEMORY_MB_ENV, "1234")
+
+    done = _read_card_memory_setting()
+
+    assert done.stdout.strip() == b"1234"
