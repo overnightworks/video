@@ -116,8 +116,7 @@ class FlashHeadLiteSession:
 
     def close(self) -> None:
         """Release the render session."""
-        with _failing_as_provider_failure():
-            self._render_session.close()
+        self._render_session.close()
 
     def _take_slice(self) -> NDArray[np.float32]:
         taken = self._buffer[: self._slice_samples]
@@ -181,5 +180,4 @@ class FlashHeadLiteProvider:
 
     def close(self) -> None:
         """Release the renderer."""
-        with _failing_as_provider_failure():
-            self._renderer.close()
+        self._renderer.close()

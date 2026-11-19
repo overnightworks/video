@@ -10,9 +10,9 @@ Run each from the repository root.
 - `uv run --locked --project providers/flashhead-lite pytest -q providers/flashhead-lite/tests`: the FlashHead lite driver (Python 3.10).
 - `uv run --locked python scripts/check_release.py [X.Y.Z]`: every `pyproject.toml` and `packages/*/package.json` stands at one version, the given one if named.
 - In `packages/browser`: `pnpm install --frozen-lockfile`, `pnpm run check` (types) and `pnpm run build` (emits `dist`, which the browser layer loads, so build first); `node scripts/pack-release.js <empty directory>` packs the tarball and proves it installs into an empty project.
-- `uv run --locked playwright install chromium` once, then `probe-run uv run --locked pytest -q -m browser tests`: the browser layer in headless Chromium, one worker. The default run deselects the `browser` marker.
+- `uv run --locked playwright install chromium` once, then `probe-run uv run --locked pytest -q -m browser tests`: the browser layer in headless Chromium, one worker, against the built `packages/browser/dist`. The default run deselects the `browser` marker; the layer takes about two minutes and CI runs it.
 - With `VIDEO_BROWSER_COVERAGE_DIR` naming a directory, the browser layer writes Chromium's page coverage there; `node scripts/page-coverage-report.js <that directory>` in `packages/browser` turns it into `coverage/coverage-browser.lcov`.
-- `quality check`: the static check. Run it after `git add` (it reads the index); `quality check --fix` records the debt baseline.
+- `quality check`: the shared static check. Run it after `git add` (it reads the index); `quality check --fix` records the debt baseline.
 
 ## Rules
 
