@@ -97,7 +97,7 @@ jobs:
         run: uv sync --locked --all-groups --no-build --project providers/flashhead-lite
 
       - name: Test
-        # pytest-workers: one worker, the import of upstream changes the process's working directory
+        # pytest-workers: the suite runs in about 15 s, and xdist is not installed there
         run: uv run --locked --no-build --project providers/flashhead-lite pytest -q providers/flashhead-lite/tests --cov --cov-report=xml:coverage-flashhead-lite.xml
 
       - name: Upload the coverage report
