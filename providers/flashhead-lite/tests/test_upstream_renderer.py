@@ -440,6 +440,28 @@ def test_two_sessions_on_one_look_keep_their_own_motion_and_window(
     assert _same_picture(quiet_render, lone_render)
 
 
+def test_a_session_hears_only_its_own_audio_window(
+    make_rig: Callable[..., _Rig],
+) -> None:
+    rig = make_rig()
+    rig.start()
+    rig.renderer.prepare("mozart", _look(200, 40, 40))
+    busy = rig.renderer.open_session("mozart")
+    quiet = rig.renderer.open_session("mozart")
+    for _ in range(3):
+        busy.render(rig.slice_of(0.9))
+    heard = rig.pipeline.heard
+    quiet.render(rig.slice_of(0.0))
+    quiet_embedding = heard[-1]
+
+    alone = make_rig()
+    alone.start()
+    alone.renderer.prepare("mozart", _look(200, 40, 40))
+    alone.renderer.open_session("mozart").render(alone.slice_of(0.0))
+
+    assert torch.equal(quiet_embedding, alone.pipeline.heard[-1])
+
+
 def test_a_session_carries_its_motion_from_one_slice_to_the_next(
     make_rig: Callable[..., _Rig],
 ) -> None:
