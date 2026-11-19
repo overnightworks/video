@@ -33,9 +33,15 @@ updates:
         # The model stack stays single PRs so each lands with the encoder proof
         exclude-patterns:
           - "diffusers"
+          - "einops"
+          - "loguru"
           - "mediapipe"
           - "numpy"
           - "nvidia-*"
+          - "opencv-python-headless"
+          - "pyloudnorm"
+          - "pyyaml"
+          - "safetensors"
           - "torch"
           - "torchvision"
           - "transformers"
