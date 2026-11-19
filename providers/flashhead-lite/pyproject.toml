@@ -1,0 +1,40 @@
+[build-system]
+requires = ["hatchling==1.33.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "overnightworks-video-provider-flashhead-lite"
+version = "0.3.0"
+description = "The FlashHead lite provider's driver: the port's calls turned into slice renders behind a renderer seam."
+requires-python = ">=3.10,<3.11"
+dependencies = [
+    "numpy==2.2.6",
+    "overnightworks-video-provider-contract",
+    "soxr==1.0.0",
+]
+
+[tool.uv.sources]
+overnightworks-video-provider-contract = { path = "../provider-contract", editable = true }
+
+[tool.uv]
+# --no-build installs every other package as a wheel; a named package overrides it,
+# and these are built from this checkout.
+no-binary-package = [
+    "overnightworks-video-provider-contract",
+    "overnightworks-video-provider-flashhead-lite",
+]
+
+[dependency-groups]
+dev = ["pytest==9.2.0", "pytest-cov==7.1.0", "ruff==0.17.5"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/video_provider_flashhead_lite"]
+
+[tool.pytest.ini_options]
+addopts = "--strict-config --strict-markers --import-mode=importlib"
+pythonpath = ["tests/support"]
+testpaths = ["tests"]
+
+[tool.ruff]
+extend = "../../pyproject.toml"
+target-version = "py310"
