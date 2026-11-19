@@ -1,0 +1,8 @@
+claim_id = "9fddbe36ba174a57bb4d3afec3f41096"
+agent = "Claude 8d6968f0-90db-42e6-8c2e-47e423be7ebd"
+role = "builder"
+base = "b758ea186eee62682f00cba8f321f872f320ce1a"
+branch = "claude/issue-26-p3b2b-soulx-flashhead-bound-unchanged-to"
+scope = [".aco/ahead-of-caller.toml", ".github/dependabot.yml", ".github/workflows/ci.yml", ".gitmodules", "AGENTS.md", "docs/ARCHITECTURE.md", "providers/flashhead-lite", "pyproject.toml", "quality/config.toml"]
+opened_commit = "f049cd5579eeab752f47f3e0198cb5ce259d9569"
+whole_reason = "The submodule, the lock, the job that checks it out and the pins for advisories and Python land together or the gate is red."
