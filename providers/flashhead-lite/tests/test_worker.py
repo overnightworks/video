@@ -6,7 +6,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NoReturn
 
 import pytest
 from video_provider_contract.protocol import (
@@ -117,12 +117,12 @@ def test_a_worker_goes_offline_before_it_serves(
     monkeypatch.setenv("HF_HUB_OFFLINE", "0")
     monkeypatch.setenv(CARD_MEMORY_MB_ENV, _A_CARD_CAP)
     seen: list[str | None] = []
-    monkeypatch.setattr(
-        worker,
-        "run_worker",
-        lambda _provider: seen.append(os.environ.get("HF_HUB_OFFLINE")),
-    )
 
-    worker.main()
+    def serve(_provider: object) -> NoReturn:
+        seen.append(os.environ.get("HF_HUB_OFFLINE"))
+        raise SystemExit
+
+    with pytest.raises(SystemExit):
+        worker.main(serve)
 
     assert seen == ["1"]

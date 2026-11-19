@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from typing import NoReturn
+from typing import TYPE_CHECKING, NoReturn
 
 from video_provider_contract.worker import (
     CARD_MEMORY_MB_ENV,
@@ -15,9 +15,14 @@ from video_provider_flashhead_lite.driver import FlashHeadLiteProvider
 from video_provider_flashhead_lite.upstream import locate_weights
 from video_provider_flashhead_lite.upstream_renderer import CardCalls, UpstreamRenderer
 
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
-def main() -> NoReturn:
-    """Serve the provider until the service closes the pipe.
+    from video_provider_contract import Provider
+
+
+def main(serve: Callable[[Provider], NoReturn] = run_worker) -> NoReturn:
+    """Serve the provider through `serve` until the service closes the pipe.
 
     The card memory cap is read before anything is built; a bad one ends the
     process before the first frame.
@@ -34,4 +39,4 @@ def main() -> NoReturn:
             memory=card.memory, limit_allocator=card.limit_allocator, load=card.load
         ),
     )
-    run_worker(FlashHeadLiteProvider(renderer))
+    serve(FlashHeadLiteProvider(renderer))
