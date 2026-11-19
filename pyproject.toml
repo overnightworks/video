@@ -44,6 +44,8 @@ packages = ["src/video_service"]
 
 [tool.uv.workspace]
 members = ["packages/client", "providers/*"]
+# Its Python is 3.10, which no member of the workspace can resolve against; it keeps a lock of its own.
+exclude = ["providers/flashhead-lite"]
 
 [tool.uv]
 # --no-build installs every other package as a wheel; a named package overrides it,
@@ -88,10 +90,17 @@ src = [
     "tests",
     "packages/client/tests",
     "providers/fake/tests",
+    "providers/flashhead-lite/tests",
     "providers/provider-contract/tests",
 ]
 # The gate's layout rules forbid package markers in these directories.
-namespace-packages = ["scripts", "tests/scripts", "tests/support", "packages/client/tests/support"]
+namespace-packages = [
+    "scripts",
+    "tests/scripts",
+    "tests/support",
+    "packages/client/tests/support",
+    "providers/flashhead-lite/tests/support",
+]
 
 [tool.ruff.lint]
 select = ["ALL"]
@@ -114,6 +123,7 @@ convention = "google"
 "tests/**" = ["S101", "D103"]
 "packages/client/tests/**" = ["S101", "D103"]
 "providers/fake/tests/**" = ["S101", "D103"]
+"providers/flashhead-lite/tests/**" = ["S101", "D103"]
 "providers/provider-contract/tests/**" = ["S101", "D103"]
 
 [tool.coverage.report]

@@ -1,5 +1,5 @@
 [gate]
-mandatory_jobs = ["Video: lint, tests", "Video: browser package", "Video: browser layer"]
+mandatory_jobs = ["Video: lint, tests", "Video: browser package", "Video: browser layer", "Video: flashhead-lite provider"]
 
 [[root.allow]]
 entry = "packages/"
@@ -12,6 +12,10 @@ reason = "the provider port and the providers, each its own distribution in the 
 [[python.allow]]
 path = "providers/provider-contract/pyproject.toml"
 reason = "a provider's environment may be older than the service's, such as the 3.10 FlashHead needs, and imports the contract there"
+
+[[python.allow]]
+path = "providers/flashhead-lite/pyproject.toml"
+reason = "FlashHead's model environment runs Python 3.10, and its driver is tested there"
 
 [[layout.allow]]
 path = "tests/test_browser_consent.py"

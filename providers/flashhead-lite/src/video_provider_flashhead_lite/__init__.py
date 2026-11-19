@@ -1,0 +1,1 @@
+"""The FlashHead lite provider."""
