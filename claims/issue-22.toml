@@ -1,8 +1,0 @@
-claim_id = "4ab7d0e8a0d74a78b5b131df3d330eb4"
-agent = "Claude 8d6968f0-90db-42e6-8c2e-47e423be7ebd"
-role = "builder"
-base = "d3c6f378f350414d345ad9c5d5e929465a99dee9"
-branch = "claude/issue-22-p3b2a-the-flashhead-lite-provider-s-proj"
-scope = [".aco/ahead-of-caller.toml", ".github/dependabot.yml", ".github/workflows/ci.yml", "AGENTS.md", "providers/flashhead-lite", "pyproject.toml", "quality/config.toml", "sonar-project.properties"]
-opened_commit = "32122046cb840a7147cef77a20e187bad34d1616"
-whole_reason = "The new project, its CI job and the files that pin jobs, Python versions and coverage land together or the gate is red."
