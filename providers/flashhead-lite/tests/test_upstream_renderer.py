@@ -125,7 +125,13 @@ def _same_picture(first: bytes, second: bytes) -> bool:
 
 @pytest.mark.parametrize(
     ("cap_mebibytes", "total_bytes"),
-    [(1, 3 << 30), (7, 24 << 30), (24_000, 24 << 30), (24_564, 25_757_220_864)],
+    [
+        (1, 3 << 30),
+        (7, 24 << 30),
+        (24_000, 24 << 30),
+        (24_564, 25_757_220_864),
+        (1_539, 25_757_220_864),  # unrounded cap / total times total exceeds the cap
+    ],
 )
 def test_the_allocator_fraction_never_lets_the_cap_be_exceeded(
     cap_mebibytes: int, total_bytes: int
