@@ -440,6 +440,21 @@ def test_two_sessions_on_one_look_keep_their_own_motion_and_window(
     assert _same_picture(quiet_render, lone_render)
 
 
+def test_a_session_carries_its_motion_from_one_slice_to_the_next(
+    make_rig: Callable[..., _Rig],
+) -> None:
+    rig = make_rig()
+    rig.start()
+    rig.renderer.prepare("mozart", _look(200, 40, 40))
+    session = rig.renderer.open_session("mozart")
+    audio = rig.slice_of(0.5)
+
+    first = session.render(audio)
+    second = session.render(audio)
+
+    assert not _same_picture(first, second)
+
+
 def test_a_look_prepared_again_changes_new_sessions_and_leaves_open_ones(
     make_rig: Callable[..., _Rig],
 ) -> None:
