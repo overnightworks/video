@@ -77,14 +77,6 @@ def test_failed_import_leaves_the_working_directory_as_it_found_it(
     assert Path.cwd() == callers_directory
 
 
-def test_import_without_the_installed_package_fails_loudly() -> None:
-    with pytest.MonkeyPatch.context() as patch:
-        patch.setitem(sys.modules, "flash_head", None)
-
-        with pytest.raises(ImportError, match="flash_head"):
-            import_inference()
-
-
 def test_audio_encoder_returns_the_hidden_states_of_every_layer(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

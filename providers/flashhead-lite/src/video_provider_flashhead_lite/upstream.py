@@ -12,7 +12,6 @@ no other thread resolves a relative path during it.
 from __future__ import annotations
 
 import importlib
-import importlib.util
 from contextlib import chdir
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -29,15 +28,13 @@ def import_inference(package_root: Path | None = None) -> ModuleType:
     `package_root` names that directory when it is not the installed one.
 
     Raises:
-        ImportError: `flash_head` is not installed.
+        ModuleNotFoundError: `flash_head` is not installed.
     """
     with chdir(_installed_root() if package_root is None else package_root):
         return importlib.import_module(f"{_PACKAGE}.inference")
 
 
 def _installed_root() -> Path:
-    spec = importlib.util.find_spec(_PACKAGE)
-    if spec is None or spec.submodule_search_locations is None:
-        message = f"{_PACKAGE} is not installed"
-        raise ImportError(message)
-    return Path(next(iter(spec.submodule_search_locations))).parent
+    # `flash_head` is a namespace package: importing it runs no upstream code.
+    package = importlib.import_module(_PACKAGE)
+    return Path(next(iter(package.__path__))).parent
