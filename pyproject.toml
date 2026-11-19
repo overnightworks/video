@@ -44,7 +44,7 @@ packages = ["src/video_service"]
 
 [tool.uv.workspace]
 members = ["packages/client", "providers/*"]
-# Its Python is 3.10, which no member of the workspace can resolve against; it keeps a lock of its own.
+# Its model stack (torch, xfuser, transformers at the pins upstream tolerates) keeps a lock of its own.
 exclude = ["providers/flashhead-lite"]
 
 [tool.uv]
@@ -82,6 +82,8 @@ include = ["src/*", "packages/*/src/*", "providers/*/src/*", "scripts/*"]
 
 [tool.ruff]
 target-version = "py314"
+# Upstream's tree is bound unchanged and is no code of ours.
+extend-exclude = ["providers/flashhead-lite/soulx-flashhead"]
 src = [
     ".",
     "scripts",

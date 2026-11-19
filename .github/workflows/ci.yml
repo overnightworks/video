@@ -74,12 +74,14 @@ jobs:
   flashhead-lite-provider:
     name: "Video: flashhead-lite provider"
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - name: Check out the event commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
+          # upstream's tree, bound unchanged, is packed into the provider's wheel
+          submodules: true
 
       - name: Install uv
         uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
@@ -95,7 +97,7 @@ jobs:
         run: uv sync --locked --all-groups --no-build --project providers/flashhead-lite
 
       - name: Test
-        # pytest-workers: a few dozen tests in under a second
+        # pytest-workers: the suite runs in about 15 s, and xdist is not installed there
         run: uv run --locked --no-build --project providers/flashhead-lite pytest -q providers/flashhead-lite/tests --cov --cov-report=xml:coverage-flashhead-lite.xml
 
       - name: Upload the coverage report

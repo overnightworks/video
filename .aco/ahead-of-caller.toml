@@ -1,4 +1,9 @@
 [[code]]
 path = "providers/flashhead-lite/src/video_provider_flashhead_lite/driver.py"
 item = "#16"
-reason = "the driver is reached only by its tests until the torch renderer and the worker entry point land under P3b2b"
+reason = "the driver is reached only by its tests until the torch renderer and the worker entry point land under P3b2c"
+
+[[code]]
+path = "providers/flashhead-lite/src/video_provider_flashhead_lite/upstream.py"
+item = "#16"
+reason = "the import owner is reached only by its tests until the torch renderer calls it under P3b2c"

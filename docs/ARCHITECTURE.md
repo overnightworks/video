@@ -65,6 +65,17 @@ flowchart LR
   audio's timeline and serves the service's tests and a run from source; its
   `video-fake-worker` runs it as a child like every provider. It is a development
   dependency no image installs.
+- `providers/flashhead-lite`: the FlashHead lite model behind a renderer seam. Its
+  driver turns the port's calls into slice renders; the model is upstream
+  SoulX-FlashHead, bound unchanged as a git submodule at a pinned commit, since upstream
+  has no package of its own: the provider's wheel carries its `flash_head` tree and
+  licence beside the provider's modules, and the provider's lock pins the stack on
+  Python 3.14, apart from the workspace's. One module imports upstream's inference
+  module from the directory that holds the installed package, because upstream reads
+  its configuration by a relative path at import. Its CI job checks the submodule
+  out, installs the lock without building and proves, on a runner without a card or
+  weights, that the import succeeds and upstream's audio encoder returns its hidden
+  states.
 
 ## Provider process
 
