@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import errno
+import fcntl
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -41,7 +42,7 @@ _WARM_UP_SLICES = 2
 
 @pytest.fixture(autouse=True, scope="module")
 def _no_card() -> Iterator[None]:
-    # Set before torch is first imported, so no test in this module can reach a card.
+    # CUDA initialises lazily, after this fixture and before any test reaches a card.
     with pytest.MonkeyPatch.context() as patch:
         patch.setenv("CUDA_VISIBLE_DEVICES", "")
         yield
@@ -333,6 +334,28 @@ def test_a_failed_prepare_leaves_no_descriptor_open_and_passes_the_error_on(
         rig.renderer.prepare("mozart", _look(10, 20, 30))
 
     assert _open_descriptors() == before
+
+
+def test_the_look_is_read_from_a_close_on_exec_descriptor(
+    make_rig: Callable[..., _Rig], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rig = make_rig()
+    rig.start()
+    pipeline = rig.pipeline
+    upstream_prepare = pipeline.prepare_params
+    flags: list[int] = []
+
+    def reading(**options: object) -> None:
+        descriptor = int(Path(str(options["cond_image_path_or_dir"])).name)
+        flags.append(fcntl.fcntl(descriptor, fcntl.F_GETFD))
+        upstream_prepare(**options)
+
+    monkeypatch.setattr(pipeline, "prepare_params", reading)
+
+    rig.renderer.prepare("mozart", _look(10, 20, 30))
+
+    (descriptor_flags,) = flags
+    assert descriptor_flags & fcntl.FD_CLOEXEC
 
 
 def test_a_memory_file_the_system_refuses_is_raised_with_its_errno(
