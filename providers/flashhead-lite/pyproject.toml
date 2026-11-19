@@ -16,6 +16,14 @@ dependencies = [
 [tool.uv.sources]
 overnightworks-video-provider-contract = { path = "../provider-contract", editable = true }
 
+[tool.uv]
+# --no-build installs every other package as a wheel; a named package overrides it,
+# and these are built from this checkout.
+no-binary-package = [
+    "overnightworks-video-provider-contract",
+    "overnightworks-video-provider-flashhead-lite",
+]
+
 [dependency-groups]
 dev = ["pytest==9.2.0", "pytest-cov==7.1.0", "ruff==0.17.5"]
 

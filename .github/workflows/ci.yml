@@ -92,11 +92,11 @@ jobs:
         run: uv lock --check --project providers/flashhead-lite
 
       - name: Install locked dependencies
-        run: uv sync --locked --all-groups --project providers/flashhead-lite
+        run: uv sync --locked --all-groups --no-build --project providers/flashhead-lite
 
       - name: Test
         # pytest-workers: a few dozen tests in under a second
-        run: uv run --locked --project providers/flashhead-lite pytest -q providers/flashhead-lite/tests --cov --cov-report=xml:coverage-flashhead-lite.xml
+        run: uv run --locked --no-build --project providers/flashhead-lite pytest -q providers/flashhead-lite/tests --cov --cov-report=xml:coverage-flashhead-lite.xml
 
       - name: Upload the coverage report
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
