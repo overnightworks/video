@@ -24,9 +24,26 @@ updates:
     ignore:
       # Our libraries come from Git or this repository; a PyPI package of the same name is not ours
       - dependency-name: "overnightworks-*"
+      # From 5.16 on, upstream's wav2vec2 encoder ignores output_hidden_states and its audio preprocessing raises
+      - dependency-name: "transformers"
+        versions: [">=5.16"]
     groups:
       uv-flashhead-lite:
         update-types: [minor, patch]
+        # The model stack stays single PRs so each lands with the encoder proof
+        exclude-patterns:
+          - "diffusers"
+          - "mediapipe"
+          - "numpy"
+          - "nvidia-*"
+          - "torch"
+          - "torchvision"
+          - "transformers"
+          - "xfuser"
+  - package-ecosystem: gitsubmodule
+    directory: /
+    schedule:
+      interval: weekly
   - package-ecosystem: npm
     directory: /packages/browser
     schedule:

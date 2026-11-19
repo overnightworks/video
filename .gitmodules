@@ -1,0 +1,3 @@
+[submodule "providers/flashhead-lite/soulx-flashhead"]
+	path = providers/flashhead-lite/soulx-flashhead
+	url = https://github.com/Soul-AILab/SoulX-FlashHead
