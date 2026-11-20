@@ -3,6 +3,6 @@ agent = "Claude 76251661-cb30-4447-a3ad-32a83a396daa"
 role = "builder"
 base = "333eb0476499efdcef7eaaa2d2b435469bbcbb94"
 branch = "claude/issue-68-p3d2c3-look-image"
-scope = ["README.md", "scripts/card_identity.py", "scripts/prove_card.py", "tests/scripts/test_prove_card.py"]
+scope = ["README.md", "scripts/card_identity.py", "scripts/prove_card.py", "src/video_service/looks.py", "tests/scripts/test_prove_card.py", "tests/scripts/test_prove_card_look_image.py"]
 opened_commit = "26ed68b3a3c5186cb8112a365e651cc9ff258b62"
 whole_reason = "One optional proof argument, its check, its tests and its README sentence."
