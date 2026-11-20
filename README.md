@@ -239,16 +239,16 @@ gaps in the video timestamps and the frame size the provider drew; the service's
 from its own process's accounting, at no, one and five viewers, and the encoders' share at
 five; each session's opening time; each service's start, the provider's load and each look's
 preparation as the service logged them (outcome, the reason when one is logged,
-duration), and its stop's time to exit; and the lag sweep's figures. Beside the record the command writes one viewer's audio and video as
-`<record>.viewer.mp4`, contact sheets of it as `<record>.viewer-sheet-<n>.png` for the judge
-of the picture, and each group's service log as `<record>.<group>.log`; the record names
-them and the command prints their paths. A dry run shows that the drive works, and its
-figures are the fake's (a 256x256 picture on whatever host runs it), so a figure judged
-against a line of the program plan (first output, clear to silence, start, frames per
-second, the encoders' two cores) holds its value and the verdict `not_measured` with the
-reason. It cannot show a card's timing or memory, nor the picture's likeness to the idle
-look: the video is judged by eye. Against `fake`, a quiet audio file gives an all-black
-recording.
+duration), and its stop's time to exit; and the lag sweep's figures. Beside the record the
+command writes one viewer's audio and video as `<record>.viewer.mp4`, contact sheets of it
+as `<record>.viewer-sheet-<n>.png` for the judge of the picture, and each group's service
+log as `<record>.<group>.log`; the record names them and the command prints their paths. A
+dry run shows that the drive works, and its figures are the fake's (a 256x256 picture on
+whatever host runs it), so a figure judged against a line of the program plan (first
+output, clear to silence, start, frames per second, the encoders' two cores) holds its
+value and the verdict `not_measured` with the reason. It cannot show a card's timing or
+memory, nor the picture's likeness to the idle look: the video is judged by eye. Against
+`fake`, a quiet audio file gives an all-black recording.
 
 Without `--dry-run` the command drives `flashhead-lite` with the operator's
 `VIDEO_PROVIDER_ROOT` and `VIDEO_CARD_MEMORY_MB`, passed to the service unchanged and
