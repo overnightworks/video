@@ -232,7 +232,7 @@ def throwaway_identity(directory: Path) -> Iterator[Identity]:
         f"{LOOKS_PATH}{name}": data for name, data in looks.items()
     }
     ca_file, chain_file, key_file = _write_chain(directory)
-    tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    tls = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
     tls.load_cert_chain(chain_file, key_file)
     server = ThreadingHTTPServer((_HOST, 0), _handler(files))
     server.socket = tls.wrap_socket(server.socket, server_side=True)
