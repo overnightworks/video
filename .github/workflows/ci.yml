@@ -107,6 +107,7 @@ jobs:
       - name: Start the real worker from the service without a card
         env:
           CUDA_VISIBLE_DEVICES: ""
+        # pytest-workers: one test, and xdist is not worth its start
         run: uv run --locked --no-build pytest -q -m flashhead_lite tests
 
       - name: Upload the coverage report
