@@ -231,6 +231,25 @@ def test_a_free_peak_below_the_line_is_judged_missed_when_the_floor_is_set_lower
     assert watch.entry()[MemoryFigure.FREE_LEAST]["verdict"] == Verdict.MISSED
 
 
+def test_a_first_sample_that_fails_leaves_the_figures_taken_from_it_unmeasured() -> (
+    None
+):
+    watch = GroupWatch(_sampler(CardReadingError), CAP, FLOOR)
+
+    watch.refuse_first(lambda _stop: NOTHING_LEFT)
+    figures = watch.entry()
+
+    assert all(
+        is_not_measured(figures[name], Reason.SAMPLE_FAILED)
+        for name in (
+            MemoryFigure.USED_BEFORE,
+            MemoryFigure.USED_AFTER_MINUS_BEFORE,
+            MemoryFigure.USED_BEYOND_CAP,
+        )
+    )
+    assert figures[MemoryFigure.FLOOR] == value_of(FLOOR)
+
+
 def test_an_after_sample_that_fails_leaves_the_figures_derived_from_it_unmeasured() -> (
     None
 ):

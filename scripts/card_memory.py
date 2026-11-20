@@ -100,6 +100,7 @@ class GroupWatch:
         self._started = False
         self._serving = False
         self._before: int | None = None
+        self._before_failed = False
         self._least_free: int | None = None
         self._most_used: int | None = None
         self._after_taken = False
@@ -158,6 +159,15 @@ class GroupWatch:
         """What the samples say, as the group's service entry names it."""
         figures: dict[str, object] = {MemoryFigure.FLOOR: value_of(self.floor_mb)}
         before, least, most = self._before, self._least_free, self._most_used
+        if self._before_failed:
+            figures |= {
+                name: not_measured(Reason.SAMPLE_FAILED)
+                for name in (
+                    MemoryFigure.USED_BEFORE,
+                    MemoryFigure.USED_AFTER_MINUS_BEFORE,
+                    MemoryFigure.USED_BEYOND_CAP,
+                )
+            }
         if before is not None:
             figures[MemoryFigure.USED_BEFORE] = value_of(before)
         if least is not None:
@@ -203,9 +213,11 @@ class GroupWatch:
         try:
             memory = self.read()
         except CardReadingError:
+            if refused:
+                self._before, self._before_failed = None, True
             return self._stop(StopReason.SAMPLE_FAILED, None, refused=refused)
         if refused:
-            self._before = memory.used_mb
+            self._before, self._before_failed = memory.used_mb, False
             if memory.free_mb - self.cap_mb < self.floor_mb:
                 return self._stop(StopReason.SHORT_FOR_CAP, memory, refused=True)
             return None

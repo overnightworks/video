@@ -149,11 +149,13 @@ def test_a_first_sample_that_fails_refuses_the_group_and_names_the_failed_sample
     run.reading.write_text(reading)
 
     status, error = run.finish(run.start("--cells", "lag"))
-    stop = _record(run)["services"]["lag"][MEMORY_STOP]
+    entry = _record(run)["services"]["lag"]
+    stop = entry[MEMORY_STOP]
 
     assert status != 0
     assert len(lines(error)) == 1
     assert "no sample" in error
+    assert is_not_measured(entry[MemoryFigure.USED_BEFORE], Reason.SAMPLE_FAILED)
     assert stop["reason"] == StopReason.SAMPLE_FAILED
     assert is_not_measured(stop["free_mb"], Reason.SAMPLE_FAILED)
     assert not run.probe_run_log.exists()
