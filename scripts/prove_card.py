@@ -77,6 +77,7 @@ from card_supervision import (
 )
 from video_service.card import read_card_memory
 from video_service.config import Settings
+from video_service.looks import LookFailure, LookRefusedError, decode_image
 from video_service.providers import ProviderName
 
 if TYPE_CHECKING:
@@ -152,6 +153,11 @@ def _arguments(argv: Sequence[str]) -> argparse.Namespace:
         metavar="MS",
         help="the lags in ms the lag cell sweeps; the wire group runs at the largest",
     )
+    parser.add_argument(
+        "--look-image",
+        type=Path,
+        help="a face image the service takes, served as the look alpha",
+    )
     parser.add_argument("--fragment", type=Path, help=argparse.SUPPRESS)
     arguments = parser.parse_args(argv)
     arguments.lag_ms = _lags(arguments.lag_ms)
@@ -170,6 +176,25 @@ def _checked_record(path: Path) -> Path:
         )
         raise SystemExit(message)
     return record
+
+
+def _checked_look_image(path: Path) -> None:
+    """Return once the service's own limits accept the file as a look's image."""
+    limits = _GivenSettings(provider=ProviderName.FAKE)
+    try:
+        data = path.read_bytes()
+    except OSError as error:
+        message = f"--look-image {path}: it cannot be read ({error.strerror})"
+        raise SystemExit(message) from None
+    reason = LookFailure.TOO_LARGE.value if len(data) > limits.look_max_bytes else None
+    try:
+        if reason is None:
+            decode_image(data, limits.look_max_pixels)
+    except LookRefusedError as refused:
+        reason = refused.failure.value
+    if reason is not None:
+        message = f"--look-image {path}: the service refuses it ({reason})"
+        raise SystemExit(message)
 
 
 class _GivenSettings(Settings):
@@ -304,6 +329,13 @@ async def _drive_cells(
     return GroupOutcome.DONE
 
 
+def _look_image_bytes(arguments: argparse.Namespace) -> bytes | None:
+    """The operator's look image, or `None` when the command names none."""
+    if arguments.look_image is None:
+        return None
+    return arguments.look_image.read_bytes()
+
+
 def _run_group(
     group: _Group,
     arguments: argparse.Namespace,
@@ -325,7 +357,7 @@ def _run_group(
     log = _group_log(arguments.record, group.name)
     cells: dict[str, object] = {}
     with (
-        throwaway_identity(scratch) as identity,
+        throwaway_identity(scratch, _look_image_bytes(arguments)) as identity,
         start_service(
             identity,
             log,
@@ -440,6 +472,7 @@ def _under_probe_run(
         "--lag-ms",
         str(group.lag_ms),
         *(["--dry-run"] if arguments.dry_run else []),
+        *(["--look-image", str(arguments.look_image)] if arguments.look_image else []),
     ]
     try:
         return _Probed(
@@ -638,6 +671,9 @@ def main(argv: Sequence[str] | None = None, control: ProcessControl = KERNEL) ->
         return _child(group, arguments)
     arguments.record = _checked_record(arguments.record)
     read_audio(arguments.audio)
+    if arguments.look_image is not None:
+        arguments.look_image = arguments.look_image.resolve()
+        _checked_look_image(arguments.look_image)
     arguments.limits = (
         None
         if arguments.dry_run
