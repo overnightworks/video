@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Final
 
 import pytest
 
-from card_drive import Kill
+from card_drive import KILL_WITHIN_SECONDS, Kill
 from card_memory import GroupWatch, Stop
 from card_record import (
     FREE_MEMORY_LINE,
@@ -63,6 +63,22 @@ class _Child:
             self.ticks -= 1
             raise subprocess.TimeoutExpired(self.name, timeout)
         return self.status
+
+
+class _Lingering:
+    """A `probe-run` the kill did not end: no bounded wait on it ever returns."""
+
+    name = "probe-run"
+
+    def __init__(self) -> None:
+        self.waited: list[float | None] = []
+
+    def wait(self, timeout: float | None = None) -> int:
+        self.waited.append(timeout)
+        if timeout is None:
+            message = "a wait on a child that outlived the kill has no bound"
+            raise AssertionError(message)
+        raise subprocess.TimeoutExpired(self.name, timeout)
 
 
 def _watched(
@@ -265,6 +281,22 @@ def test_the_seconds_to_no_process_are_a_value_only_when_the_kill_ended_them_all
     assert ("value" in seconds) is measured
     if not measured:
         assert is_not_measured(seconds, Reason.KILL_FAILED)
+
+
+def test_a_probe_run_that_outlives_the_kill_gives_no_status_after_a_bounded_wait() -> (
+    None
+):
+    watch = GroupWatch(_sampler(_memory(used=100, free=FLOOR - 1)), CAP, FLOOR)
+    child = _Lingering()
+
+    status = watch.until_ended(
+        child, service_exists=lambda: True, end=lambda _stop: NOTHING_LEFT
+    )
+
+    assert status is None
+    assert watch.stop is not None
+    assert None not in child.waited
+    assert child.waited[-1] <= KILL_WITHIN_SECONDS
 
 
 def test_a_stopped_group_is_sampled_after_its_one_kill_and_killed_no_more() -> None:

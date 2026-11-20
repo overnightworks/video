@@ -138,12 +138,13 @@ def run_child(
     group: str,
     fragment: Path,
     supervision: Supervision,
-) -> int:
+) -> int | None:
     """Run `command` as the group's process; a stop is recorded and, meanwhile, sent on.
 
     Once the process is reaped, or the group is ending for its memory, a stop is only
     recorded; the caller puts the handlers back. A card-mode run samples the card while
-    it waits.
+    it waits. Its status is none when the group was ended for its memory and
+    `probe-run` outlived the kill.
     """
     stops, control, watch = (
         supervision.stops,
@@ -163,20 +164,22 @@ def run_child(
         if not settled_at_group(probe_run, fragment, signum, control):
             child.send_signal(signum)
 
+    # No `with`: its exit waits for `probe-run` without a bound, and a kill that failed
+    # leaves it alive. The command's own exit then takes the parent-death chain to it.
     # The operator names the audio path that the command passes on.
-    with subprocess.Popen(  # NOSONAR(S8705)  # noqa: S603 - probe-run and this python
+    child = subprocess.Popen(  # NOSONAR(S8705)  # noqa: S603 - probe-run and this python
         command, env={**os.environ, CHILD_MARKER: group}
-    ) as child:
-        # The start time that tells `probe-run` from a process that took its id.
-        with suppress(OSError):
-            probe_run = read_process(child.pid, control)
-        # The group's service is cleaned up by the child, so a stop reaches it first.
-        for stopping in STOP_SIGNALS:
-            signal.signal(stopping, forward)
-        if watch is None:
-            return child.wait()
-        return watch.until_ended(
-            child,
-            service_exists=lambda: service_exists(fragment, control),
-            end=ending(stops, control, child.pid),
-        )
+    )
+    # The start time that tells `probe-run` from a process that took its id.
+    with suppress(OSError):
+        probe_run = read_process(child.pid, control)
+    # The group's service is cleaned up by the child, so a stop reaches it first.
+    for stopping in STOP_SIGNALS:
+        signal.signal(stopping, forward)
+    if watch is None:
+        return child.wait()
+    return watch.until_ended(
+        child,
+        service_exists=lambda: service_exists(fragment, control),
+        end=ending(stops, control, child.pid),
+    )

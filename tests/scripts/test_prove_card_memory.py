@@ -36,6 +36,7 @@ from support.prove_card_support import (
     USED_MB,
     Run,
     is_not_measured,
+    lines,
 )
 
 if TYPE_CHECKING:
@@ -47,10 +48,6 @@ KILL_BOUND_SECONDS: Final = card_drive.KILL_WITHIN_SECONDS + 1
 
 def _record(run: Run) -> dict:
     return json.loads(run.record.read_text())
-
-
-def _lines(error: str) -> list[str]:
-    return error.strip().splitlines()
 
 
 def _cells_are(record: dict, reason: Reason) -> bool:
@@ -109,7 +106,7 @@ def test_a_missing_or_invalid_provider_setting_ends_the_command_naming_only_the_
     status, error = run.finish(run.start())
 
     assert status != 0
-    assert len(_lines(error)) == 1
+    assert len(lines(error)) == 1
     assert named in error
     assert "secret-4711" not in error + run.printed()
     assert not run.probe_run_log.exists()
@@ -127,7 +124,7 @@ def test_a_group_the_card_has_no_room_for_is_refused_and_nothing_of_it_starts(
     entry = record["services"]["wire"]
 
     assert status != 0
-    assert len(_lines(error)) == 1
+    assert len(lines(error)) == 1
     assert all(str(number) in error for number in (CAP_MB - 1, CAP_MB, FLOOR_MB))
     assert not run.probe_run_log.exists()
     assert _cells_are(record, Reason.MEMORY_REFUSED)
@@ -155,7 +152,7 @@ def test_a_first_sample_that_fails_refuses_the_group_and_names_the_failed_sample
     stop = _record(run)["services"]["lag"][MEMORY_STOP]
 
     assert status != 0
-    assert len(_lines(error)) == 1
+    assert len(lines(error)) == 1
     assert "no sample" in error
     assert stop["reason"] == StopReason.SAMPLE_FAILED
     assert is_not_measured(stop["free_mb"], Reason.SAMPLE_FAILED)
@@ -228,7 +225,7 @@ def test_a_breach_while_the_provider_loads_ends_the_tree_at_once_and_records_it(
     stop = entry[MEMORY_STOP]
 
     assert status != 0
-    assert "watchdog breach (below_floor)" in _lines(error)[0]
+    assert "watchdog breach (below_floor)" in lines(error)[0]
     assert _cells_are(record, Reason.WATCHDOG_BREACH)
     assert is_not_measured(entry["start_to_ready_ms"], Reason.WATCHDOG_BREACH)
     assert is_not_measured(
@@ -324,7 +321,7 @@ def test_a_breach_while_the_group_stops_after_an_interrupt_kills_at_once(
 
     assert serving
     assert status != 0
-    assert _lines(error)[-1] == "interrupted by SIGINT"
+    assert lines(error)[-1] == "interrupted by SIGINT"
     assert "watchdog breach" in error
     assert not run.record.exists()
     assert run.processes() == []

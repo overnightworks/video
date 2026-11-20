@@ -104,6 +104,11 @@ def write_audio(path: Path, *, seconds: float, channels: int = 1) -> None:
         sound.writeframes(square * int(AUDIO_RATE * seconds // 8))
 
 
+def lines(error: str) -> list[str]:
+    """The lines the command wrote to standard error."""
+    return error.strip().splitlines()
+
+
 def process_state(pid: int) -> str | None:
     """The process's state letter, or none once nothing has the id."""
     try:

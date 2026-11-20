@@ -14,6 +14,7 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final
 
+from card_drive import KILL_WITHIN_SECONDS
 from card_record import (
     FREE_MEMORY_LINE,
     MEMORY_STOP,
@@ -117,10 +118,13 @@ class GroupWatch:
         *,
         service_exists: Callable[[], bool],
         end: Ender,
-    ) -> int:
+    ) -> int | None:
         """Wait for `child`, sampling every interval; its status.
 
-        A stop ends everything below the command at once and then waits for `child`.
+        A stop ends everything below the command at once and then waits for `child` no
+        longer than that kill's bound allows; a `child` that still lives then has no
+        status, and the command goes on to its record and its exit, which takes the
+        parent-death chain to the group.
         """
         self._started = True
         while True:
@@ -135,7 +139,7 @@ class GroupWatch:
                 stop = self._stop(StopReason.WATCHDOG_FAILED, None, refused=False)
             if stop is not None:
                 self._end(stop, end)
-                return child.wait()
+                return self._status_within_the_kill_bound(child)
 
     def finish(self, end_of_group_kill: Callable[[], Kill]) -> Kill:
         """Sample the card once the group has ended; the group's one kill.
@@ -219,6 +223,15 @@ class GroupWatch:
         self.stop = stop
         self.kill = end(stop)
         self._seconds = time.monotonic() - started
+
+    def _status_within_the_kill_bound(
+        self, child: subprocess.Popen[bytes]
+    ) -> int | None:
+        left = max(KILL_WITHIN_SECONDS - self._seconds, 0)
+        try:
+            return child.wait(left)
+        except subprocess.TimeoutExpired:
+            return None
 
     def _sample_after(self) -> None:
         self._after_taken = True

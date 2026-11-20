@@ -19,12 +19,20 @@ from support.prove_card_support import (
     Run,
     ended,
     is_not_measured,
+    lines,
 )
 
 if TYPE_CHECKING:
     from pathlib import Path
 
 TEST_MARGIN_SECONDS: Final = 15
+GROUP_RUNS_THROUGH_SECONDS: Final = 240
+TOP_ENDS_WITHIN_SECONDS: Final = 60
+GROUP_FOLLOWS_SECONDS: Final = (
+    card_drive.STOP_WITHIN_SECONDS
+    + card_drive.KILL_MARGIN_SECONDS
+    + TEST_MARGIN_SECONDS
+)
 
 # The command's own entry point, run in a process that is the top, with the kernel
 # calls of the kill replaced by what makes one thing go wrong: a stop that arrives while
@@ -370,14 +378,21 @@ def test_a_kill_that_fails_on_the_breach_path_is_closed_and_the_record_is_writte
 ) -> None:
     run.in_card_mode()
     run.breach_while_loading()
+    # The group would run through only after this long: the top must not wait for it.
+    run.environment["WORKER_LOAD_SECONDS"] = str(GROUP_RUNS_THROUGH_SECONDS)
+    command = _start_with(run, harness, "refused", "--cells", "lag")
 
-    status, error = run.finish(_start_with(run, harness, "refused", "--cells", "lag"))
+    ended = run.wait_until(lambda: command.poll() is not None, TOP_ENDS_WITHIN_SECONDS)
+    assert ended
+    # Its exit takes the parent-death chain to the group.
+    group_follows = run.wait_until(lambda: run.processes() == [], GROUP_FOLLOWS_SECONDS)
+    status, error = run.finish(command)
     record = json.loads(run.record.read_text())
     entry = record["services"]["lag"]
 
     assert status != 0
     assert "watchdog breach" in error
-    assert _lines(error)[-1] == (
+    assert lines(error)[-1] == (
         "the lag group left a process below the top that was not ended"
     )
     assert is_not_measured(entry["processes_left_after_stop"], Reason.KILL_FAILED)
@@ -386,10 +401,7 @@ def test_a_kill_that_fails_on_the_breach_path_is_closed_and_the_record_is_writte
         entry[MEMORY_STOP]["seconds_to_no_process_left"], Reason.KILL_FAILED
     )
     assert entry[MEMORY_STOP]["reason"] == StopReason.BELOW_FLOOR
-
-
-def _lines(error: str) -> list[str]:
-    return error.strip().splitlines()
+    assert group_follows
 
 
 def _signals_sent(log: Path) -> list[int]:
