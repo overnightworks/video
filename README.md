@@ -137,8 +137,9 @@ session's tokens. `--audio` is a mono 16-bit WAV of at least a second, at a rate
 carries; the command checks it, and that `--record` names a file in an existing writable
 directory, before any service starts, and ends with one line when either fails. `--cells`
 names the cells to run (`sentences`, `clear`, `looks`, `viewer`, `viewers`, `lag`); each
-group of them runs as one service under `probe-run`, which the command calls itself. The service starts under `setpriv --pdeathsig KILL`
-(the host needs `setpriv`, as `probe-run` does), so a kill of the group's process ends it.
+group of them runs as one service under `probe-run`, which the command calls itself. The
+service starts under `setpriv --pdeathsig KILL` (the host needs `setpriv`, as `probe-run`
+does), so a kill of the group's process ends it.
 The command waits for the service's readiness as long as the service's own bounds for
 the provider's start and each look's preparation allow, plus a slack. Every exit stops
 the service first, which reaps its provider worker. A service that has not exited within
@@ -187,8 +188,8 @@ gaps in the video timestamps and the frame size the provider drew; the service's
 from its own process's accounting, at no, one and five viewers, and the encoders' share at
 five; each session's opening time; each service's start, the provider's load and each look's
 preparation as the service logged them (outcome, the reason when one is logged,
-duration), and its stop's time to exit; and that a lag far too small ends the session as `unavailable`. Beside the record the command writes
-one viewer's audio and video as `<record>.viewer.mp4`, contact sheets of it as
+duration), and its stop's time to exit; and that a lag far too small ends the session as
+`unavailable`. Beside the record the command writes one viewer's audio and video as `<record>.viewer.mp4`, contact sheets of it as
 `<record>.viewer-sheet-<n>.png` for the judge of the picture, and each group's service log as
 `<record>.<group>.log`; the record names them and the command prints their paths. A dry run
 shows that the drive works, and its figures are the fake's (a 256x256 picture on whatever
@@ -196,8 +197,32 @@ host runs it), so a figure judged against a line of the program plan (first outp
 silence, start, frames per second, the encoders' two cores) holds its value and the verdict
 `not_measured` with the reason. It cannot show a card's timing or memory, nor the picture's
 likeness to the idle look: the video is judged by eye. Against `fake`, a quiet audio file
-gives an all-black recording. Without `--dry-run` the command
-refuses and names what is missing.
+gives an all-black recording.
+
+Without `--dry-run` the command drives `flashhead-lite` with the operator's
+`VIDEO_PROVIDER_ROOT` and `VIDEO_CARD_MEMORY_MB`, passed to the service unchanged and
+checked first against the service's own settings, and ends with one line naming the setting
+when either is missing or invalid. `--memory-floor-mb` is the free card memory in MiB the
+run keeps beside the provider's cap (default 1024, the program plan's "free memory at least
+1 GB"); every memory figure is in MiB. The command samples the card itself, from outside the
+group, and refuses a group, before it starts or while its service does not yet exist, if
+the card's free memory minus the cap is below the floor, or a sample fails: nothing of the
+group starts, and its cells are `not_measured` with the reason `memory_refused`. From the
+first sample that finds the group's service the watchdog samples every half second; free
+memory below the floor, a failed sample or a failure of the watchdog itself is a breach, and
+the command prints one line on standard error, sends SIGKILL to every process below it as
+the end-of-group kill does, and records the breach under `memory_stop` in the group's
+service entry (its reason, the sample, the floor, the cap and the seconds to no process
+left): the group's unfinished cells and every later group are `not_measured` with the reason
+`watchdog_breach`, no later group starts and the command exits non-zero. A group's entry
+holds the card's used memory before, the most used and the least free while the service
+existed, the used memory after, their difference and what the run added at its peak beyond
+the cap; the least free is judged against the line "free card memory at least 1024 MiB at
+the peak". The watchdog cannot stop an allocation faster than one interval (the provider's
+cap does), memory outside the cap (the CUDA context, compiler peaks), which it sees only
+afterwards, the voice's own growth, nor a driver or `nvidia-smi` that reports wrong figures;
+it reads GPU 0 only. A provider that failed to load, or a look that failed to prepare, ends
+its group: each cell is `not_measured` with the reason the service logged.
 
 ## Install the client
 
