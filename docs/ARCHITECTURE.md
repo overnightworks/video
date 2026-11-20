@@ -244,10 +244,11 @@ that session `unavailable` and no other.
   settings reach it. That environment carries no secret: its settings are paths, URLs
   and numbers, the issuer's keys are public and tokens arrive per session. The child
   runs as the same user and could read its parent's environment anyway, so filtering
-  would confine nothing; the process boundary confines it (pipes only, no token,
-  decoded images only, Hugging Face offline) and, from the image on, a non-root user
-  and a read-only root. A change that adds a secret setting keeps it from the child
-  in that same change.
+  would confine nothing. In the image the third-party code is confined by the user and
+  the root it runs on: a numeric non-root user and a read-only root file system, whose
+  one writable place of its own is `/tmp`. The process boundary adds pipes only, no
+  token, decoded images only and Hugging Face offline. A change that adds a secret
+  setting keeps it from the child in that same change.
 - `GET /health` needs no token and reveals the offered look names, the provider's
   name and the card's memory in use.
 - Bounded input from a caller: event JSON (closed types, bounded strings, at most
@@ -274,7 +275,22 @@ client, the port, the fake provider and the release script, the browser package'
 pack-and-install proof, the browser layer, and then the quality gate, which reads the
 Python coverage and the browser layer's lcov, to which the browser package's two scripts add theirs. The release publishes the client
 distribution at a tag by Git pin and the browser package as a tarball beside it
-([README](../README.md#release)). No image exists yet.
+([README](../README.md#release)).
+
+The image `ghcr.io/overnightworks/video:X.Y.Z` is one private package: the service's
+environment, the FlashHead lite provider's own environment at the place the service looks
+for it, and the pinned weights, which only the build fetches. The `Dockerfile` builds it
+from wheels only, in stages whose uv, git and build backend the final stage does not
+carry; it holds gcc and libc6-dev, which Triton needs on the card at first use. It
+declares no health check, because readiness is `provider.ready` in `GET /health`, and
+sets neither a token nor `VIDEO_PROVIDER`, which the deployment owns. The image does
+not fit a standard runner's disk, so the release builds it on the organisation's larger
+runner through quality's image workflow, with reproducible layers so that an unchanged
+weights layer keeps its digest, pushes it and attests it; a job on the same kind of
+runner then pulls the pushed digest and runs the image test before the tag. A pull request
+that changes the `Dockerfile`, `.dockerignore`, a lock or `providers/` builds the image
+without a push and runs the same test on that runner; every other pull request starts no
+larger runner.
 
 ## Proofs
 
@@ -285,6 +301,14 @@ it with a signal, and `serve` under a real server with a WebSocket client for th
 drain; the child's environment is read back from a scripted worker; the viewer tests start `serve` on a loopback port and receive the stream with
 aiortc recvonly peers, deterministic by frame timestamps. The client's tests drive `fetch_health` against a raw listener and parse the
 session's events.
+
+The image test (`tests/test_image.py`, marked `image`, the image named by `VIDEO_IMAGE`)
+starts the built image as the deployment does, on a read-only root with `/tmp` writable,
+no capability, no new privilege and no network, on a host without a card. It reads the
+image's contents (no uv, git, fake provider or build backend, the licence texts, the pinned
+weights and nothing else), its user and its hash-based bytecode, and drives the service
+through health, the wire's refusals and a stop signal; the provider's refusal for want of a
+card is the expected outcome.
 
 The browser layer drives `packages/browser` in headless Chromium against the service
 from source with the fake provider and a throwaway issuer, through a stand-in app
