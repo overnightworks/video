@@ -23,6 +23,7 @@ import wave
 from contextlib import asynccontextmanager, contextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Final
 
 import httpx2
@@ -56,7 +57,7 @@ from video_client.wire import (
 from video_service.provider_process import ProcessBounds
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
+    from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Mapping
 
     from websockets.asyncio.client import ClientConnection
 
@@ -80,6 +81,7 @@ _SIGNAL_EXIT_BASE: Final = 128
 _HOST: Final = "127.0.0.1"
 _PARENT_DEATH_COMMAND: Final = ("setpriv", "--pdeathsig", "KILL")
 _ENVIRONMENT_PREFIX: Final = "VIDEO_"
+FAKE_PROVIDER: Final = MappingProxyType({"VIDEO_PROVIDER": "fake"})
 _SET_CHILD_SUBREAPER: Final = 36
 # The interpreter this repository runs on is a standalone build whose `os` has no
 # pidfd calls, so they are the kernel's system calls, numbered alike on every
@@ -294,6 +296,12 @@ def _lineage(
     return tuple(chain)
 
 
+def has_child(parent: int, control: ProcessControl = KERNEL) -> bool:
+    """Whether any process shows `parent` as its parent now."""
+    processes, _ = _all_processes(control)
+    return any(process.parent == parent for process in processes.values())
+
+
 @dataclass(frozen=True)
 class Below:
     """The lineages of the processes below the top, deepest first, from one read."""
@@ -362,11 +370,14 @@ def _reap_children(zombies: list[Process]) -> None:
             os.waitpid(zombie.pid, os.WNOHANG)
 
 
-def end_processes_below(control: ProcessControl = KERNEL) -> Kill:
+def end_processes_below(
+    control: ProcessControl = KERNEL, *, spare: int | None = None
+) -> Kill:
     """End every process below this one by pidfd-checked SIGKILL passes, stopping none.
 
     A pass signals every live descendant, the deepest first, and reaps the zombies
-    that are this process's children by their ids. It runs until none is alive or
+    that are this process's children by their ids, all but `spare`, whose status stays
+    for the `Popen` that holds it. It runs until none is alive or
     `KILL_WITHIN_SECONDS` has passed. It must run in a child subreaper, so an orphan
     of a descendant stays below. A process that cannot be read or signalled, and a pass
     that cannot list or reap, fail the kill, which goes on with the others and tries
@@ -384,7 +395,9 @@ def end_processes_below(control: ProcessControl = KERNEL) -> Kill:
                 [
                     lineage[0]
                     for lineage in below.lineages
-                    if lineage[0].parent == top and not lineage[0].alive
+                    if lineage[0].parent == top
+                    and not lineage[0].alive
+                    and lineage[0].pid != spare
                 ]
             )
         except OSError:
@@ -543,9 +556,16 @@ def _stop_first(service: Service) -> Callable[[int, object], None]:
 
 @contextmanager
 def running_service(
-    identity: Identity, log: Path, *, max_lag_ms: int
+    identity: Identity,
+    log: Path,
+    *,
+    max_lag_ms: int,
+    provider: Mapping[str, str] = FAKE_PROVIDER,
 ) -> Iterator[Service]:
-    """Start the fake-provider service, logging to `log`; the block's end stops it.
+    """Start the service, logging to `log`; the block's end stops it.
+
+    `provider` holds the `VIDEO_` variables that choose the provider and its settings:
+    the `fake` provider unless the caller gives the operator's.
 
     The parent-death signal follows the thread that starts the service, so the
     caller is the main thread, which lives until the process ends.
@@ -557,13 +577,13 @@ def running_service(
     } | {
         "PYTHONUNBUFFERED": "1",
         "SSL_CERT_FILE": str(identity.ca_file),
-        "VIDEO_PROVIDER": "fake",
         "VIDEO_PORT": str(port := _free_port()),
         "VIDEO_CONFIG_FILE": str(identity.config_file),
         "VIDEO_LOOKS_FILE": str(identity.looks_file),
         "VIDEO_LOOK_SOURCES": identity.look_sources,
         "VIDEO_MAX_LAG_MS": str(max_lag_ms),
         "VIDEO_DRAIN_SECONDS": str(DRAIN_SECONDS),
+        **provider,
     }
     with log.open("wb") as output:
         started = time.monotonic()

@@ -1,12 +1,14 @@
 """The card proof: drive the service as an app does and write a closed record.
 
 `--dry-run` drives the `fake` provider, so every verdict that needs a card stays
-`not_measured`. Each group of cells runs as one service under `probe-run`, which
-this command calls itself. Each group's process writes a fragment after every cell
-and when the group ends, and the record is written from the fragments however a
-group ends, so a failed group leaves its cells' figures and a reason for the rest;
-the recording and its contact sheets are written beside it, and each service's log
-is written there from the service's start.
+`not_measured`. Without it the command drives `flashhead-lite` with the operator's
+`VIDEO_PROVIDER_ROOT` and `VIDEO_CARD_MEMORY_MB`, refuses a group the card has no room
+for and ends a group whose memory falls below the floor. Each group of cells runs as
+one service under `probe-run`, which this command calls itself. Each group's process
+writes a fragment after every cell and when the group ends, and the record is written
+from the fragments however a group ends, so a failed group leaves its cells' figures
+and a reason for the rest; the recording and its contact sheets are written beside it,
+and each service's log is written there from the service's start.
 """
 
 # ruff: noqa: T201 - the command reports its result on the command line
@@ -19,18 +21,20 @@ import json
 import os
 import shutil
 import signal
-import subprocess
 import sys
 import tempfile
 import time
 import traceback
-from contextlib import AsyncExitStack, suppress
+from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Final
 
+from pydantic import ValidationError
+
 from card_drive import (
+    FAKE_PROVIDER,
     KERNEL,
     STOP_SIGNALS,
     Audio,
@@ -43,16 +47,17 @@ from card_drive import (
     hold_workers,
     opened_session,
     read_audio,
-    read_process,
     running_service,
-    signal_if_unchanged,
     timed,
 )
 from card_identity import LOOK_NAMES, throwaway_identity
+from card_memory import GroupWatch
 from card_record import (
     ENCODER_CORES_LINE,
     FIRST_OUTPUT_LINE,
+    FREE_MEMORY_LINE,
     KILL_FIGURES,
+    MEMORY_FIGURES,
     START_TO_READY_LINE,
     Reason,
     closed_record,
@@ -62,6 +67,14 @@ from card_record import (
     not_measured,
     value_of,
 )
+from card_supervision import (
+    CHILD_MARKER,
+    Stops,
+    Supervision,
+    ending,
+    pid_file,
+    run_child,
+)
 from card_viewer import Recording, attached, clear_figure, figures
 from video_client.session_wire import (
     OutputAudioBufferCleared,
@@ -69,12 +82,17 @@ from video_client.session_wire import (
     OutputAudioBufferStopped,
 )
 from video_client.wire import RefusalCode
+from video_service.card import read_card_memory
+from video_service.config import Settings
+from video_service.providers import ProviderName
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Callable, Mapping, Sequence
     from contextlib import AbstractAsyncContextManager, AbstractContextManager
 
-    from card_drive import Process, Service, Session
+    from pydantic_settings import PydanticBaseSettingsSource
+
+    from card_drive import Service, Session
     from card_identity import Identity
 
 IDLE_SECONDS: Final = 0.5
@@ -87,7 +105,6 @@ DEFAULT_LAG_MS: Final = 500
 PROBE_RUN: Final = "probe-run"
 KILL_GRACE_SECONDS: Final = 30
 CAP_SECONDS: Final = 1800
-_CHILD_MARKER: Final = "PROVE_CARD_GROUP"
 _SENTENCE_COLUMNS: Final = ("audio_ms", "frame_count", "late_frame_count", "outcome")
 
 
@@ -314,12 +331,9 @@ GROUPS: Final = {
 }
 LAGS: Final = {"wire": DEFAULT_LAG_MS, "lag": TOO_SMALL_LAG_MS}
 CELLS: Final = tuple(cell for group in GROUPS.values() for cell in group)
-_REFUSAL: Final = (
-    "without --dry-run the card's cells are needed, and none exists yet: card "
-    "memory, the watchdog, the lag sweep and the voice's window come with the next "
-    "slices (the viewers are driven in the dry run already); "
-    "run with --dry-run to drive the fake provider"
-)
+_PREFIX: Final[str] = Settings.model_config["env_prefix"]
+_PROVIDER_VARIABLE: Final = f"{_PREFIX}PROVIDER"
+_PROVIDER_FIELDS: Final = ("provider_root", "card_memory_mb")
 
 
 def _arguments(argv: Sequence[str]) -> argparse.Namespace:
@@ -330,6 +344,12 @@ def _arguments(argv: Sequence[str]) -> argparse.Namespace:
         "--dry-run", action="store_true", help="drive the fake provider"
     )
     parser.add_argument("--cells", nargs="+", choices=CELLS, default=list(CELLS))
+    parser.add_argument(
+        "--memory-floor-mb",
+        type=int,
+        default=int(FREE_MEMORY_LINE.limit),
+        help="free card memory in MiB the run keeps beside the provider's cap",
+    )
     parser.add_argument("--fragment", type=Path, help=argparse.SUPPRESS)
     return parser.parse_args(argv)
 
@@ -346,6 +366,60 @@ def _checked_record(path: Path) -> Path:
         )
         raise SystemExit(message)
     return record
+
+
+class _GivenSettings(Settings):
+    """`Settings` judged from the values given alone, never from the environment."""
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[Settings],  # noqa: ARG003 - the signature pydantic-settings calls
+        init_settings: PydanticBaseSettingsSource,
+        **_other_sources: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        return (init_settings,)
+
+
+@dataclass(frozen=True)
+class CardProvider:
+    """The operator's provider settings, as the service gets them, and the cap."""
+
+    environment: dict[str, str]
+    card_memory_mb: int
+
+
+def _card_provider(environ: Mapping[str, str]) -> CardProvider:
+    """The operator's two provider settings, once the service's own fields accept them.
+
+    The refusal names the setting alone: the validation error carries the value.
+    """
+    variables = {name: f"{_PREFIX}{name.upper()}" for name in _PROVIDER_FIELDS}
+    given = {
+        name: environ[variable]
+        for name, variable in variables.items()
+        if variable in environ
+    }
+    if "provider_root" not in given:
+        message = f"{variables['provider_root']} is required without --dry-run"
+        raise SystemExit(message)
+    try:
+        settings = _GivenSettings(provider=ProviderName.FLASHHEAD_LITE, **given)
+    except ValidationError as error:
+        field_name = str(error.errors()[0]["loc"][0])
+        message = f"{_PREFIX}{field_name.upper()} is missing or invalid"
+        raise SystemExit(message) from None
+    environment = {_PROVIDER_VARIABLE: ProviderName.FLASHHEAD_LITE.value} | {
+        variables[name]: value for name, value in given.items()
+    }
+    return CardProvider(environment, settings.card_memory_mb)
+
+
+def _provider_of(arguments: argparse.Namespace) -> Mapping[str, str]:
+    """The `VIDEO_` variables that choose the provider the service runs."""
+    if arguments.dry_run:
+        return FAKE_PROVIDER
+    return _card_provider(os.environ).environment
 
 
 def _service_figures(
@@ -404,7 +478,9 @@ def _run_group(
     cells: dict[str, object] = {}
     with (
         throwaway_identity(scratch) as identity,
-        start_service(identity, log, max_lag_ms=LAGS[group]) as service,
+        start_service(
+            identity, log, max_lag_ms=LAGS[group], provider=_provider_of(arguments)
+        ) as service,
     ):
         drive = Drive(
             service, identity, audio, dry_run=arguments.dry_run, record=arguments.record
@@ -443,16 +519,11 @@ def _run_group(
     return outcome
 
 
-def _pid_file(fragment: Path) -> Path:
-    """Where the group's process names itself to the command that started it."""
-    return fragment.with_suffix(".pid")
-
-
 def _child(group: str, arguments: argparse.Namespace) -> int:
     """Run one group where `probe-run` started it; non-zero when a cell failed."""
     for stopping in STOP_SIGNALS:
         signal.signal(stopping, exit_on_stop)
-    _pid_file(arguments.fragment).write_text(str(os.getpid()))  # NOSONAR(S8707)
+    pid_file(arguments.fragment).write_text(str(os.getpid()))  # NOSONAR(S8707)
     # The identity's keys live in the top's temporary directory, which the top removes
     # also when it kills this process.
     identity_directory = arguments.fragment.with_suffix(".identity")
@@ -465,14 +536,25 @@ def _under_probe_run(
     group: str,
     arguments: argparse.Namespace,
     fragment: Path,
-    stops: list[int],
-    control: ProcessControl,
-) -> int:
-    """Run `group` as its own process under `probe-run`; its exit status."""
+    supervision: Supervision,
+) -> int | None:
+    """Run `group` as its own process under `probe-run`; its exit status.
+
+    A card-mode group the card has no room for is refused before `probe-run` starts, and
+    so is a group after a stop that arrived before it: nothing would forward that stop,
+    and the group would run through. Neither has a status.
+    """
     for tool in (PROBE_RUN, "setpriv"):
         if shutil.which(tool) is None:
             message = f"{tool} is not on PATH; the proof does not run without it"
             raise SystemExit(message)
+    watch = supervision.watch
+    if watch is not None and watch.refuse_first(
+        ending(supervision.stops, supervision.control, None)
+    ):
+        return None
+    if supervision.stops.recorded:
+        return None
     command = [
         PROBE_RUN,
         "-k",
@@ -491,75 +573,10 @@ def _under_probe_run(
         *(["--dry-run"] if arguments.dry_run else []),
     ]
     try:
-        return _run_child(command, group, fragment, stops, control)
+        return run_child(command, group, fragment, supervision)
     finally:
         if (log := _group_log(arguments.record, group)).exists():
             print(f"beside it: {log}")
-
-
-def _settled_at_group(
-    probe_run: Process | None,
-    fragment: Path,
-    signum: int,
-    control: ProcessControl,
-) -> bool:
-    """Whether the pid file names the group's process, which settles the stop there.
-
-    The stop is sent only to a process whose parent is `probe-run`, checked by
-    `signal_if_unchanged`; `timeout` may have reaped the group's process and the kernel
-    reused its id. An id that names no process or another's child, and a check that
-    cannot be made, send nothing: the stop stays recorded and the end-of-group kill
-    follows. Where the id is not yet written or holds no number, the stop is not
-    settled and goes to `probe-run`.
-    """
-    try:
-        group_pid = int(_pid_file(fragment).read_text())
-    except OSError, ValueError:
-        return False
-    if probe_run is not None:
-        with suppress(OSError):
-            group = read_process(group_pid, control)
-            if group is not None and group.parent == probe_run.pid:
-                signal_if_unchanged((group, probe_run), signum, control)
-    return True
-
-
-def _run_child(
-    command: list[str],
-    group: str,
-    fragment: Path,
-    stops: list[int],
-    control: ProcessControl,
-) -> int:
-    """Run `command` as the group's process; a stop is recorded and, meanwhile, sent on.
-
-    Once the process is reaped a stop is only recorded; the caller puts the handlers
-    back.
-    """
-    probe_run: Process | None = None
-
-    def forward(signum: int, _frame: object) -> None:
-        stops.append(signum)
-        # Once the process is reaped the group's process has ended and its id may name
-        # another process.
-        if child.returncode is not None:
-            return
-        # `timeout` kills its command at once on a signal, so the stop goes to the
-        # group's process itself, which stops the service first and then exits.
-        if not _settled_at_group(probe_run, fragment, signum, control):
-            child.send_signal(signum)
-
-    # The operator names the audio path that the command passes on.
-    with subprocess.Popen(  # NOSONAR(S8705)  # noqa: S603 - probe-run and this python
-        command, env={**os.environ, _CHILD_MARKER: group}
-    ) as child:
-        # The start time that tells `probe-run` from a process that took its id.
-        with suppress(OSError):
-            probe_run = read_process(child.pid, control)
-        # The group's service is cleaned up by the child, so a stop reaches it first.
-        for stopping in STOP_SIGNALS:
-            signal.signal(stopping, forward)
-        return child.wait()
 
 
 def _run_group_process(
@@ -567,34 +584,50 @@ def _run_group_process(
     arguments: argparse.Namespace,
     fragment: Path,
     control: ProcessControl,
-) -> tuple[int, Kill]:
+    watch: GroupWatch | None,
+) -> tuple[int | None, Kill]:
     """Run `group`, then end whatever is left below the top: its status and the kill.
 
     A stop that arrives while the group runs or the kill runs ends the command as an
     interrupt does once the kill has ended; otherwise the handlers the top had come
-    back for the next group.
+    back for the next group. After the top ended the group for its memory the stops are
+    ignored: the command ends with that failure.
     """
     before = [signal.getsignal(stopping) for stopping in STOP_SIGNALS]
-    stops: list[int] = []
-    status = _under_probe_run(group, arguments, fragment, stops, control)
-    kill = end_processes_below(control)
+    stops = Stops()
+    for stopping in STOP_SIGNALS:
+        signal.signal(stopping, stops.record)
+    status = _under_probe_run(
+        group, arguments, fragment, Supervision(stops, control, watch)
+    )
+    if watch is None:
+        kill = end_processes_below(control)
+    else:
+        kill = watch.finish(lambda: end_processes_below(control))
     # A stop after the handlers are back reaches the top's own handler; one before is
     # in `stops`, which is read after.
     for stopping, handler in zip(STOP_SIGNALS, before, strict=True):
-        signal.signal(stopping, handler)
-    if stops:
-        _interrupted(stops[0], None)
+        signal.signal(stopping, signal.SIG_IGN if stops.ending else handler)
+    if (interrupt := stops.to_act_on) is not None:
+        _interrupted(interrupt, None)
     return status, kill
 
 
 @dataclass
 class _Gathered:
-    """What the groups' fragments add up to, and the first group that failed."""
+    """What the groups' fragments add up to, and why no group follows the last."""
 
     cells: dict[str, object] = field(default_factory=dict)
     services: dict[str, object] = field(default_factory=dict)
     files: list[str] = field(default_factory=list)
     failure: str | None = None
+    stopped: bool = False
+    later: Reason = Reason.EARLIER_GROUP_FAILED
+
+    @property
+    def ended(self) -> bool:
+        """Whether a group failed or was stopped, so no later group starts."""
+        return self.failure is not None or self.stopped
 
 
 def _read_fragment(path: Path) -> dict[str, object]:
@@ -612,6 +645,14 @@ def _kill_figures(kill: Kill) -> dict[str, object]:
     }
 
 
+@dataclass(frozen=True)
+class CardLimits:
+    """What card mode holds the card to: the provider's cap and the floor."""
+
+    cap_mb: int
+    floor_mb: int
+
+
 def _gather(
     group: str,
     arguments: argparse.Namespace,
@@ -619,31 +660,51 @@ def _gather(
     gathered: _Gathered,
     control: ProcessControl,
 ) -> None:
-    """Run `group` unless a group failed before it, and add its fragment's figures.
+    """Run `group` unless a group failed or was stopped; add its fragment's figures.
 
     A group that ended without a fragment or one it did not end is failed: what its
     fragment lacks is `no_fragment`; a group never started is `earlier_group_failed`.
+    A group the top ended for the card's memory is stopped: what it lacks is
+    `memory_refused` or `watchdog_breach`, as is every later group.
     """
     parts: dict[str, object] = {}
-    kill_figures: dict[str, object] = {}
-    reason = Reason.EARLIER_GROUP_FAILED
-    if gathered.failure is None:
+    top_figures: dict[str, object] = {}
+    reason = gathered.later
+    unfinished: tuple[Reason, ...] = ()
+    if not gathered.ended:
         fragment = scratch / f"{group}.json"
-        status, kill = _run_group_process(group, arguments, fragment, control)
+        limits = arguments.limits
+        watch = (
+            None
+            if limits is None
+            else GroupWatch(read_card_memory, limits.cap_mb, limits.floor_mb)
+        )
+        status, kill = _run_group_process(group, arguments, fragment, control, watch)
         parts = _read_fragment(fragment)
         reason = Reason.NO_FRAGMENT
-        kill_figures = _kill_figures(kill)
+        top_figures = _kill_figures(kill) | (
+            {name: not_measured(Reason.NO_CARD) for name in MEMORY_FIGURES}
+            if watch is None
+            else watch.entry()
+        )
+        if watch is not None and watch.stop is not None:
+            reason = gathered.later = watch.stop.cell_reason
+            # A cell the stop failed may have left later cells `group_ended`.
+            unfinished = (Reason.GROUP_ENDED,)
+            gathered.stopped = True
         if kill.failed:
             gathered.failure = (
                 f"the {group} group left a process below the top that was not ended"
             )
-        elif status or parts.get("outcome") != GroupOutcome.DONE:
+        elif not gathered.stopped and (
+            status or parts.get("outcome") != GroupOutcome.DONE
+        ):
             gathered.failure = f"the {group} cells ended with status {status}"
     gathered.cells |= completed_cells(
-        _chosen(group, arguments), parts.get("cells", {}), reason
+        _chosen(group, arguments), parts.get("cells", {}), reason, replacing=unfinished
     )
     gathered.services[group] = completed_service(
-        parts.get("services", {}).get(group, {}) | kill_figures, reason
+        parts.get("services", {}).get(group, {}) | top_figures, reason
     )
     gathered.files += parts.get("files", [])
 
@@ -657,17 +718,24 @@ def _interrupted(signum: int, _frame: object) -> None:
 
 
 def main(argv: Sequence[str] | None = None, control: ProcessControl = KERNEL) -> int:
-    """Run the chosen cells and write the record; refuse without `--dry-run`.
+    """Run the chosen cells and write the record.
 
-    `control` is what the end-of-group kill asks of the kernel.
+    Without `--dry-run` the operator's provider settings are checked first, and the
+    card is held to the floor. `control` is what the end-of-group kill asks of the
+    kernel.
     """
     arguments = _arguments(sys.argv[1:] if argv is None else argv)
-    if group := os.environ.get(_CHILD_MARKER):
+    if group := os.environ.get(CHILD_MARKER):
         return _child(group, arguments)
     arguments.record = _checked_record(arguments.record)
     read_audio(arguments.audio)
-    if not arguments.dry_run:
-        raise SystemExit(_REFUSAL)
+    arguments.limits = (
+        None
+        if arguments.dry_run
+        else CardLimits(
+            _card_provider(os.environ).card_memory_mb, arguments.memory_floor_mb
+        )
+    )
     try:
         control.become_subreaper()
     except OSError as error:
@@ -690,7 +758,7 @@ def main(argv: Sequence[str] | None = None, control: ProcessControl = KERNEL) ->
         print(f"beside it: {arguments.record.with_name(name)}")
     if gathered.failure:
         raise SystemExit(gathered.failure)
-    return 0
+    return 1 if gathered.stopped else 0
 
 
 if __name__ == "__main__":

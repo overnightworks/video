@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import json
 import os
 import struct
 import subprocess
@@ -13,7 +14,7 @@ import wave
 from pathlib import Path
 from typing import TYPE_CHECKING, Final
 
-from card_record import Verdict
+from card_record import FREE_MEMORY_LINE, Verdict
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -39,8 +40,62 @@ SERVICE_COMMAND: Final = "video_service"
 # starts the command on this line.
 PROBE_RUN_STAND_IN: Final = """#!/usr/bin/env bash
 echo "$*" >> "$PROBE_RUN_LOG"
+while [ -n "$PROBE_RUN_HOLD" ] && [ ! -e "$PROBE_RUN_HOLD" ]; do sleep 0.05; done
 exec setpriv --pdeathsig TERM timeout "$@"
 """
+# A stand-in for `nvidia-smi` that answers with what the test wrote to the reading file:
+# a line `used, free, total`, `fail` or `hang`, after the delay the test sets; every
+# answer it gives is logged, so a test can tell which starts came after a reading.
+NVIDIA_SMI_STAND_IN: Final = """#!/usr/bin/env bash
+echo "$*" >> "$NVIDIA_SMI_LOG"
+sleep "${NVIDIA_SMI_DELAY:-0}"
+reading=$(cat "$NVIDIA_SMI_READING") || exit 1
+echo "$reading" >> "$NVIDIA_SMI_ANSWERS"
+case "$reading" in
+    fail) exit 1 ;;
+    hang) exec sleep 600 ;;
+    *) echo "$reading" ;;
+esac
+"""
+# The `flashhead-lite` worker of a provider root: the fake provider with the steps a
+# case scripts through the environment, each writing a reading for the stand-in.
+WORKER_STAND_IN: Final = f"""#!{sys.executable}
+import os
+import time
+from pathlib import Path
+
+from video_provider_contract.worker import run_worker
+from video_provider_fake import FakeProvider
+
+
+def write_reading(name):
+    if name in os.environ:
+        Path(os.environ["NVIDIA_SMI_READING"]).write_text(os.environ[name])
+
+
+class Scripted(FakeProvider):
+    def start(self):
+        write_reading("WORKER_READING_AT_LOAD")
+        time.sleep(float(os.environ.get("WORKER_LOAD_SECONDS", 0)))
+        return super().start()
+
+    def open_session(self, look):
+        write_reading("WORKER_READING_AT_SESSION")
+        return super().open_session(look)
+
+
+run_worker(Scripted())
+"""
+CAP_MB: Final = 4000
+# Long enough that the cells never finish before the watchdog has sampled.
+LOAD_SECONDS: Final = 30
+USED_MB: Final = 2000
+FLOOR_MB: Final = int(FREE_MEMORY_LINE.limit)
+# Used, free and total in MiB.
+ROOMY: Final = f"{USED_MB}, 20000, 24576"
+# Free memory the floor and the cap cannot both be kept beside.
+NO_ROOM_FOR_THE_CAP: Final = f"{USED_MB}, {CAP_MB - 1}, 24576"
+BELOW_THE_FLOOR: Final = f"{USED_MB}, {FLOOR_MB - 1}, 24576"
 
 
 def write_audio(path: Path, *, seconds: float, channels: int = 1) -> None:
@@ -51,6 +106,11 @@ def write_audio(path: Path, *, seconds: float, channels: int = 1) -> None:
         sound.setsampwidth(2)
         sound.setframerate(AUDIO_RATE)
         sound.writeframes(square * int(AUDIO_RATE * seconds // 8))
+
+
+def lines(error: str) -> list[str]:
+    """The lines the command wrote to standard error."""
+    return error.strip().splitlines()
 
 
 def process_state(pid: int) -> str | None:
@@ -119,9 +179,22 @@ class Run:
         binaries = directory / "bin"
         for path in (binaries, self.scratch):
             path.mkdir()
-        stand_in = binaries / "probe-run"
-        stand_in.write_text(PROBE_RUN_STAND_IN)
-        stand_in.chmod(0o755)
+        for name, text in (
+            ("probe-run", PROBE_RUN_STAND_IN),
+            ("nvidia-smi", NVIDIA_SMI_STAND_IN),
+        ):
+            stand_in = binaries / name
+            stand_in.write_text(text)
+            stand_in.chmod(0o755)
+        self.reading = directory / "nvidia-smi.reading"
+        self.reading.write_text(ROOMY)
+        self.nvidia_smi_log = directory / "nvidia-smi.log"
+        self.nvidia_smi_answers = directory / "nvidia-smi.answers"
+        self.provider_root = directory / "providers"
+        worker = self.provider_root / "flashhead-lite" / ".venv" / "bin"
+        worker.mkdir(parents=True)
+        (worker / "video-flashhead-lite-worker").write_text(WORKER_STAND_IN)
+        (worker / "video-flashhead-lite-worker").chmod(0o755)
         write_audio(self.audio, seconds=AUDIO_SECONDS)
         self.environment = os.environ | {
             "PATH": f"{binaries}{os.pathsep}{os.environ['PATH']}",
@@ -129,6 +202,29 @@ class Run:
             "TMPDIR": str(self.scratch),
             MARKER: self.marker,
             "PROBE_RUN_LOG": str(self.probe_run_log),
+            "NVIDIA_SMI_READING": str(self.reading),
+            "NVIDIA_SMI_LOG": str(self.nvidia_smi_log),
+            "NVIDIA_SMI_ANSWERS": str(self.nvidia_smi_answers),
+        }
+
+    def breach_while_loading(self) -> None:
+        """Have the provider's load write a reading below the floor and then go on."""
+        self.environment = self.environment | {
+            "WORKER_READING_AT_LOAD": BELOW_THE_FLOOR,
+            "WORKER_LOAD_SECONDS": str(LOAD_SECONDS),
+        }
+
+    def answers_given(self, reading: str) -> int:
+        """How many times the `nvidia-smi` stand-in answered with `reading`."""
+        if not self.nvidia_smi_answers.exists():
+            return 0
+        return self.nvidia_smi_answers.read_text().splitlines().count(reading)
+
+    def in_card_mode(self, *, cap_mb: int = CAP_MB) -> None:
+        """Set the operator's two provider settings, for a run without `--dry-run`."""
+        self.environment = self.environment | {
+            "VIDEO_PROVIDER_ROOT": str(self.provider_root),
+            "VIDEO_CARD_MEMORY_MB": str(cap_mb),
         }
 
     def arguments(self, *extra: str) -> list[str]:
@@ -196,6 +292,12 @@ class Run:
     def printed(self) -> str:
         """What the command wrote to standard output."""
         return self.output.read_text()
+
+    def fragment_cells(self) -> list[str] | None:
+        """The cells the wire group's fragment holds, once it is written."""
+        for fragment in self.scratch.glob("prove-card-record-*/wire.json"):
+            return list(json.loads(fragment.read_text())["cells"])
+        return None
 
     def has_spoken(self) -> bool:
         """Whether a service of this run has ended a sentence, viewers attached."""

@@ -18,7 +18,14 @@ from PIL import Image
 import card_drive
 import card_identity
 import prove_card
-from card_record import SERVICE_FIGURES, Reason, completed_service, value_of
+from card_record import (
+    KILL_FIGURES,
+    MEMORY_FIGURES,
+    SERVICE_FIGURES,
+    Reason,
+    completed_service,
+    value_of,
+)
 from support.prove_card_support import (
     APPEARS_WITHIN_SECONDS,
     AUDIO_SECONDS,
@@ -193,17 +200,6 @@ def test_without_probe_run_on_the_path_the_command_refuses_and_names_it(
 
     assert status != 0
     assert "probe-run is not on PATH" in error
-    assert not run.record.exists()
-
-
-def test_without_dry_run_the_command_refuses_and_names_what_is_missing(
-    run: Run,
-) -> None:
-    status, error = run.finish(run.start())
-
-    assert status != 0
-    assert "--dry-run" in error
-    assert "viewers" in error
     assert not run.record.exists()
 
 
@@ -489,7 +485,7 @@ def test_a_group_process_killed_before_its_fragment_measures_what_the_top_ends(
     status, _ = run.finish(command)
     record = json.loads(run.record.read_text())
     service = record["services"]["wire"]
-    measured_by_the_top = {"processes_left_after_stop", "processes_alive_after_kill"}
+    measured_by_the_top = {*KILL_FIGURES, *MEMORY_FIGURES}
 
     assert serving
     assert status != 0
