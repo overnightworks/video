@@ -200,8 +200,8 @@ def test_an_upgrade_while_a_live_session_holds_the_place_is_busy(
     async def scenario(service: _Service) -> None:
         live = await connect(service.url, additional_headers=valid_headers())
         await live.recv()
-        with pytest.raises(InvalidStatus) as refused:
-            async with asyncio.timeout(READY_WITHIN_SECONDS):
+        async with asyncio.timeout(READY_WITHIN_SECONDS):
+            with pytest.raises(InvalidStatus) as refused:
                 await service.upgrade()
         outcome.append(refused.value.response.status_code)
         await live.close()
