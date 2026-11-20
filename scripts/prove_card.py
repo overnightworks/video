@@ -26,9 +26,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Final
 
 from card_drive import (
+    STOP_SIGNALS,
     Audio,
     SessionEndedError,
     Window,
+    exit_on_stop,
     opened_session,
     read_audio,
     running_service,
@@ -70,8 +72,6 @@ KILL_GRACE_SECONDS: Final = 30
 CAP_SECONDS: Final = 1800
 _CHILD_MARKER: Final = "PROVE_CARD_GROUP"
 _SENTENCE_COLUMNS: Final = ("audio_ms", "frame_count", "late_frame_count", "outcome")
-_STOPS: Final = (signal.SIGINT, signal.SIGTERM)
-_SIGNAL_BASE: Final = 128
 
 
 @dataclass(frozen=True)
@@ -337,17 +337,16 @@ def _run_group(
     }
 
 
-def _exit_once(signum: int, _frame: object) -> None:
-    """Turn the first stop into an exit that runs the cleanups; ignore a second."""
-    for stopping in _STOPS:
-        signal.signal(stopping, signal.SIG_IGN)
-    sys.exit(_SIGNAL_BASE + signum)
+def _pid_file(fragment: Path) -> Path:
+    """Where the group's process names itself to the command that started it."""
+    return fragment.with_suffix(".pid")
 
 
 def _child(group: str, arguments: argparse.Namespace) -> int:
     """Run one group where `probe-run` started it, and write its fragment."""
-    for stopping in _STOPS:
-        signal.signal(stopping, _exit_once)
+    for stopping in STOP_SIGNALS:
+        signal.signal(stopping, exit_on_stop)
+    _pid_file(arguments.fragment).write_text(str(os.getpid()))  # NOSONAR(S8707)
     with tempfile.TemporaryDirectory(prefix="prove-card-") as scratch:
         fragment = _run_group(group, arguments, Path(scratch))
     # The parent names the fragment's path in its own scratch directory.
@@ -380,17 +379,22 @@ def _under_probe_run(group: str, arguments: argparse.Namespace, fragment: Path) 
     interrupts: list[int] = []
 
     def forward(signum: int, _frame: object) -> None:
+        # `timeout` kills its command at once on a signal, so the stop goes to the
+        # group's process itself, which stops the service first and then exits.
         interrupts.append(signum)
-        child.send_signal(signum)
+        try:
+            os.kill(int(_pid_file(fragment).read_text()), signum)
+        except OSError, ValueError:
+            child.send_signal(signum)
 
     # The operator names the audio path that the command passes on.
     with subprocess.Popen(  # NOSONAR(S8705)  # noqa: S603 - probe-run and this python
         command, env={**os.environ, _CHILD_MARKER: group}
     ) as child:
         # The group's service is cleaned up by the child, so a stop reaches it first.
-        previous = [signal.signal(stopping, forward) for stopping in _STOPS]
+        previous = [signal.signal(stopping, forward) for stopping in STOP_SIGNALS]
         status = child.wait()
-        for stopping, handler in zip(_STOPS, previous, strict=True):
+        for stopping, handler in zip(STOP_SIGNALS, previous, strict=True):
             signal.signal(stopping, handler)
     if interrupts:
         message = f"interrupted by {signal.Signals(interrupts[0]).name}"
@@ -402,7 +406,7 @@ def _under_probe_run(group: str, arguments: argparse.Namespace, fragment: Path) 
 
 def _interrupted(signum: int, _frame: object) -> None:
     """End the command with one line; a second stop is ignored."""
-    for stopping in _STOPS:
+    for stopping in STOP_SIGNALS:
         signal.signal(stopping, signal.SIG_IGN)
     message = f"interrupted by {signal.Signals(signum).name}"
     raise SystemExit(message)
@@ -417,7 +421,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     read_audio(arguments.audio)
     if not arguments.dry_run:
         raise SystemExit(_REFUSAL)
-    for stopping in _STOPS:
+    for stopping in STOP_SIGNALS:
         signal.signal(stopping, _interrupted)
     cells: dict[str, object] = {}
     services: dict[str, object] = {}

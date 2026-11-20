@@ -40,6 +40,7 @@ if TYPE_CHECKING:
     from video_client.session_wire import SessionCreated
 
 FIRST_FRAME_WITHIN_SECONDS: Final = 15.0
+CLOSE_WITHIN_SECONDS: Final = 1.0
 VIDEO_CLOCK_HZ: Final = 90_000
 LOUD_PEAK: Final = 2_000
 SAMPLE_BYTES: Final = 2
@@ -161,7 +162,10 @@ class Viewer:
 
     async def close(self) -> None:
         """End the peer and finish the recording and the sheets."""
-        await self.peer.close()
+        # An interrupt cancels the peer's own close task, and a second close then
+        # waits on it for good.
+        with suppress(TimeoutError):
+            await asyncio.wait_for(self.peer.close(), CLOSE_WITHIN_SECONDS)
         for task in self._tasks:
             task.cancel()
         await asyncio.gather(*self._tasks, return_exceptions=True)

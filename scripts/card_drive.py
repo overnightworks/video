@@ -51,7 +51,7 @@ from video_client.wire import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Awaitable, Iterator
+    from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 
     from websockets.asyncio.client import ClientConnection
 
@@ -65,6 +65,8 @@ DRAIN_SECONDS: Final = 5
 POLL_SECONDS: Final = 0.02
 CHUNK_BYTES: Final = 8192
 MINIMUM_AUDIO_SECONDS: Final = 1
+STOP_SIGNALS: Final = (signal.SIGINT, signal.SIGTERM)
+_SIGNAL_EXIT_BASE: Final = 128
 _HOST: Final = "127.0.0.1"
 _ENVIRONMENT_PREFIX: Final = "VIDEO_"
 _READY_EVENT: Final = "process.ready"
@@ -242,6 +244,35 @@ def _stop(service: Service) -> bool:
     return in_time
 
 
+def exit_on_stop(signum: int, _frame: object) -> None:
+    """Turn the first stop into an exit that runs the cleanups; ignore a second.
+
+    What the cleanups of cancelled peers print is no use to the operator, so the
+    run ends with the one line its command writes.
+    """
+    for stopping in STOP_SIGNALS:
+        signal.signal(stopping, signal.SIG_IGN)
+    with Path(os.devnull).open("w", encoding="utf-8") as silence:
+        os.dup2(silence.fileno(), sys.stderr.fileno())
+    sys.exit(_SIGNAL_EXIT_BASE + signum)
+
+
+def _stop_first(service: Service) -> Callable[[int, object], None]:
+    """A signal handler that stops the service before the exit unwinds the drive.
+
+    The drive's teardown waits on connections the service holds, so it hangs while
+    the service lives.
+    """
+
+    def stop(signum: int, frame: object) -> None:
+        for stopping in STOP_SIGNALS:
+            signal.signal(stopping, signal.SIG_IGN)
+        _stop(service)
+        exit_on_stop(signum, frame)
+
+    return stop
+
+
 @contextmanager
 def running_service(
     identity: Identity, directory: Path, *, max_lag_ms: int
@@ -273,11 +304,16 @@ def running_service(
             start_new_session=True,
         )
         service = Service(process, port, log)
+        previous = [
+            signal.signal(stopping, _stop_first(service)) for stopping in STOP_SIGNALS
+        ]
         try:
             _wait_until_ready(service, started)
             yield service
         finally:
             stopped_in_time = _stop(service)
+            for stopping, handler in zip(STOP_SIGNALS, previous, strict=True):
+                signal.signal(stopping, handler)
     if not stopped_in_time:
         message = "the service did not exit after its stop and was killed"
         raise DriveError(message)

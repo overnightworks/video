@@ -40,11 +40,14 @@ CELLS_BY_GROUP: Final = {
 }
 FIVE: Final = 5
 STOP_BOUND_SECONDS: Final = 1.0
-# A stand-in for the fleet's `probe-run`, which waits on the machine's load.
+# A stand-in for the fleet's `probe-run`, which waits on the machine's load; like
+# its `timeout`, it kills the command at once on a signal.
 PROBE_RUN_STAND_IN: Final = """#!/usr/bin/env bash
 echo "$*" >> "$PROBE_RUN_LOG"
 [[ $1 == -k ]] && shift 3
-exec "$@"
+"$@" &
+trap 'kill -9 $!' INT TERM
+wait $!
 """
 
 
@@ -123,6 +126,13 @@ class Run:
             except OSError:
                 continue
         return [line for line in found if line and "defunct" not in line]
+
+    def has_spoken(self) -> bool:
+        """Whether a service of this run has ended a sentence, viewers attached."""
+        return any(
+            '"sentence.ended"' in log.read_text(errors="replace")
+            for log in self.scratch.glob("*/service-*.log")
+        )
 
     def wait_until(self, condition: Callable[[], bool], seconds: float) -> bool:
         """Whether `condition` holds within `seconds`."""
@@ -267,12 +277,9 @@ def test_without_dry_run_the_command_refuses_and_names_what_is_missing(
 def test_an_interrupted_run_ends_with_one_line_and_leaves_nothing(
     run: Run, interrupt: signal.Signals
 ) -> None:
-    command = run.start("--dry-run")
-    serving = run.wait_until(
-        lambda: any("video_service" in line for line in run.processes()),
-        APPEARS_WITHIN_SECONDS,
-    )
-    os.killpg(command.pid, interrupt)
+    command = run.start("--dry-run", "--cells", "viewers")
+    serving = run.wait_until(run.has_spoken, APPEARS_WITHIN_SECONDS)
+    os.kill(command.pid, interrupt)
     status, error = run.finish(command)
 
     assert serving
