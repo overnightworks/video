@@ -156,9 +156,10 @@ that raised, or met a process it could not read, makes both `not_measured` with 
 `kill_failed`, and the command writes
 the record, starts no later group and exits non-zero. A service that had exited before its
 stop has `stop_to_exit_ms` `not_measured` with `exited_before_stop`. An interrupt (INT or
-TERM) ends the command with one line, after any kill that is running has ended. Each group's service log is written beside the record
-from the service's start, so it is there however the group ends (cells done, a failed
-cell, an interrupt, a kill), and the command prints its path. A kill of the command
+TERM) ends the command with one line, after any kill that is running has ended. Each
+group's service log is written beside the record from the service's start, so it is
+there however the group ends (cells done, a failed cell, an interrupt, a kill), and the
+command prints its path. A kill of the command
 itself is not trapped: `probe-run`'s parent-death signal stops the group's process, which
 stops its service, and the cap ends what stays. It writes no record and leaves the
 throwaway identity's keys in its `prove-card-record-*` directory under `TMPDIR`; any other

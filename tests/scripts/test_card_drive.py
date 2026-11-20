@@ -58,8 +58,8 @@ import os
 import resource
 import subprocess
 import sys
-import threading
 import time
+import types
 from pathlib import Path
 
 import card_drive
@@ -130,8 +130,15 @@ elif mode in ("ancestry-stale", "ancestry-intact"):
         # The parent the read showed is gone and its id names another process.
         replaced = dataclasses.replace(lineage[1], started=lineage[1].started + 1)
         lineage = (lineage[0], replaced)
-    card_drive.end_if_unchanged(lineage)
-    report({"grandchild": grandchild})
+    signals = []
+
+    def recorded(pidfd):
+        signals.append(pidfd)
+        card_drive.KERNEL.send_kill(pidfd)
+
+    control = dataclasses.replace(card_drive.KERNEL, send_kill=recorded)
+    card_drive.end_if_unchanged(lineage, control)
+    report({"grandchild": grandchild, "signalled": bool(signals)})
 elif mode == "raising":
     unkillable, killable = sleeper(), sleeper()
 
@@ -166,20 +173,26 @@ elif mode == "unlistable-briefly":
     sleeping = sleeper()
     soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
     resource.setrlimit(resource.RLIMIT_NOFILE, (3, hard))
-    threading.Timer(
-        0.3, resource.setrlimit, (resource.RLIMIT_NOFILE, (soft, hard))
-    ).start()
+
+    def sleep_after_failed_attempt(seconds):
+        # The kill waits only after an attempt that could not list the processes.
+        resource.setrlimit(resource.RLIMIT_NOFILE, (soft, hard))
+        time.sleep(seconds)
+
+    card_drive.time = types.SimpleNamespace(
+        monotonic=time.monotonic, sleep=sleep_after_failed_attempt
+    )
     report(killed() | {"sleeper": sleeping.pid})
 elif mode == "unreadable-briefly":
     sleeping = sleeper()
-    readable_from = time.monotonic() + 0.3
+    refusals = [PermissionError]
 
-    def refused(pid):
-        if pid == sleeping.pid and time.monotonic() < readable_from:
-            raise PermissionError
+    def refused_once(pid):
+        if pid == sleeping.pid and refusals:
+            raise refusals.pop()
         return card_drive.KERNEL.read_stat(pid)
 
-    control = dataclasses.replace(card_drive.KERNEL, read_stat=refused)
+    control = dataclasses.replace(card_drive.KERNEL, read_stat=refused_once)
     report(killed(control) | {"sleeper": sleeping.pid})
 elif mode == "split-name":
     # The kernel cuts a name at 15 bytes, here inside the two bytes of a letter.
@@ -325,6 +338,7 @@ def test_a_process_is_signalled_only_while_its_parents_are_still_those_that_were
 
     result = top.result()
 
+    assert result["signalled"] == ended_by_kill
     assert wait_until(
         lambda: ended(result["grandchild"]) == ended_by_kill, GONE_WITHIN_SECONDS
     )
