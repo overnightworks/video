@@ -1,5 +1,5 @@
 claim_id = "9856b1a2b5c1461f87894b7744f108fe"
-agent = "Claude 8d6968f0-90db-42e6-8c2e-47e423be7ebd"
+agent = "Claude 76251661-cb30-4447-a3ad-32a83a396daa"
 role = "builder"
 base = "c109cd24b8b79269e39c49539495b4205c03c703"
 branch = "claude/issue-46-p3d2b3a-subreaper-kill"
