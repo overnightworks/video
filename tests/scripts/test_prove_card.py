@@ -314,6 +314,18 @@ def _stereo_audio(run: Run) -> None:
     write_audio(run.audio, seconds=2, channels=2)
 
 
+def _text_audio(run: Run) -> None:
+    run.audio.write_text("this is no sound")
+
+
+def _empty_audio(run: Run) -> None:
+    run.audio.write_bytes(b"")
+
+
+def _audio_cut_inside_its_header(run: Run) -> None:
+    run.audio.write_bytes(run.audio.read_bytes()[:20])
+
+
 def _missing_audio(run: Run) -> None:
     run.audio.unlink()
 
@@ -336,6 +348,9 @@ def _record_in_a_read_only_directory(run: Run) -> None:
     [
         (_short_audio, "audio"),
         (_stereo_audio, "audio"),
+        (_text_audio, "audio"),
+        (_empty_audio, "audio"),
+        (_audio_cut_inside_its_header, "audio"),
         (_missing_audio, "audio"),
         (_unreadable_audio, "audio"),
         (_record_in_a_missing_directory, "--record"),
@@ -352,6 +367,7 @@ def test_a_bad_input_ends_the_command_with_one_line_before_any_group_starts(
     assert status != 0
     assert len(error.strip().splitlines()) == 1
     assert named in error
+    assert "()" not in error
     assert not run.probe_run_log.exists()
     assert run.processes() == []
 

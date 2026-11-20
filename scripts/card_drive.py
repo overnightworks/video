@@ -134,7 +134,9 @@ def read_audio(path: Path) -> Audio:
             )
             pcm = source.readframes(source.getnframes())
     except (OSError, EOFError, wave.Error) as error:
-        message = f"{path}: the audio cannot be read ({error})"
+        # An empty file or one cut inside its header raises an `EOFError` with no text.
+        reason = str(error) or "the file ends inside its header"
+        message = f"{path}: the audio cannot be read ({reason})"
         raise SystemExit(message) from None
     try:
         PcmFormat(type="audio/pcm", rate=shape[2])
