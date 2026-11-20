@@ -1,0 +1,8 @@
+claim_id = "9856b1a2b5c1461f87894b7744f108fe"
+agent = "Claude 8d6968f0-90db-42e6-8c2e-47e423be7ebd"
+role = "builder"
+base = "c109cd24b8b79269e39c49539495b4205c03c703"
+branch = "claude/issue-46-p3d2b3a-subreaper-kill"
+scope = ["README.md", "scripts/card_drive.py", "scripts/card_record.py", "scripts/prove_card.py", "tests/scripts/test_card_drive.py", "tests/scripts/test_prove_card.py"]
+opened_commit = "03d55db90fc010a1eff347b065bbd2f2842e3048"
+whole_reason = "The top's subreaper and its end-of-group kill, the record's counts and reasons for it, their tests and README's proofs are one boundary with its first caller."
