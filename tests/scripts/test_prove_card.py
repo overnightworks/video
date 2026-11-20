@@ -254,10 +254,30 @@ def test_five_viewers_each_have_their_figures_and_the_encoders_share_is_recorded
     assert dry_run[1]["cells"]["viewer"]["service_cpu_cores"]["one_viewer"]["value"] > 0
 
 
-def test_a_clear_with_a_viewer_records_the_time_to_the_last_loud_frame(
+def test_a_clear_after_the_viewers_first_loud_frame_records_the_time_to_the_last_one(
     dry_run: tuple[Run, dict],
 ) -> None:
-    assert dry_run[1]["cells"]["clear"]["clear_to_last_loud_frame_ms"]["value"] > 0
+    figure = dry_run[1]["cells"]["clear"]["clear_to_last_loud_frame_ms"]
+
+    assert figure["value"] >= 0
+    assert figure["reason"] == Reason.NO_CARD
+
+
+def test_a_clear_when_no_loud_frame_reached_the_viewer_is_not_measured(
+    run: Run,
+) -> None:
+    write_audio(run.audio, seconds=AUDIO_SECONDS, amplitude=0)
+
+    status, error = run.finish(run.start("--dry-run", "--cells", "clear"))
+    cell = json.loads(run.record.read_text())["cells"]["clear"]
+
+    assert status == 0, error
+    assert cell["clear_to_last_loud_frame_ms"]["verdict"] == "not_measured"
+    assert (
+        cell["clear_to_last_loud_frame_ms"]["reason"]
+        == Reason.NO_LOUD_AUDIO_BEFORE_CLEAR
+    )
+    assert cell["clear_to_confirmation_ms"]["value"] >= 0
 
 
 def test_the_recording_is_playable_and_its_sheets_are_images_named_in_the_record(

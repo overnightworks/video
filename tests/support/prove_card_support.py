@@ -101,9 +101,11 @@ NO_ROOM_FOR_THE_CAP: Final = f"{USED_MB}, {CAP_MB - 1}, 24576"
 BELOW_THE_FLOOR: Final = f"{USED_MB}, {FLOOR_MB - 1}, 24576"
 
 
-def write_audio(path: Path, *, seconds: float, channels: int = 1) -> None:
-    """A WAV of a square wave, which a viewer hears as loud."""
-    square = struct.pack("<8h", *([9000] * 4 + [-9000] * 4)) * channels
+def write_audio(
+    path: Path, *, seconds: float, channels: int = 1, amplitude: int = 9000
+) -> None:
+    """A WAV of a square wave, which a viewer hears as loud; amplitude 0 is quiet."""
+    square = struct.pack("<8h", *([amplitude] * 4 + [-amplitude] * 4)) * channels
     with wave.open(str(path), "wb") as sound:
         sound.setnchannels(channels)
         sound.setsampwidth(2)

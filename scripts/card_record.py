@@ -40,6 +40,9 @@ class Reason(StrEnum):
     WATCHDOG_BREACH = "watchdog_breach"
     SAMPLE_FAILED = "sample_failed"
     NO_CARD = "no_card"
+    NO_LOUD_AUDIO_BEFORE_CLEAR = "no_loud_audio_before_clear"
+    PROVIDER_NOT_LOADED = "provider_not_loaded"
+    LOOK_NOT_PREPARED = "look_not_prepared"
 
 
 class StopReason(StrEnum):

@@ -107,6 +107,9 @@ DEFAULT_LAG_MS: Final = 500
 PROBE_RUN: Final = "probe-run"
 KILL_GRACE_SECONDS: Final = 30
 CAP_SECONDS: Final = 1800
+# A clear with nothing queued gets no confirmation, so the wait for the viewer's first
+# loud frame ends well inside the sentence's playing time.
+CLEAR_WAIT_SHARE: Final = 0.5
 _SENTENCE_COLUMNS: Final = ("audio_ms", "frame_count", "late_frame_count", "outcome")
 
 
@@ -195,13 +198,21 @@ async def _sentences(drive: Drive) -> object:
 
 
 async def _clear(drive: Drive) -> object:
-    """A clear inside a sentence, watched by a viewer: confirmation and silence."""
+    """A clear inside a sentence, watched by a viewer: confirmation and silence.
+
+    The clear waits for the viewer's first loud audio frame, since the viewer's audio
+    arrives after the sentence has started, for at most `CLEAR_WAIT_SHARE` of the
+    audio's length.
+    """
     async with (
         drive.session(LOOK_NAMES[0]) as session,
         attached(drive.service, drive.identity, session.created) as viewer,
     ):
         trace_id = await session.speak("cleared", drive.audio)
         await session.until(OutputAudioBufferStarted)
+        await viewer.heard_loud_audio(
+            within_seconds=drive.audio.milliseconds * CLEAR_WAIT_SHARE / 1000
+        )
         started = time.monotonic()
         await session.clear()
         cleared = await session.until(OutputAudioBufferCleared)
