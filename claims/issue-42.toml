@@ -1,0 +1,8 @@
+claim_id = "d898d63229c5413ca9a0fb1a1aae9907"
+agent = "Claude 8d6968f0-90db-42e6-8c2e-47e423be7ebd"
+role = "builder"
+base = "a8b0a6155888ce9854d74202c2c3a1571517e3ba"
+branch = "claude/issue-42-p3d2b1-bounded-teardown"
+scope = ["README.md", "scripts/card_drive.py", "scripts/prove_card.py", "tests/scripts/test_prove_card.py", "tests/test_provider_process.py"]
+opened_commit = "e464c25d8b1d371a1e5aa73bd72d1d1890c6dd15"
+whole_reason = "The proof's bounded, worker-first teardown, its service's parent-death signal and the test that a killed service ends its loading worker are one guarantee, that no worker outlives the proof, proven together."
