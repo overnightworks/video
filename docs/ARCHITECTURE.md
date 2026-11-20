@@ -91,7 +91,8 @@ flowchart LR
   staging directory beside `weights`, hashed there and renamed in only when its
   digest equals its pin, so `weights` never holds a partial or unchecked file, and the
   hub's caches and metadata stay out of it. A pin is a configuration, a safetensors
-  file or a licence notice, never code or a pickle, so upstream's `torch.load` path is
+  file or a licence notice, never code or a pickle, and the fetch refuses a directory that holds
+  an `autoencoder.pth` beside a pinned file, so upstream's `torch.load` path is
   never reached from a directory the fetch filled; the provider's CI job fails when
   the provider's source or upstream's `flash_head` tree turns `trust_remote_code` on
   or names a `custom_pipeline`. The calls that need a card live in one

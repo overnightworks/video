@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import shutil
 import tempfile
 from pathlib import Path
@@ -20,6 +21,8 @@ if TYPE_CHECKING:
     from video_provider_flashhead_lite.upstream import PinnedFile, Weights
 
 _CHUNK_BYTES = 1 << 20
+# Upstream's VAE loader prefers this file over the safetensors one and unpickles it.
+_PICKLED_CHECKPOINT = "autoencoder.pth"
 
 
 class FetchError(Exception):
@@ -34,15 +37,19 @@ def fetch_weights(
     """Place every pinned file under `weights.root`, each only at its pinned digest.
 
     A file there with its digest is kept; one with another digest, or a link, is
-    removed before its download. Each download is a real file in `weights.staging`,
+    removed before its download. A directory that holds a pickled VAE checkpoint
+    next to a pinned file is refused before any download. Each download is a real file in `weights.staging`,
     which sits beside `weights.root`, and is renamed into place once its digest
     matches, so the weights directory never holds a partial file. The hub's own
     metadata stays in staging, which is cleared first and removed at the end.
     `download` is the Hugging Face file downloader.
 
     Raises:
-        FetchError: a file could not be downloaded or is not the pinned bytes.
+        FetchError: a file could not be downloaded or is not the pinned bytes, or a
+            pinned file's directory holds a pickled VAE checkpoint.
     """
+    pins = tuple(pins)
+    _refuse_pickled_checkpoints(pins, weights)
     if weights.staging.exists():
         shutil.rmtree(weights.staging)
     weights.staging.mkdir(parents=True)
@@ -59,6 +66,17 @@ def main(download: Callable[..., str] = hf_hub_download) -> None:
         fetch_weights(locate_weights(), PINNED_FILES, download)
     except FetchError as error:
         raise SystemExit(str(error)) from error
+
+
+def _refuse_pickled_checkpoints(pins: Iterable[PinnedFile], weights: Weights) -> None:
+    for directory in {(weights.root / pin.destination).parent for pin in pins}:
+        pickled = directory / _PICKLED_CHECKPOINT
+        if os.path.lexists(pickled):
+            message = (
+                f"{pickled}: upstream would load this pickle instead of the "
+                "pinned safetensors; remove it and run the fetch again"
+            )
+            raise FetchError(message)
 
 
 def _place(pin: PinnedFile, weights: Weights, download: Callable[..., str]) -> None:

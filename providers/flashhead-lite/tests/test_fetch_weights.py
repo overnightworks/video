@@ -265,6 +265,25 @@ def test_staging_left_by_an_interrupted_run_is_cleared_at_the_next_start(
     assert not leftover.exists()
 
 
+@pytest.mark.parametrize("as_a_link", [False, True], ids=["file", "link"])
+def test_a_pickled_vae_checkpoint_beside_a_pinned_file_is_refused_before_any_download(
+    hub: Hub, weights: Weights, tmp_path: Path, as_a_link: bool
+) -> None:
+    pin = hub.pin(b"model", "checkpoint/model.safetensors")
+    pickled = weights.root / pin.destination.parent / "autoencoder.pth"
+    pickled.parent.mkdir(parents=True)
+    if as_a_link:
+        pickled.symlink_to(tmp_path / "missing")
+    else:
+        pickled.write_bytes(b"pickle")
+
+    with pytest.raises(FetchError, match=pickled.name):
+        fetch_weights.fetch_weights(weights, (pin,), hub)
+
+    assert not (weights.root / pin.destination).exists()
+    assert not weights.staging.exists()
+
+
 def test_the_command_ends_non_zero_naming_the_file_the_download_did_not_deliver(
     hub: Hub, weights: Weights, monkeypatch: pytest.MonkeyPatch
 ) -> None:
