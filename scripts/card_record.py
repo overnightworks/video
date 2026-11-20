@@ -50,6 +50,13 @@ class Reason(StrEnum):
     LOOK_NOT_PREPARED = "look_not_prepared"
 
 
+class CompilerHome(StrEnum):
+    """What the compilers' home held just before a group's service started."""
+
+    EMPTY = "empty"
+    FILLED = "filled"
+
+
 class StopReason(StrEnum):
     """Why the top ended a group for memory; a code set apart from `Reason`."""
 
@@ -115,6 +122,7 @@ MEMORY_FIGURES: Final = tuple(MemoryFigure)
 MEMORY_STOP: Final = "memory_stop"
 # What a service's entry in the record names, in its order.
 SERVICE_FIGURES: Final = (
+    "compiler_home_at_start",
     "start_to_ready_ms",
     "provider_load",
     "look_preparations",

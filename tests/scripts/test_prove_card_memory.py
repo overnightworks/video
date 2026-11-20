@@ -10,7 +10,8 @@ from __future__ import annotations
 import json
 import os
 import signal
-from typing import TYPE_CHECKING, Final
+from pathlib import Path
+from typing import Final
 
 import pytest
 
@@ -21,6 +22,7 @@ from card_record import (
     FREE_MEMORY_LINE,
     MEMORY_FIGURES,
     MEMORY_STOP,
+    CompilerHome,
     MemoryFigure,
     Reason,
     StopReason,
@@ -40,9 +42,6 @@ from support.prove_card_support import (
     is_not_measured,
     lines,
 )
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 FLOOR_ARGUMENT: Final = 3000
 FIRST_SAMPLE_SECONDS: Final = 1
@@ -85,6 +84,25 @@ def test_a_card_run_with_room_records_the_cards_memory_and_judges_its_lines(
     assert entry["processes_alive_after_kill"] == value_of(0)
     assert MEMORY_STOP not in entry
     assert run.processes() == []
+
+
+def test_a_card_run_starts_its_services_on_one_compiler_home_that_is_gone_after_it(
+    run: Run,
+) -> None:
+    run.in_card_mode()
+
+    status, error = run.finish(run.start("--cells", "clear", "lag"))
+    services = _record(run)["services"]
+    homes = {saw["HOME"] for saw in run.workers_saw()}
+    (home,) = homes
+
+    assert status == 0, error
+    assert services["wire"]["compiler_home_at_start"] == value_of(CompilerHome.EMPTY)
+    assert services["lag"]["compiler_home_at_start"] == value_of(CompilerHome.FILLED)
+    assert all(saw["HOME"] == saw["TMPDIR"] for saw in run.workers_saw())
+    assert len(run.workers_saw()) == len(services)
+    assert run.scratch in Path(home).parents
+    assert not Path(home).exists()
 
 
 @pytest.mark.parametrize(
@@ -156,6 +174,7 @@ def test_a_group_the_card_has_no_room_for_is_refused_and_nothing_of_it_starts(
     assert not run.probe_run_log.exists()
     assert _cells_are(record, Reason.MEMORY_REFUSED)
     assert is_not_measured(entry["start_to_ready_ms"], Reason.MEMORY_REFUSED)
+    assert is_not_measured(entry["compiler_home_at_start"], Reason.MEMORY_REFUSED)
     assert is_not_measured(
         record["services"]["lag"]["card_free_least_mb"], Reason.MEMORY_REFUSED
     )
@@ -429,6 +448,11 @@ def test_a_provider_that_fails_to_load_ends_its_group_before_its_first_cell(
     assert entry["provider_load"]["outcome"] == value_of("failed")
     assert entry["provider_load"]["reason"] == value_of("provider_failed")
     assert _unmeasured_for(entry, Reason.PROVIDER_NOT_LOADED)
+    assert entry["compiler_home_at_start"] == value_of(CompilerHome.EMPTY)
+    assert is_not_measured(
+        record["services"]["lag"]["compiler_home_at_start"],
+        Reason.EARLIER_GROUP_FAILED,
+    )
     assert entry["look_preparations"] == []
     assert len(run.probe_run_log.read_text().splitlines()) == 1
     assert [log.name for log in run.logs()] == ["record.wire.log"]

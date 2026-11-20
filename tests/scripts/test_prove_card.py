@@ -22,6 +22,7 @@ from card_record import (
     KILL_FIGURES,
     MEMORY_FIGURES,
     SERVICE_FIGURES,
+    CompilerHome,
     Reason,
     completed_service,
     step_figures,
@@ -109,6 +110,14 @@ def test_a_lag_far_too_small_is_recorded_as_unavailable(
     dry_run: tuple[Run, dict],
 ) -> None:
     assert dry_run[1]["cells"]["lag"]["ended_unavailable"]["value"] is True
+
+
+def test_the_first_service_of_a_run_starts_on_an_empty_compiler_home(
+    dry_run: tuple[Run, dict],
+) -> None:
+    first = dry_run[1]["services"]["wire"]
+
+    assert first["compiler_home_at_start"] == value_of(CompilerHome.EMPTY)
 
 
 def test_every_service_of_the_run_stops_and_none_is_left(
@@ -397,7 +406,7 @@ def test_a_service_that_stops_in_time_takes_its_worker_with_it(tmp_path: Path) -
     with (
         card_identity.throwaway_identity(tmp_path) as identity,
         card_drive.running_service(
-            identity, tmp_path / "service.log", max_lag_ms=500
+            identity, tmp_path / "service.log", max_lag_ms=500, compiler_home=tmp_path
         ) as service,
     ):
         service_pid = service.process.pid
@@ -413,7 +422,10 @@ def _stop_a_service_that_cannot_stop(directory: Path, pids: list[int]) -> None:
     with (
         card_identity.throwaway_identity(directory) as identity,
         card_drive.running_service(
-            identity, directory / "service.log", max_lag_ms=500
+            identity,
+            directory / "service.log",
+            max_lag_ms=500,
+            compiler_home=directory,
         ) as service,
     ):
         pids.append(service.process.pid)
@@ -494,7 +506,7 @@ def test_a_group_process_killed_before_its_fragment_measures_what_the_top_ends(
     status, _ = run.finish(command)
     record = json.loads(run.record.read_text())
     service = record["services"]["wire"]
-    measured_by_the_top = {*KILL_FIGURES, *MEMORY_FIGURES}
+    measured_by_the_top = {*KILL_FIGURES, *MEMORY_FIGURES, "compiler_home_at_start"}
 
     assert serving
     assert status != 0
@@ -505,6 +517,7 @@ def test_a_group_process_killed_before_its_fragment_measures_what_the_top_ends(
         for name, figure in service.items()
         if name not in measured_by_the_top
     )
+    assert service["compiler_home_at_start"] == value_of(CompilerHome.EMPTY)
     assert service["processes_left_after_stop"]["value"] >= 0
     assert service["processes_alive_after_kill"] == value_of(0)
     assert [log.name for log in run.logs()] == ["record.wire.log"]
@@ -632,7 +645,7 @@ def test_a_failed_cells_reasons_are_in_the_fragment_before_the_service_stops(
 
     with pytest.raises(card_drive.DriveError):
         prove_card._run_group(  # noqa: SLF001
-            "wire", arguments, tmp_path, service_whose_stop_fails
+            "wire", arguments, tmp_path, tmp_path, service_whose_stop_fails
         )
 
     assert held_at_the_stop["cells"]["sentences"] == {"done": True}

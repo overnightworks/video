@@ -60,8 +60,10 @@ esac
 # The `flashhead-lite` worker of a provider root: the fake provider with the steps a
 # case scripts through the environment, each writing a reading for the stand-in. It
 # fails its load for the group whose lag the case names, and fails the preparation of
-# the looks the case lists.
+# the looks the case lists. At its start it writes the `HOME` and `TMPDIR` it sees to
+# the file the case names and puts one entry into its `HOME`, as a compiler would.
 WORKER_STAND_IN: Final = f"""#!{sys.executable}
+import json
 import os
 import time
 from pathlib import Path
@@ -79,8 +81,16 @@ def write_reading(name):
         temporary.replace(reading)
 
 
+def compile_into_home():
+    seen = dict(HOME=os.environ["HOME"], TMPDIR=os.environ["TMPDIR"])
+    with Path(os.environ["WORKER_SAW_FILE"]).open("a") as file:
+        file.write(json.dumps(seen) + "\\n")
+    Path(os.environ["HOME"], "compiled").write_text("")
+
+
 class Scripted(FakeProvider):
     def start(self):
+        compile_into_home()
         write_reading("WORKER_READING_AT_LOAD")
         time.sleep(float(os.environ.get("WORKER_LOAD_SECONDS", 0)))
         failing_lag = os.environ.get("WORKER_FAILS_TO_START_AT_LAG")
@@ -199,6 +209,7 @@ class Run:
             stand_in.chmod(0o755)
         self.reading = directory / "nvidia-smi.reading"
         self.write_reading(ROOMY)
+        self.workers_saw_file = directory / "workers-saw.jsonl"
         self.nvidia_smi_log = directory / "nvidia-smi.log"
         self.nvidia_smi_answers = directory / "nvidia-smi.answers"
         self.provider_root = directory / "providers"
@@ -217,6 +228,7 @@ class Run:
             "NVIDIA_SMI_READING": str(self.reading),
             "NVIDIA_SMI_LOG": str(self.nvidia_smi_log),
             "NVIDIA_SMI_ANSWERS": str(self.nvidia_smi_answers),
+            "WORKER_SAW_FILE": str(self.workers_saw_file),
         }
 
     def breach_while_loading(self) -> None:
@@ -245,6 +257,12 @@ class Run:
         temporary = self.reading.with_suffix(".tmp")
         temporary.write_text(reading)
         temporary.replace(self.reading)
+
+    def workers_saw(self) -> list[dict[str, str]]:
+        """The `HOME` and `TMPDIR` each worker stand-in saw at its start, in order."""
+        return [
+            json.loads(line) for line in self.workers_saw_file.read_text().splitlines()
+        ]
 
     def answers_given(self, reading: str) -> int:
         """How many times the `nvidia-smi` stand-in answered with `reading`."""

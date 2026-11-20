@@ -57,6 +57,7 @@ from card_record import (
     FREE_MEMORY_LINE,
     KILL_FIGURES,
     MEMORY_FIGURES,
+    CompilerHome,
     Reason,
     closed_record,
     completed_cells,
@@ -253,6 +254,7 @@ def _run_group(
     group: str,
     arguments: argparse.Namespace,
     scratch: Path,
+    compiler_home: Path,
     start_service: Callable[..., AbstractContextManager[Service]] = running_service,
 ) -> GroupOutcome:
     """Drive the cells of `group` through one service, keeping its fragment current.
@@ -271,7 +273,11 @@ def _run_group(
     with (
         throwaway_identity(scratch) as identity,
         start_service(
-            identity, log, max_lag_ms=LAGS[group], provider=_provider_of(arguments)
+            identity,
+            log,
+            max_lag_ms=LAGS[group],
+            compiler_home=compiler_home,
+            provider=_provider_of(arguments),
         ) as service,
     ):
         drive = Drive(
@@ -304,6 +310,17 @@ def _run_group(
     return outcome
 
 
+def _compiler_home(run_directory: Path) -> Path:
+    """The run's one compiler home, in the temporary directory every group shares."""
+    return run_directory / "compiler-home"
+
+
+def _compiler_home_at_start(run_directory: Path) -> CompilerHome:
+    """Whether the compiler home holds an entry an earlier service wrote."""
+    held = any(_compiler_home(run_directory).iterdir())
+    return CompilerHome.FILLED if held else CompilerHome.EMPTY
+
+
 def _child(group: str, arguments: argparse.Namespace) -> int:
     """Run one group where `probe-run` started it; non-zero when a cell failed."""
     for stopping in STOP_SIGNALS:
@@ -313,7 +330,9 @@ def _child(group: str, arguments: argparse.Namespace) -> int:
     # also when it kills this process.
     identity_directory = arguments.fragment.with_suffix(".identity")
     identity_directory.mkdir()
-    outcome = _run_group(group, arguments, identity_directory)
+    outcome = _run_group(
+        group, arguments, identity_directory, _compiler_home(arguments.fragment.parent)
+    )
     return 0 if outcome is GroupOutcome.DONE else 1
 
 
@@ -464,6 +483,7 @@ def _gather(
             if limits is None
             else GroupWatch(read_card_memory, limits.cap_mb, limits.floor_mb)
         )
+        compiler_home_at_start = _compiler_home_at_start(scratch)
         status, kill = _run_group_process(group, arguments, fragment, control, watch)
         parts = _read_fragment(fragment)
         reason = Reason.NO_FRAGMENT
@@ -472,6 +492,8 @@ def _gather(
             if watch is None
             else watch.entry()
         )
+        if status is not None:
+            top_figures["compiler_home_at_start"] = value_of(compiler_home_at_start)
         top_figures |= peaks_of_a_failed_group(parts.get("cells", {}), top_figures)
         if watch is not None and watch.stop is not None:
             reason = gathered.later = watch.stop.cell_reason
@@ -531,6 +553,7 @@ def main(argv: Sequence[str] | None = None, control: ProcessControl = KERNEL) ->
         signal.signal(stopping, _interrupted)
     gathered = _Gathered()
     with tempfile.TemporaryDirectory(prefix="prove-card-record-") as scratch:
+        _compiler_home(Path(scratch)).mkdir()
         for group, members in GROUPS.items():
             if set(members) & set(arguments.cells):
                 _gather(group, arguments, Path(scratch), gathered, control)

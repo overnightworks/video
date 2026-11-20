@@ -25,7 +25,10 @@ def test_a_provider_that_cannot_answer_ends_the_session_as_unavailable_at_any_la
         with (
             card_identity.throwaway_identity(tmp_path) as identity,
             card_drive.running_service(
-                identity, tmp_path / "service.log", max_lag_ms=card_cells.DEFAULT_LAG_MS
+                identity,
+                tmp_path / "service.log",
+                max_lag_ms=card_cells.DEFAULT_LAG_MS,
+                compiler_home=tmp_path,
             ) as service,
         ):
             drive = card_cells.Drive(
