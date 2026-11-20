@@ -198,7 +198,7 @@ class _Schedule:
 
 
 class Session:
-    """The state machine of one accepted session; `run` serves it to its end."""
+    """The state machine of one session; `run` accepts its upgrade and serves it."""
 
     def __init__(  # noqa: PLR0913 - the parts the route hands each session
         self,
@@ -244,12 +244,14 @@ class Session:
         return self._media
 
     async def run(self) -> None:
-        """Serve the session from its accepted upgrade to its close; write its line.
+        """Accept the upgrade, serve the session to its close, and write its line.
 
         The client's `session.update` names the trace the rest of the session,
-        its line included, is written in.
+        its line included, is written in. An upgrade the client left before it was
+        accepted still closes the provider session and gives the place back.
         """
         try:
+            await self._socket.accept()
             with (
                 contextlib.ExitStack() as trace,
                 StepTimer(
@@ -257,8 +259,13 @@ class Session:
                 ) as step,
             ):
                 end = await self._serve(trace)
+                if end.close_code is None:
+                    # The client has left, so the session has ended: it counts open
+                    # no more while its viewers wind down.
+                    self._place.end()
                 await self._media.close()
                 await self._finish(step, end)
+            self._place.end()
         finally:
             await self._media.close()
             closing = self._place.worker.submit(self._place.session.close)

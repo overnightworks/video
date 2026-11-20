@@ -35,7 +35,8 @@ flowchart LR
 - `src/video_service`: the one process. `__main__.py` binds the listener, serves
   health at once, loads on a daemon thread and drains on a stop; `app.py` holds the
   routes and `refusals.py` the HTTP form of a refusal; `session_route.py` refuses
-  or accepts a session upgrade and `session.py` is one session's state machine;
+  a session upgrade or hands its place to `session.py`, which accepts it and is
+  one session's state machine;
   `viewer_route.py` refuses or admits a viewer and ends one, and `media.py` holds a
   session's viewers: one aiortc peer with an Opus and a VP8 track each;
   `callers.py` proves the two tokens; `runtime.py` holds the provider, the looks,
@@ -182,9 +183,11 @@ ends. The service keeps no image; what a provider prepares stays inside it.
 ## Sessions
 
 `runtime.open_session` gives a place, or the refusal in the wire's order, and the
-route accepts the upgrade on it. `session.py` then runs four tasks and ends with
-the first that ends: the receive loop (events and audio in, queue and clear), the
-producer, the pacer and the drain watcher. The frame clock is one grid of frame
+route refuses the upgrade or hands the place to `session.py`, which accepts the
+upgrade inside the cleanup that gives the place back, so an upgrade whose client
+left before it was accepted still returns its place. It then runs four tasks and
+ends with the first that ends: the receive loop (events and audio in, queue and
+clear), the producer, the pacer and the drain watcher. The frame clock is one grid of frame
 periods: a sentence's audio sets it while it plays and the face at rest runs on it
 while no sentence has audio, so the stream never stops. A frame is due one frame
 period after the one before, input the client sent after the last frame had left
@@ -212,8 +215,12 @@ The opening of a provider session and every call into it run on a daemon thread 
 the session's own, so the provider is never entered twice and a call that never
 returns holds back neither the session's end nor the process's exit: a call not back
 within `VIDEO_MAX_LAG_MS` ends the session `unavailable`, and the session gives up its
-place once the close of the provider session has taken that long. A session cut at
-the process's exit queues the close and gives up its place without waiting for it.
+place once the close of the provider session has taken that long. A session counts
+open until it has ended, but its place is given back only after that close, so an
+upgrade that finds every place held and one of them by an ended session waits for the
+give-back, with no deadline of its own, and is refused `busy` only when every place is
+held by a live session. A session cut at the process's exit queues the close and
+gives up its place without waiting for it.
 The producer is cancelled and gathered before the close is queued. A sentence's
 `started`, `stopped` and `cleared` are sent under one lock that also decides whether
 the sentence was dropped, so no event follows its `cleared`.

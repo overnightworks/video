@@ -15,6 +15,8 @@ from video_service.runtime import Place, ProviderThread, SessionLimits
 from video_service.session import Session
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from starlette.websockets import WebSocket
     from video_provider_contract import Provider
 
@@ -32,17 +34,19 @@ def scripted(
     return ScriptedSocket([update_event(), *script], sentences)
 
 
-def play(
+def play(  # noqa: PLR0913 - the provider, the clock and the hooks a scenario varies
     socket: ScriptedSocket,
     *,
     provider: Provider,
     pacing: Pacing,
     max_lag_ms: int,
     worker: ProviderThread | None = None,
+    end: Callable[[], None] = lambda: None,
 ) -> list[ServerEvent]:
     """The events a session sends over `socket` once it has run to its end.
 
-    The provider is called on `worker`, a thread of its own unless a test hands one.
+    The provider is called on `worker`, a thread of its own unless a test hands one;
+    `end` is called when the session has ended.
     """
     place = Place(
         session=provider.open_session("mozart"),
@@ -54,6 +58,7 @@ def play(
         pacing=pacing,
         peers=RTCPeerConnection,
         draining=asyncio.Event(),
+        end=end,
         release=lambda: None,
     )
 

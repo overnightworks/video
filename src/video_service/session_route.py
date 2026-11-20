@@ -46,7 +46,6 @@ class _SessionRoute:
             param = LOOK_PARAM if placed is RefusalCode.INVALID_REQUEST else None
             await websocket.send_denial_response(refusal_response(placed, param))
             return
-        await websocket.accept()
         await self._run(websocket, look, placed, opener)
 
     async def _run(
