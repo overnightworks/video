@@ -162,12 +162,27 @@ the service's start, so it is there however the group ends (cells done, a failed
 interrupt, a kill), and the command prints its path. A kill of the command itself is not
 trapped: `probe-run`'s parent-death signal stops the group's process, which stops its
 service, and the cap ends what stays. It writes no record and leaves the throwaway
-identity's keys in its `prove-card-record-*` directory under `TMPDIR`; any other end of the
-command removes them. A service that dies by a signal ends its worker, which reads its
-closed input on a thread of its own, also while the provider loads. That does not cover the
-time before the worker's `run_worker` runs (FlashHead lite imports torch first), a load step
+identity's keys and the compiler home (below) in its `prove-card-record-*` directory under
+`TMPDIR`; any other end of the command removes them. A service that dies by a signal ends
+its worker, which reads its closed input on a thread of its own, also while the provider
+loads. That does not cover the time before the worker's `run_worker` runs (FlashHead lite imports torch first), a load step
 that holds the interpreter lock, a worker not built on `run_worker`, nor the compiler's
 helper processes, which no input thread ends.
+
+The command creates one empty compiler home in its run's temporary directory before the
+first group, and every group's service runs with it as both `HOME` and `TMPDIR`, as the
+image sets both to one directory; the provider's worker inherits them, so the compilers'
+caches (inductor, Triton, CUDA's compute cache) and the worker's reads from `HOME` start
+from it, not from the operator's. A service entry holds `compiler_home_at_start`: `empty`
+when the compiler home held no entry just before the group's `probe-run` started,
+`filled` otherwise, in both modes; a group whose `probe-run` did not start has it
+`not_measured` with the reason its other figures carry. The cold figures are the start,
+the load and each look's preparation of an entry marked `empty`, the warm ones those of
+an entry marked `filled`; `start_to_ready_ms` keeps its line in both. The first
+service of a run finds the home empty, a later one finds what an earlier wrote, and a cold figure is a cold compile with the weights
+possibly in the host's page cache. A compiler cache variable in the operator's
+environment (`TORCHINDUCTOR_CACHE_DIR`, `TRITON_CACHE_DIR`, `CUDA_CACHE_PATH`) sends that
+cache elsewhere, where the label does not look.
 
 The record is written however a group ends, from the fragment each group's process
 rewrites after every cell and once more when the group ends (whole or absent, never half

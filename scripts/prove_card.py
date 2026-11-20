@@ -27,7 +27,7 @@ import traceback
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Final, NamedTuple
 
 from pydantic import ValidationError
 
@@ -57,6 +57,7 @@ from card_record import (
     FREE_MEMORY_LINE,
     KILL_FIGURES,
     MEMORY_FIGURES,
+    CompilerHome,
     Reason,
     closed_record,
     completed_cells,
@@ -253,6 +254,7 @@ def _run_group(
     group: str,
     arguments: argparse.Namespace,
     scratch: Path,
+    compiler_home: Path,
     start_service: Callable[..., AbstractContextManager[Service]] = running_service,
 ) -> GroupOutcome:
     """Drive the cells of `group` through one service, keeping its fragment current.
@@ -271,7 +273,11 @@ def _run_group(
     with (
         throwaway_identity(scratch) as identity,
         start_service(
-            identity, log, max_lag_ms=LAGS[group], provider=_provider_of(arguments)
+            identity,
+            log,
+            max_lag_ms=LAGS[group],
+            compiler_home=compiler_home,
+            provider=_provider_of(arguments),
         ) as service,
     ):
         drive = Drive(
@@ -304,6 +310,17 @@ def _run_group(
     return outcome
 
 
+def _compiler_home(run_directory: Path) -> Path:
+    """The run's one compiler home, in the temporary directory every group shares."""
+    return run_directory / "compiler-home"
+
+
+def _compiler_home_at_start(run_directory: Path) -> CompilerHome:
+    """Whether the compiler home holds an entry an earlier service wrote."""
+    held = any(_compiler_home(run_directory).iterdir())
+    return CompilerHome.FILLED if held else CompilerHome.EMPTY
+
+
 def _child(group: str, arguments: argparse.Namespace) -> int:
     """Run one group where `probe-run` started it; non-zero when a cell failed."""
     for stopping in STOP_SIGNALS:
@@ -313,8 +330,17 @@ def _child(group: str, arguments: argparse.Namespace) -> int:
     # also when it kills this process.
     identity_directory = arguments.fragment.with_suffix(".identity")
     identity_directory.mkdir()
-    outcome = _run_group(group, arguments, identity_directory)
+    outcome = _run_group(
+        group, arguments, identity_directory, _compiler_home(arguments.fragment.parent)
+    )
     return 0 if outcome is GroupOutcome.DONE else 1
+
+
+class _Probed(NamedTuple):
+    """Whether `probe-run` started for a group, and the status it left."""
+
+    started: bool
+    status: int | None
 
 
 def _under_probe_run(
@@ -322,12 +348,13 @@ def _under_probe_run(
     arguments: argparse.Namespace,
     fragment: Path,
     supervision: Supervision,
-) -> int | None:
-    """Run `group` as its own process under `probe-run`; its exit status.
+) -> _Probed:
+    """Run `group` as its own process under `probe-run`; whether it started, its status.
 
     A card-mode group the card has no room for is refused before `probe-run` starts, and
     so is a group after a stop that arrived before it: nothing would forward that stop,
-    and the group would run through. Neither has a status.
+    and the group would run through. Neither has started. A started group has no status
+    when it was ended for its memory and `probe-run` outlived the kill.
     """
     for tool in (PROBE_RUN, "setpriv"):
         if shutil.which(tool) is None:
@@ -337,9 +364,9 @@ def _under_probe_run(
     if watch is not None and watch.refuse_first(
         ending(supervision.stops, supervision.control, None)
     ):
-        return None
+        return _Probed(started=False, status=None)
     if supervision.stops.recorded:
-        return None
+        return _Probed(started=False, status=None)
     command = [
         PROBE_RUN,
         "-k",
@@ -358,7 +385,9 @@ def _under_probe_run(
         *(["--dry-run"] if arguments.dry_run else []),
     ]
     try:
-        return run_child(command, group, fragment, supervision)
+        return _Probed(
+            started=True, status=run_child(command, group, fragment, supervision)
+        )
     finally:
         if (log := _group_log(arguments.record, group)).exists():
             print(f"beside it: {log}")
@@ -370,8 +399,8 @@ def _run_group_process(
     fragment: Path,
     control: ProcessControl,
     watch: GroupWatch | None,
-) -> tuple[int | None, Kill]:
-    """Run `group`, then end whatever is left below the top: its status and the kill.
+) -> tuple[_Probed, Kill]:
+    """Run `group`, then end what is left below the top: its `probe-run` and the kill.
 
     A stop that arrives while the group runs or the kill runs ends the command as an
     interrupt does once the kill has ended; otherwise the handlers the top had come
@@ -382,7 +411,7 @@ def _run_group_process(
     stops = Stops()
     for stopping in STOP_SIGNALS:
         signal.signal(stopping, stops.record)
-    status = _under_probe_run(
+    probed = _under_probe_run(
         group, arguments, fragment, Supervision(stops, control, watch)
     )
     if watch is None:
@@ -395,7 +424,7 @@ def _run_group_process(
         signal.signal(stopping, signal.SIG_IGN if stops.ending else handler)
     if (interrupt := stops.to_act_on) is not None:
         _interrupted(interrupt, None)
-    return status, kill
+    return probed, kill
 
 
 @dataclass
@@ -464,7 +493,9 @@ def _gather(
             if limits is None
             else GroupWatch(read_card_memory, limits.cap_mb, limits.floor_mb)
         )
-        status, kill = _run_group_process(group, arguments, fragment, control, watch)
+        compiler_home_at_start = _compiler_home_at_start(scratch)
+        probed, kill = _run_group_process(group, arguments, fragment, control, watch)
+        status = probed.status
         parts = _read_fragment(fragment)
         reason = Reason.NO_FRAGMENT
         top_figures = _kill_figures(kill) | (
@@ -472,6 +503,8 @@ def _gather(
             if watch is None
             else watch.entry()
         )
+        if probed.started:
+            top_figures["compiler_home_at_start"] = value_of(compiler_home_at_start)
         top_figures |= peaks_of_a_failed_group(parts.get("cells", {}), top_figures)
         if watch is not None and watch.stop is not None:
             reason = gathered.later = watch.stop.cell_reason
@@ -531,6 +564,7 @@ def main(argv: Sequence[str] | None = None, control: ProcessControl = KERNEL) ->
         signal.signal(stopping, _interrupted)
     gathered = _Gathered()
     with tempfile.TemporaryDirectory(prefix="prove-card-record-") as scratch:
+        _compiler_home(Path(scratch)).mkdir()
         for group, members in GROUPS.items():
             if set(members) & set(arguments.cells):
                 _gather(group, arguments, Path(scratch), gathered, control)

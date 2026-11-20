@@ -566,12 +566,15 @@ def running_service(
     log: Path,
     *,
     max_lag_ms: int,
+    compiler_home: Path,
     provider: Mapping[str, str] = FAKE_PROVIDER,
 ) -> Iterator[Service]:
     """Start the service, logging to `log`; the block's end stops it.
 
     `provider` holds the `VIDEO_` variables that choose the provider and its settings:
-    the `fake` provider unless the caller gives the operator's.
+    the `fake` provider unless the caller gives the operator's. `compiler_home` is both
+    `HOME` and `TMPDIR` of the service and so of its worker, where the compilers keep
+    their caches.
 
     The parent-death signal follows the thread that starts the service, so the
     caller is the main thread, which lives until the process ends.
@@ -581,6 +584,8 @@ def running_service(
         for key, value in os.environ.items()
         if not key.startswith(ENVIRONMENT_PREFIX)
     } | {
+        "HOME": str(compiler_home),
+        "TMPDIR": str(compiler_home),
         "PYTHONUNBUFFERED": "1",
         "SSL_CERT_FILE": str(identity.ca_file),
         f"{ENVIRONMENT_PREFIX}PORT": str(port := _free_port()),

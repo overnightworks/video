@@ -219,7 +219,7 @@ directory = Path(sys.argv[1])
 with (
     card_identity.throwaway_identity(directory) as identity,
     card_drive.running_service(
-        identity, directory / "service.log", max_lag_ms=500
+        identity, directory / "service.log", max_lag_ms=500, compiler_home=directory
     ) as service,
 ):
     pids = [service.process.pid, *card_drive.worker_pids(service.process.pid)]
