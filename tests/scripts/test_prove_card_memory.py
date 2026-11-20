@@ -262,7 +262,7 @@ def test_a_breach_while_sessions_run_keeps_the_cells_finished_before_it(
     run.in_card_mode()
     command = run.start("--cells", "sentences", "viewers")
     first = run.wait_until(
-        lambda: _fragment_cells(run) == ["sentences"], APPEARS_WITHIN_SECONDS
+        lambda: run.fragment_cells() == ["sentences"], APPEARS_WITHIN_SECONDS
     )
     run.reading.write_text(reading)
 
@@ -336,10 +336,3 @@ def test_a_dry_run_records_the_memory_figures_as_not_measured_and_samples_no_car
     assert all(is_not_measured(entry[name], Reason.NO_CARD) for name in MEMORY_FIGURES)
     assert MEMORY_STOP not in entry
     assert not run.nvidia_smi_log.exists()
-
-
-def _fragment_cells(run: Run) -> list[str] | None:
-    """The cells the wire group's fragment holds, once it is written."""
-    for fragment in run.scratch.glob("prove-card-record-*/wire.json"):
-        return list(json.loads(fragment.read_text())["cells"])
-    return None

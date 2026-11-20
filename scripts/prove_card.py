@@ -667,6 +667,7 @@ def _gather(
     parts: dict[str, object] = {}
     top_figures: dict[str, object] = {}
     reason = gathered.later
+    unfinished: tuple[Reason, ...] = ()
     if not gathered.ended:
         fragment = scratch / f"{group}.json"
         limits = arguments.limits
@@ -685,6 +686,8 @@ def _gather(
         )
         if watch is not None and watch.stop is not None:
             reason = gathered.later = watch.stop.cell_reason
+            # A cell the stop failed may have left later cells `group_ended`.
+            unfinished = (Reason.GROUP_ENDED,)
             gathered.stopped = True
         if kill.failed:
             gathered.failure = (
@@ -695,7 +698,7 @@ def _gather(
         ):
             gathered.failure = f"the {group} cells ended with status {status}"
     gathered.cells |= completed_cells(
-        _chosen(group, arguments), parts.get("cells", {}), reason
+        _chosen(group, arguments), parts.get("cells", {}), reason, replacing=unfinished
     )
     gathered.services[group] = completed_service(
         parts.get("services", {}).get(group, {}) | top_figures, reason

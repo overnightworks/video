@@ -14,7 +14,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Final
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Callable, Collection, Sequence
 
 Figure = dict[str, object]
 
@@ -147,10 +147,33 @@ def closed_record(
 
 
 def completed_cells(
-    names: Sequence[str], cells: dict[str, object], reason: Reason
+    names: Sequence[str],
+    cells: dict[str, object],
+    reason: Reason,
+    *,
+    replacing: Collection[Reason] = (),
 ) -> dict[str, object]:
-    """Every cell of `names`: its figures in `cells`, or not measured for `reason`."""
-    return {name: cells.get(name, not_measured(reason)) for name in names}
+    """Every cell of `names`: its figures in `cells`, or not measured for `reason`.
+
+    A cell `cells` holds as not measured for a reason in `replacing` counts as missing.
+    """
+    return {
+        name: (
+            not_measured(reason)
+            if _not_measured_for(cells.get(name), replacing)
+            else cells[name]
+        )
+        for name in names
+    }
+
+
+def _not_measured_for(figure: object, reasons: Collection[Reason]) -> bool:
+    """Whether `figure` is missing, or not measured for one of `reasons`."""
+    return figure is None or (
+        isinstance(figure, dict)
+        and figure.get("verdict") == Verdict.NOT_MEASURED
+        and figure.get("reason") in reasons
+    )
 
 
 def completed_service(figures: dict[str, object], reason: Reason) -> dict[str, object]:

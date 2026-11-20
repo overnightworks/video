@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import json
 import os
 import struct
 import subprocess
@@ -280,6 +281,12 @@ class Run:
     def printed(self) -> str:
         """What the command wrote to standard output."""
         return self.output.read_text()
+
+    def fragment_cells(self) -> list[str] | None:
+        """The cells the wire group's fragment holds, once it is written."""
+        for fragment in self.scratch.glob("prove-card-record-*/wire.json"):
+            return list(json.loads(fragment.read_text())["cells"])
+        return None
 
     def has_spoken(self) -> bool:
         """Whether a service of this run has ended a sentence, viewers attached."""

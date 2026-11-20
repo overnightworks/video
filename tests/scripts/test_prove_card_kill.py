@@ -14,6 +14,7 @@ import card_drive
 from card_record import MEMORY_STOP, Reason, StopReason, value_of
 from support.prove_card_support import (
     APPEARS_WITHIN_SECONDS,
+    BELOW_THE_FLOOR,
     CELLS_BY_GROUP,
     GONE_WITHIN_SECONDS,
     Run,
@@ -39,6 +40,7 @@ GROUP_FOLLOWS_SECONDS: Final = (
 # the end-of-group kill runs, a signal that is refused, a subreaper that cannot be set.
 HARNESS: Final = """
 import dataclasses
+import json
 import os
 import signal
 import subprocess
@@ -47,6 +49,7 @@ from pathlib import Path
 
 import card_drive
 import prove_card
+from card_record import Reason, not_measured
 
 mode = sys.argv[1]
 kernel = card_drive.KERNEL
@@ -86,6 +89,24 @@ def open_during_a_stop_that_is_to_be_held(pid):
     return kernel.open(pid)
 
 
+fragment_written = []
+
+
+def write_the_fragment_of_a_group_that_saw_its_service_die_first(pidfd, signum):
+    # The group's process, ahead of the kill, failed the cell in progress and ended.
+    if not fragment_written:
+        fragment_written.append(pidfd)
+        for pid_file in Path(os.environ["TMPDIR"]).glob("prove-card-record-*/*.pid"):
+            fragment = pid_file.with_suffix(".json")
+            written = json.loads(fragment.read_text())
+            written["cells"] |= {
+                "viewer": not_measured(Reason.CELL_FAILED),
+                "viewers": not_measured(Reason.GROUP_ENDED),
+            }
+            fragment.write_text(json.dumps(written))
+    kernel.send_signal(pidfd, signum)
+
+
 def record_signal(pidfd, signum):
     with Path(os.environ["SIGNALS_LOG"]).open("a") as log:
         log.write(f"{signum}\\n")
@@ -120,6 +141,9 @@ controls = {
         kernel,
         open=open_during_a_stop_that_is_to_be_held,
         send_signal=record_signal,
+    ),
+    "cell-failed-first": dataclasses.replace(
+        kernel, send_signal=write_the_fragment_of_a_group_that_saw_its_service_die_first
     ),
     "subreaper": dataclasses.replace(
         kernel, become_subreaper=subreaper_that_cannot_be_set
@@ -371,6 +395,36 @@ def test_a_stop_during_the_breachs_kill_is_held_and_forwarded_to_no_process(
     assert record["services"]["lag"]["processes_alive_after_kill"] == value_of(0)
     assert set(_signals_sent(signals)) <= {signal.SIGKILL.value}
     assert run.processes() == []
+
+
+def test_a_breach_replaces_the_group_ended_of_the_cells_a_failed_cell_left_unfinished(
+    run: Run, harness: Path
+) -> None:
+    run.in_card_mode()
+    command = _start_with(
+        run,
+        harness,
+        "cell-failed-first",
+        "--cells",
+        "sentences",
+        "viewer",
+        "viewers",
+    )
+    first = run.wait_until(
+        lambda: run.fragment_cells() == ["sentences"], APPEARS_WITHIN_SECONDS
+    )
+    run.reading.write_text(BELOW_THE_FLOOR)
+
+    status, error = run.finish(command)
+    cells = json.loads(run.record.read_text())["cells"]
+
+    assert first
+    assert status != 0
+    assert "watchdog breach" in error
+    assert is_not_measured(cells["viewer"], Reason.CELL_FAILED)
+    assert is_not_measured(cells["viewers"], Reason.WATCHDOG_BREACH)
+    assert cells["sentences"]["sentences"]
+    assert run.wait_until(lambda: run.processes() == [], GONE_WITHIN_SECONDS)
 
 
 def test_a_kill_that_fails_on_the_breach_path_is_closed_and_the_record_is_written(
