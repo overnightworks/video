@@ -252,7 +252,9 @@ The image is `ghcr.io/overnightworks/video:X.Y.Z`, a private package that the re
 not carry. It holds the service, the FlashHead lite provider in its own environment and the
 pinned weights, and runs as a numeric non-root user on a read-only root with `/tmp` as the one
 writable place it needs. Of the service's settings it sets only `VIDEO_PROVIDER_ROOT`, and it
-points `HOME` and `TMPDIR` at `/tmp`; the deployment sets `VIDEO_PROVIDER`, `VIDEO_CONFIG_FILE` and `VIDEO_HOST`, and reads readiness from `GET /health`. The build runs on the organisation's larger runner, to which the repository needs
+points `HOME` and `TMPDIR` at `/tmp`; the deployment sets `VIDEO_PROVIDER`,
+`VIDEO_CARD_MEMORY_MB`, `VIDEO_CONFIG_FILE` and `VIDEO_HOST`, and reads readiness from
+`GET /health`. The build runs on the organisation's larger runner, to which the repository needs
 access. `VIDEO_IMAGE=<image> uv run --locked pytest -q -m image tests/test_image.py` tests an
 image you have pulled or built; it starts containers and needs Docker.
 
