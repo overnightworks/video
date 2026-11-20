@@ -21,6 +21,7 @@ from card_record import (
     MemoryFigure,
     Reason,
     StopReason,
+    Verdict,
     judged,
     not_measured,
     value_of,
@@ -45,6 +46,26 @@ PEAK_FIGURES: Final = (
     MemoryFigure.USED_MOST,
     MemoryFigure.USED_BEYOND_CAP,
 )
+
+
+def peaks_of_a_failed_group(
+    cells: dict[str, object], entry: dict[str, object]
+) -> dict[str, object]:
+    """The peak figures of `entry` not measured for the failed step the cells name.
+
+    No session rendered in a group whose provider failed to load or whose look was not
+    prepared, so its samples say nothing of a peak; a figure already not measured keeps
+    its reason.
+    """
+    for reason in (Reason.PROVIDER_NOT_LOADED, Reason.LOOK_NOT_PREPARED):
+        if not_measured(reason) in cells.values():
+            return {
+                name: not_measured(reason)
+                for name in PEAK_FIGURES
+                if entry.get(name, {}).get("verdict") != Verdict.NOT_MEASURED
+            }
+    return {}
+
 
 type Sampler = Callable[[], CardMemory]
 # Ends every process below the command for a stop, and says what was left.

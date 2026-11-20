@@ -53,7 +53,7 @@ from card_drive import (
     timed,
 )
 from card_identity import LOOK_NAMES, throwaway_identity
-from card_memory import PEAK_FIGURES, GroupWatch
+from card_memory import GroupWatch, peaks_of_a_failed_group
 from card_record import (
     ENCODER_CORES_LINE,
     FIRST_OUTPUT_LINE,
@@ -61,7 +61,6 @@ from card_record import (
     KILL_FIGURES,
     MEMORY_FIGURES,
     Reason,
-    Verdict,
     closed_record,
     completed_cells,
     completed_service,
@@ -705,12 +704,7 @@ def _gather(
             if watch is None
             else watch.entry()
         )
-        if (failed := _failed_load_reason(parts.get("cells", {}))) is not None:
-            top_figures |= {
-                name: not_measured(failed)
-                for name in PEAK_FIGURES
-                if not _is_not_measured(top_figures.get(name))
-            }
+        top_figures |= peaks_of_a_failed_group(parts.get("cells", {}), top_figures)
         if watch is not None and watch.stop is not None:
             reason = gathered.later = watch.stop.cell_reason
             # A cell the stop failed may have left later cells `group_ended`.
@@ -731,19 +725,6 @@ def _gather(
         parts.get("services", {}).get(group, {}) | top_figures, reason
     )
     gathered.files += parts.get("files", [])
-
-
-def _failed_load_reason(cells: dict[str, object]) -> Reason | None:
-    """The reason a failed step gave the group's cells, when the fragment holds one."""
-    for cell in cells.values():
-        for reason in (Reason.PROVIDER_NOT_LOADED, Reason.LOOK_NOT_PREPARED):
-            if isinstance(cell, dict) and cell == not_measured(reason):
-                return reason
-    return None
-
-
-def _is_not_measured(figure: object) -> bool:
-    return isinstance(figure, dict) and figure.get("verdict") == Verdict.NOT_MEASURED
 
 
 def _interrupted(signum: int, _frame: object) -> None:
