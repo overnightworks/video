@@ -12,6 +12,7 @@ sessions apart.
 from __future__ import annotations
 
 import contextlib
+import contextvars
 from dataclasses import dataclass, field
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
@@ -27,6 +28,7 @@ from video_provider_flashhead_lite.upstream_renderer import (
 )
 
 if TYPE_CHECKING:
+    import os
     from collections.abc import Mapping
 
     import pytest
@@ -42,6 +44,16 @@ _NUM_TIMESTEPS = 1000
 _AUDIO_GAIN = 500
 _WEIGHTS_SEED = 7
 _PICTURE_GAIN = 3
+
+# The directories the loaders of the pipeline being built are handed, by network.
+_DIRECTORIES_READ: contextvars.ContextVar[dict[str, str]] = contextvars.ContextVar(
+    "directories_read"
+)
+
+
+def _note_directory(network: str, directory: str | os.PathLike[str]) -> None:
+    with contextlib.suppress(LookupError):
+        _DIRECTORIES_READ.get()[network] = str(directory)
 
 
 def _weighted_mean(embedding: torch.Tensor) -> torch.Tensor:
@@ -68,7 +80,8 @@ class _Model(torch.nn.Module):
         self.fails = False
 
     @classmethod
-    def from_pretrained(cls, _directory: str) -> _Model:
+    def from_pretrained(cls, directory: str) -> _Model:
+        _note_directory("model", directory)
         return cls()
 
     def forward(
@@ -90,8 +103,9 @@ class _Model(torch.nn.Module):
 class _Vae:
     """A video of three channels and a latent of `_LATENT_CHANNELS`, both by stride."""
 
-    def __init__(self, *_arguments: object, **_options: object) -> None:
-        """Take upstream's constructor arguments and ignore them."""
+    def __init__(self, pretrained_model_type_or_path: str, **_options: object) -> None:
+        """Take upstream's constructor arguments and ignore the weights."""
+        _note_directory("vae", pretrained_model_type_or_path)
         self.fails = False
 
     def encode(self, video: torch.Tensor) -> torch.Tensor:
@@ -121,7 +135,8 @@ def _tiny_audio_encoder_class() -> type:
 
     class TinyAudioEncoder(Wav2Vec2Model):
         @classmethod
-        def from_pretrained(cls, _directory: str, **_options: object) -> Wav2Vec2Model:
+        def from_pretrained(cls, directory: str, **_options: object) -> Wav2Vec2Model:
+            _note_directory("audio_encoder", directory)
             configuration = Wav2Vec2Config(
                 hidden_size=_HIDDEN,
                 num_hidden_layers=_AUDIO_LAYERS,
@@ -147,14 +162,18 @@ def _tiny_feature_extractor_class() -> type:
 
     class UntrainedFeatureExtractor(Wav2Vec2FeatureExtractor):
         @classmethod
-        def from_pretrained(cls, _directory: str, **_options: object) -> object:
+        def from_pretrained(cls, directory: str, **_options: object) -> object:
+            _note_directory("feature_extractor", directory)
             return cls()
 
     return UntrainedFeatureExtractor
 
 
 class StandInPipeline(flash_head_pipeline.FlashHeadPipeline):
-    """Upstream's pipeline with tiny CPU networks."""
+    """Upstream's pipeline with tiny CPU networks.
+
+    `directories_read` names, by network, the directory each loader was handed.
+    """
 
     def __init__(
         self,
@@ -168,9 +187,12 @@ class StandInPipeline(flash_head_pipeline.FlashHeadPipeline):
         """Build upstream's pipeline on the CPU; `device` is ignored."""
         del device
         self.heard: list[torch.Tensor] = []
+        self.directories_read: dict[str, str] = {}
         from flash_head.ltx_video import ltx_vae  # noqa: PLC0415
 
         with contextlib.ExitStack() as stack:
+            reading = _DIRECTORIES_READ.set(self.directories_read)
+            stack.callback(_DIRECTORIES_READ.reset, reading)
             for owner, name, stand_in in (
                 (flash_head_pipeline, "WanModelAudioProject", _Model),
                 (flash_head_pipeline, "Wav2Vec2Model", _tiny_audio_encoder_class()),

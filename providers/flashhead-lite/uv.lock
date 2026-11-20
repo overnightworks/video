@@ -729,6 +729,7 @@ source = { editable = "." }
 dependencies = [
     { name = "diffusers", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
     { name = "einops", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
+    { name = "huggingface-hub", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
     { name = "loguru", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
     { name = "mediapipe", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
     { name = "numpy", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
@@ -755,6 +756,7 @@ dev = [
 requires-dist = [
     { name = "diffusers", specifier = "==0.43.0" },
     { name = "einops", specifier = "==0.8.2" },
+    { name = "huggingface-hub", specifier = "==1.33.0" },
     { name = "loguru", specifier = "==0.8.0" },
     { name = "mediapipe", specifier = "==1.2.3" },
     { name = "numpy", specifier = "==2.5.5" },

@@ -7,13 +7,14 @@ name = "overnightworks-video-provider-flashhead-lite"
 version = "0.3.0"
 description = "The FlashHead lite provider: the port's calls turned into slice renders, bound to the unchanged upstream model."
 license = "MIT AND Apache-2.0"
-license-files = ["soulx-flashhead/LICENSE"]
+license-files = ["LICENSE", "soulx-flashhead/LICENSE"]
 requires-python = ">=3.14,<3.15"
 # Upstream's list is mostly unpinned and names packages this path never imports, so
 # the lock owns the pins. Two depart from upstream's, on purpose.
 dependencies = [
     "diffusers==0.43.0",
     "einops==0.8.2",
+    "huggingface-hub==1.33.0",
     "loguru==0.8.0",
     # Upstream pins 0.10.9, which needs protobuf below 5 and leaves advisories no
     # relock closes; 1.2.3 needs no protobuf. It has no `mp.solutions`, so upstream's
@@ -38,6 +39,7 @@ dependencies = [
 ]
 
 [project.scripts]
+video-flashhead-lite-fetch-weights = "video_provider_flashhead_lite.fetch_weights:main"
 video-flashhead-lite-worker = "video_provider_flashhead_lite.worker:main"
 
 [tool.uv.sources]
