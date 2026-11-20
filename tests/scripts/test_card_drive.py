@@ -94,8 +94,8 @@ def sleeper():
     return subprocess.Popen(["sleep", "60"])
 
 
-def killed(control=card_drive.KERNEL):
-    kill = card_drive.end_processes_below(control)
+def killed(control=card_drive.KERNEL, **keywords):
+    kill = card_drive.end_processes_below(control, **keywords)
     return {
         "left": kill.processes_left,
         "alive": kill.processes_alive,
@@ -139,6 +139,12 @@ elif mode in ("ancestry-stale", "ancestry-intact", "ancestry-term"):
     wanted = signal.SIGTERM if mode == "ancestry-term" else signal.SIGKILL
     card_drive.signal_if_unchanged(lineage, wanted, control)
     report({"grandchild": grandchild, "signals": signals})
+elif mode == "spare":
+    spared, reaped = sleeper(), sleeper()
+    result = killed(spare=spared.pid)
+    # The kill ends the spared child and reaps none but the others: only its own
+    # `wait` collects the status.
+    report(result | {"spared": spared.wait(), "reaped": reaped.pid})
 elif mode == "raising":
     unkillable, killable = sleeper(), sleeper()
 
@@ -430,3 +436,17 @@ def test_a_process_is_sent_the_signal_asked_for_through_the_same_check(
 
     assert result["signals"] == [signal.SIGTERM]
     assert wait_until(lambda: ended(result["grandchild"]), GONE_WITHIN_SECONDS)
+
+
+def test_the_kill_ends_the_spared_child_but_leaves_its_status_to_its_own_wait(
+    top: StandInTop,
+) -> None:
+    top.start("spare")
+
+    result = top.result()
+
+    assert result["failed"] is False
+    assert result["alive"] == 0
+    assert result["spared"] == -signal.SIGKILL
+    assert wait_until(lambda: ended(result["reaped"]), GONE_WITHIN_SECONDS)
+    assert process_state(result["reaped"]) is None

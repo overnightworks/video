@@ -362,11 +362,14 @@ def _reap_children(zombies: list[Process]) -> None:
             os.waitpid(zombie.pid, os.WNOHANG)
 
 
-def end_processes_below(control: ProcessControl = KERNEL) -> Kill:
+def end_processes_below(
+    control: ProcessControl = KERNEL, *, spare: int | None = None
+) -> Kill:
     """End every process below this one by pidfd-checked SIGKILL passes, stopping none.
 
     A pass signals every live descendant, the deepest first, and reaps the zombies
-    that are this process's children by their ids. It runs until none is alive or
+    that are this process's children by their ids, all but `spare`, whose status stays
+    for the `Popen` that holds it. It runs until none is alive or
     `KILL_WITHIN_SECONDS` has passed. It must run in a child subreaper, so an orphan
     of a descendant stays below. A process that cannot be read or signalled, and a pass
     that cannot list or reap, fail the kill, which goes on with the others and tries
@@ -384,7 +387,9 @@ def end_processes_below(control: ProcessControl = KERNEL) -> Kill:
                 [
                     lineage[0]
                     for lineage in below.lineages
-                    if lineage[0].parent == top and not lineage[0].alive
+                    if lineage[0].parent == top
+                    and not lineage[0].alive
+                    and lineage[0].pid != spare
                 ]
             )
         except OSError:
