@@ -1,7 +1,0 @@
-claim_id = "1be7059e81f7443ca0a2ef35d64c72ca"
-agent = "Claude 76251661-cb30-4447-a3ad-32a83a396daa"
-role = "builder"
-base = "fcff5792c3021a665504c920f583e790edca5ebf"
-branch = "claude/issue-53-the-card-reading-refuses-a-negative-fig"
-scope = ["src/video_service/card.py", "tests/test_card.py"]
-opened_commit = "726f756b5a479a245e5498bc132c0a5cc04bd510"
