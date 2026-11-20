@@ -1,7 +1,8 @@
 """The service as a process of its own, and a session driven through the wire.
 
-The service starts from this checkout in a process group of its own, which every exit
-ends. Its log lines are the figures' source; the session's events are the rest.
+The service starts from this checkout in a process group of its own; every exit stops
+it first and kills only a service that outlives its stop. Its log lines are the
+figures' source; the session's events are the rest.
 """
 
 from __future__ import annotations
@@ -18,8 +19,10 @@ import uuid
 import wave
 from contextlib import asynccontextmanager, contextmanager, suppress
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Final
 
+import httpx2
 from pydantic import ValidationError
 from websockets.asyncio.client import connect
 from websockets.exceptions import ConnectionClosed
@@ -39,11 +42,16 @@ from video_client.session_wire import (
     SessionUpdated,
     parse_server_event,
 )
-from video_client.wire import LOOK_PARAM, SESSIONS_PATH, RefusalCode
+from video_client.wire import (
+    LOOK_PARAM,
+    SDP_CONTENT_TYPE,
+    SESSIONS_PATH,
+    RefusalCode,
+    viewers_path,
+)
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Iterator
-    from pathlib import Path
+    from collections.abc import AsyncIterator, Awaitable, Iterator
 
     from websockets.asyncio.client import ClientConnection
 
@@ -56,6 +64,7 @@ LINE_WITHIN_SECONDS: Final = 10.0
 DRAIN_SECONDS: Final = 5
 POLL_SECONDS: Final = 0.02
 CHUNK_BYTES: Final = 8192
+MINIMUM_AUDIO_SECONDS: Final = 1
 _HOST: Final = "127.0.0.1"
 _ENVIRONMENT_PREFIX: Final = "VIDEO_"
 _READY_EVENT: Final = "process.ready"
@@ -89,20 +98,59 @@ class Audio:
 
 
 def read_audio(path: Path) -> Audio:
-    """The PCM of a mono 16-bit WAV file at a rate the wire carries."""
-    with wave.open(str(path)) as source:
-        shape = (source.getnchannels(), source.getsampwidth(), source.getframerate())
-        pcm = source.readframes(source.getnframes())
+    """The PCM of a mono 16-bit WAV file of enough length at a rate the wire carries."""
+    try:
+        with wave.open(str(path)) as source:
+            shape = (
+                source.getnchannels(),
+                source.getsampwidth(),
+                source.getframerate(),
+            )
+            pcm = source.readframes(source.getnframes())
+    except (OSError, EOFError, wave.Error) as error:
+        message = f"{path}: the audio cannot be read ({error})"
+        raise SystemExit(message) from None
     try:
         PcmFormat(type="audio/pcm", rate=shape[2])
     except ValidationError:
         shape = (0, 0, 0)
-    if shape[:2] != (1, BYTES_PER_SAMPLE):
+    audio = Audio(rate=shape[2], pcm=pcm)
+    if shape[:2] != (1, BYTES_PER_SAMPLE) or (
+        audio.milliseconds < MINIMUM_AUDIO_SECONDS * 1000
+    ):
         message = (
-            f"{path}: the audio must be a mono 16-bit WAV at a rate the wire carries"
+            f"{path}: the audio must be a mono 16-bit WAV of at least "
+            f"{MINIMUM_AUDIO_SECONDS} second at a rate the wire carries"
         )
         raise SystemExit(message)
-    return Audio(rate=shape[2], pcm=pcm)
+    return audio
+
+
+def _process_fields(pid: int) -> list[str]:
+    """The fields of `/proc/<pid>/stat` after the command name: state first."""
+    text = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
+    return text.rsplit(")", 1)[1].split()
+
+
+_PARENT_FIELD: Final = 1
+_GROUP_FIELD: Final = 2
+_USER_TICKS_FIELD: Final = 11
+_SYSTEM_TICKS_FIELD: Final = 12
+
+
+def worker_pids(service_pid: int) -> list[int]:
+    """The children of the service that lead a process group of their own."""
+    found = []
+    for entry in Path("/proc").iterdir():
+        if not entry.name.isdigit():
+            continue
+        with suppress(OSError):
+            fields = _process_fields(int(entry.name))
+            if int(fields[_PARENT_FIELD]) == service_pid and int(
+                fields[_GROUP_FIELD]
+            ) == int(entry.name):
+                found.append(int(entry.name))
+    return found
 
 
 def _free_port() -> int:
@@ -141,6 +189,12 @@ class Service:
         message = f"the service wrote no {event} line"
         raise DriveError(message)
 
+    def cpu_seconds(self) -> float:
+        """The CPU time the service's own process has used, by the kernel's count."""
+        fields = _process_fields(self.process.pid)
+        ticks = int(fields[_USER_TICKS_FIELD]) + int(fields[_SYSTEM_TICKS_FIELD])
+        return ticks / os.sysconf("SC_CLK_TCK")
+
     def url(self, look: str) -> str:
         """The session upgrade of `look`."""
         # The service speaks plain HTTP on the loopback address and has no TLS.
@@ -161,23 +215,38 @@ def _wait_until_ready(service: Service, started: float) -> None:
     raise DriveError(message)
 
 
-def _stop(service: Service) -> None:
-    """Ask the service to stop and time its exit; a service that stays is cut."""
+def _stop(service: Service) -> bool:
+    """Stop the service and time its exit; whether it exited within the bound.
+
+    The stop comes first and reaps the worker. A service that stays is killed
+    together with the worker groups it started.
+    """
+    process = service.process
+    workers = set(worker_pids(process.pid))
     stopping = time.monotonic()
-    service.process.send_signal(signal.SIGTERM)
+    if process.poll() is None:
+        process.send_signal(signal.SIGTERM)
     try:
-        service.process.wait(STOP_WITHIN_SECONDS)
+        process.wait(STOP_WITHIN_SECONDS)
+        in_time = True
     except subprocess.TimeoutExpired:
-        message = "the service did not exit after its stop"
-        raise DriveError(message) from None
+        in_time = False
+        workers.update(worker_pids(process.pid))
     service.stop_to_exit_ms = round((time.monotonic() - stopping) * 1000)
+    with suppress(ProcessLookupError):
+        os.killpg(process.pid, signal.SIGKILL)
+    process.wait()
+    for worker in () if in_time else workers:
+        with suppress(ProcessLookupError):
+            os.killpg(worker, signal.SIGKILL)
+    return in_time
 
 
 @contextmanager
 def running_service(
     identity: Identity, directory: Path, *, max_lag_ms: int
 ) -> Iterator[Service]:
-    """Start the fake-provider service; its process group ends with the block."""
+    """Start the fake-provider service; the block's end stops it first."""
     environment = {
         key: value
         for key, value in os.environ.items()
@@ -207,11 +276,57 @@ def running_service(
         try:
             _wait_until_ready(service, started)
             yield service
-            _stop(service)
         finally:
-            with suppress(ProcessLookupError):
-                os.killpg(process.pid, signal.SIGKILL)
-            process.wait()
+            stopped_in_time = _stop(service)
+    if not stopped_in_time:
+        message = "the service did not exit after its stop and was killed"
+        raise DriveError(message)
+
+
+@dataclass(frozen=True)
+class Window:
+    """A stretch of the run and the service's CPU use over it."""
+
+    start: float
+    end: float
+    cores: float
+
+    @property
+    def seconds(self) -> float:
+        """The window's length."""
+        return self.end - self.start
+
+
+async def timed[Result](
+    service: Service, work: Awaitable[Result]
+) -> tuple[Window, Result]:
+    """Await `work`, with the window it took and the service's CPU over it."""
+    cpu_before = service.cpu_seconds()
+    start = time.monotonic()
+    result = await work
+    end = time.monotonic()
+    cores = (service.cpu_seconds() - cpu_before) / (end - start)
+    return Window(start, end, cores), result
+
+
+async def post_viewer_offer(
+    service: Service, identity: Identity, session_id: str, offer: str
+) -> str:
+    """The service's SDP answer to a viewer's `offer` on the session's tokens."""
+    # The service speaks plain HTTP on the loopback address and has no TLS.
+    base_url = f"http://{_HOST}:{service.port}"  # NOSONAR(S5332)
+    async with httpx2.AsyncClient(
+        base_url=base_url, timeout=EVENT_WITHIN_SECONDS
+    ) as client:
+        response = await client.post(
+            viewers_path(session_id),
+            content=offer,
+            headers=identity.headers() | {"Content-Type": SDP_CONTENT_TYPE},
+        )
+    if response.status_code != httpx2.codes.CREATED:
+        message = f"the viewer's offer was answered with {response.status_code}"
+        raise DriveError(message)
+    return response.text
 
 
 class Session:
