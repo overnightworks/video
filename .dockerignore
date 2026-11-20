@@ -1,0 +1,31 @@
+# An allowlist: everything is out of the build context, and only what the image
+# is built from comes back in. From the source trees that is Python source and
+# the packages' py.typed, so a key or credential lying beside the code never
+# reaches the wheels. Upstream's flash_head tree comes whole, because the
+# provider's wheel packs it with its configuration files.
+*
+!LICENSE
+!pyproject.toml
+!uv.lock
+!src/**/*.py
+!packages/client/pyproject.toml
+!packages/client/src/**/*.py
+!packages/client/src/**/py.typed
+!providers/fake/pyproject.toml
+!providers/provider-contract/pyproject.toml
+!providers/provider-contract/src/**/*.py
+!providers/provider-contract/src/**/py.typed
+!providers/flashhead-lite/LICENSE
+!providers/flashhead-lite/pyproject.toml
+!providers/flashhead-lite/uv.lock
+!providers/flashhead-lite/src/**/*.py
+!providers/flashhead-lite/src/**/py.typed
+!providers/flashhead-lite/soulx-flashhead/LICENSE
+!providers/flashhead-lite/soulx-flashhead/flash_head/**
+
+# Nested repositories, environments and tool caches can hold Python files too.
+**/.git/**
+**/.venv/**
+**/__pycache__/**
+**/.*_cache/**
+**/node_modules/**
