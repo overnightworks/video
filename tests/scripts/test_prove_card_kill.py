@@ -217,6 +217,31 @@ def test_a_stop_is_not_forwarded_to_a_process_that_is_no_child_of_probe_run(
         bystander.wait()
 
 
+def test_a_stop_is_forwarded_through_the_checked_send_to_the_child_of_probe_run(
+    run: Run, harness: Path
+) -> None:
+    signals = run.directory / "signals.log"
+    run.environment["SIGNALS_LOG"] = str(signals)
+    command = _start_with(
+        run, harness, "record", "--dry-run", "--cells", "clear", "lag"
+    )
+    serving = run.wait_until(
+        lambda: "process.ready" in _log_text(run, "wire"), APPEARS_WITHIN_SECONDS
+    )
+    os.kill(command.pid, signal.SIGTERM)
+
+    status, error = run.finish(command)
+
+    assert serving
+    assert status != 0
+    assert error.strip() == "interrupted by SIGTERM"
+    assert not run.record.exists()
+    assert len(run.probe_run_log.read_text().splitlines()) == 1
+    assert signal.SIGTERM.value in _signals_sent(signals)
+    assert not run.has_spoken()
+    assert run.processes() == []
+
+
 def test_a_stop_is_sent_to_no_process_when_the_check_of_its_child_cannot_be_made(
     run: Run, harness: Path
 ) -> None:
