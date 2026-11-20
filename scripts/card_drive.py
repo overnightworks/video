@@ -125,7 +125,9 @@ class Service:
     def lines(self, event: str) -> list[dict[str, object]]:
         """The JSON lines of `event` written so far."""
         text = self.log.read_text(encoding="utf-8")
-        records = (json.loads(line) for line in text.splitlines() if line[:1] == "{")
+        records = (
+            json.loads(line) for line in text.splitlines() if line.startswith("{")
+        )
         return [record for record in records if record["event"] == event]
 
     async def line(self, event: str, **fields: object) -> dict[str, object]:
@@ -141,7 +143,9 @@ class Service:
 
     def url(self, look: str) -> str:
         """The session upgrade of `look`."""
-        return f"ws://{_HOST}:{self.port}{SESSIONS_PATH}?{LOOK_PARAM}={look}"
+        # The service speaks plain HTTP on the loopback address and has no TLS.
+        origin = f"ws://{_HOST}:{self.port}"  # NOSONAR(S5332)
+        return f"{origin}{SESSIONS_PATH}?{LOOK_PARAM}={look}"
 
 
 def _wait_until_ready(service: Service, started: float) -> None:

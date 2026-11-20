@@ -228,7 +228,8 @@ def _child(group: str, arguments: argparse.Namespace) -> int:
     signal.signal(signal.SIGTERM, _exit_once)
     with tempfile.TemporaryDirectory(prefix="prove-card-") as scratch:
         fragment = _run_group(group, arguments, Path(scratch))
-    arguments.record.write_text(json.dumps(fragment))
+    # The parent names the fragment's path in its own scratch directory.
+    arguments.record.write_text(json.dumps(fragment))  # NOSONAR(S8707)
     return 0
 
 
@@ -244,7 +245,8 @@ def _under_probe_run(group: str, arguments: argparse.Namespace, fragment: Path) 
         "--cells", *[name for name in GROUPS[group] if name in arguments.cells],
         *(["--dry-run"] if arguments.dry_run else []),
     ]  # fmt: skip
-    with subprocess.Popen(  # noqa: S603 - the fleet's probe-run and this interpreter
+    # The operator names the audio path that the command passes on.
+    with subprocess.Popen(  # NOSONAR(S8705)  # noqa: S603 - probe-run and this python
         command, env={**os.environ, _CHILD_MARKER: group}
     ) as child:
         # The group's service is cleaned up by the child, so a stop reaches it first.
@@ -278,7 +280,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             cells |= parts["cells"]
             services |= parts["services"]
     record = closed_record(dry_run=arguments.dry_run, cells=cells, services=services)
-    arguments.record.write_text(json.dumps(record, indent=2) + "\n")
+    # The operator names the record's path; writing it is this command's job.
+    arguments.record.write_text(json.dumps(record, indent=2) + "\n")  # NOSONAR(S8707)
     print(f"record written to {arguments.record}")
     return 0
 
