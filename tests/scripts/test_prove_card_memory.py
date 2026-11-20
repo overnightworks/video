@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Final
 import pytest
 
 import card_drive
+import card_identity
 from card_record import (
     FREE_MEMORY_LINE,
     MEMORY_FIGURES,
@@ -389,3 +390,95 @@ def test_a_dry_run_records_the_memory_figures_as_not_measured_and_samples_no_car
     assert all(is_not_measured(entry[name], Reason.NO_CARD) for name in MEMORY_FIGURES)
     assert MEMORY_STOP not in entry
     assert not run.nvidia_smi_log.exists()
+
+
+def _ended_by_a_step(error: str, group: str) -> str:
+    """The one line the group's process wrote for a failed step; no traceback."""
+    ended = [line for line in lines(error) if line.startswith(f"the {group} group")]
+
+    assert len(ended) == 1
+    assert "Traceback" not in error
+    return ended[0]
+
+
+def test_a_provider_that_fails_to_load_ends_its_group_before_its_first_cell(
+    run: Run,
+) -> None:
+    run.in_card_mode()
+    run.fail_the_load_of("wire")
+
+    status, error = run.finish(run.start("--cells", "clear", "lag"))
+    record = _record(run)
+    entry = record["services"]["wire"]
+
+    assert status != 0
+    assert "provider_failed" in _ended_by_a_step(error, "wire")
+    assert is_not_measured(record["cells"]["clear"], Reason.PROVIDER_NOT_LOADED)
+    assert is_not_measured(record["cells"]["lag"], Reason.EARLIER_GROUP_FAILED)
+    assert entry["provider_load"]["outcome"] == value_of("failed")
+    assert entry["provider_load"]["reason"] == value_of("provider_failed")
+    assert entry["look_preparations"] == []
+    assert len(run.probe_run_log.read_text().splitlines()) == 1
+    assert [log.name for log in run.logs()] == ["record.wire.log"]
+    assert run.processes() == []
+    assert list(run.scratch.iterdir()) == []
+
+
+def test_a_provider_that_fails_to_load_in_a_later_group_keeps_the_cells_before_it(
+    run: Run,
+) -> None:
+    run.in_card_mode()
+    run.fail_the_load_of("lag")
+
+    status, error = run.finish(run.start("--cells", "clear", "lag"))
+    record = _record(run)
+
+    assert status != 0
+    assert "provider_failed" in _ended_by_a_step(error, "lag")
+    assert record["cells"]["clear"]["outcome"]["value"] == "cancelled"
+    assert is_not_measured(record["cells"]["lag"], Reason.PROVIDER_NOT_LOADED)
+    assert record["services"]["lag"]["provider_load"]["outcome"] == value_of("failed")
+    assert run.processes() == []
+
+
+def test_a_look_that_is_not_prepared_ends_its_group_naming_the_look_and_the_reason(
+    run: Run,
+) -> None:
+    look = card_identity.LOOK_NAMES[-1]
+    run.in_card_mode()
+    run.fail_the_preparation_of(look)
+
+    status, error = run.finish(run.start("--cells", "clear", "lag"))
+    record = _record(run)
+    entry = record["services"]["wire"]
+    prepared = {
+        preparation["look"]["value"]: preparation["outcome"]["value"]
+        for preparation in entry["look_preparations"]
+    }
+    line = _ended_by_a_step(error, "wire")
+
+    assert status != 0
+    assert look in line
+    assert "provider_failed" in line
+    assert is_not_measured(record["cells"]["clear"], Reason.LOOK_NOT_PREPARED)
+    assert is_not_measured(record["cells"]["lag"], Reason.EARLIER_GROUP_FAILED)
+    assert entry["provider_load"]["outcome"] == value_of("ok")
+    assert prepared == {
+        name: "failed" if name == look else "ok" for name in card_identity.LOOK_NAMES
+    }
+    assert run.processes() == []
+
+
+def test_a_provider_root_without_the_worker_ends_the_group_as_a_failed_load(
+    run: Run,
+) -> None:
+    run.in_card_mode()
+    run.without_worker()
+
+    status, error = run.finish(run.start("--cells", "lag"))
+    record = _record(run)
+
+    assert status != 0
+    assert "provider_failed" in _ended_by_a_step(error, "lag")
+    assert is_not_measured(record["cells"]["lag"], Reason.PROVIDER_NOT_LOADED)
+    assert run.processes() == []

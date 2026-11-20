@@ -31,6 +31,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Final
 
+from logline import Outcome
 from pydantic import ValidationError
 
 from card_drive import (
@@ -465,6 +466,27 @@ def _service_figures(
     }
 
 
+def _unloaded(service: Service) -> tuple[Reason, str] | None:
+    """Why the cells cannot run, and the line that says so, when the load failed.
+
+    A step is failed by its logged outcome; a failed step read after ready carries the
+    reason the service logged.
+    """
+    load = service.lines("provider_load.ended")[0]
+    if load["outcome"] == Outcome.FAILED:
+        return (
+            Reason.PROVIDER_NOT_LOADED,
+            f"the provider did not load ({load['reason']})",
+        )
+    for line in service.lines("look_preparation.ended"):
+        if line["outcome"] == Outcome.FAILED:
+            return (
+                Reason.LOOK_NOT_PREPARED,
+                f"the look {line['look']} was not prepared ({line['reason']})",
+            )
+    return None
+
+
 def _stop_figure(service: Service) -> dict[str, object]:
     """How long the service took to exit after its stop, if it was still running."""
     if service.stop_to_exit_ms is None:
@@ -496,7 +518,9 @@ def _run_group(
     The fragment is rewritten after each cell and once more when the group ends. A cell
     that raises an `Exception` ends the group: it is `cell_failed`, the cells after it
     `group_ended`, and the fragment holds both before the service stops. Anything
-    else, an interrupt's `SystemExit` included, is not caught.
+    else, an interrupt's `SystemExit` included, is not caught. A service whose provider
+    did not load or whose look was not prepared runs no cell: every cell is not
+    measured for that, and one line on standard error says which step failed.
     """
     audio = read_audio(arguments.audio)
     names = _chosen(group, arguments)
@@ -539,7 +563,14 @@ def _run_group(
                 save(GroupOutcome.RUNNING)
             return GroupOutcome.DONE
 
-        outcome = asyncio.run(run_cells())
+        if (unloaded := _unloaded(service)) is None:
+            outcome = asyncio.run(run_cells())
+        else:
+            reason, message = unloaded
+            cells.update(completed_cells(names, {}, reason))
+            print(f"the {group} group: {message}", file=sys.stderr)
+            save(GroupOutcome.RUNNING)
+            outcome = GroupOutcome.FAILED
     figures["stop_to_exit_ms"] = _stop_figure(service)
     save(outcome)
     return outcome
