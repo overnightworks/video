@@ -143,16 +143,18 @@ class GroupWatch:
                 return self._status_within_the_kill_bound(child)
 
     def finish(self, end_of_group_kill: Callable[[], Kill]) -> Kill:
-        """The group's one kill; a group that ran and ended by itself is sampled first.
+        """Sample the card once the group has ended; the group's one kill.
 
-        A stop has made the kill already, and no sample follows it: a reading it started
-        could leave a process that no kill counts. Otherwise the sample comes first,
-        since the end-of-group kill ends a reading it left behind.
+        A stop has made the kill already, and the sample follows it. Otherwise the
+        sample comes first, since the end-of-group kill ends a reading it left behind.
+        A group that never started is not sampled.
         """
         if self.kill is None:
             if self._started:
                 self._sample_after()
             self.kill = end_of_group_kill()
+        elif self._started:
+            self._sample_after()
         return self.kill
 
     def entry(self) -> dict[str, object]:

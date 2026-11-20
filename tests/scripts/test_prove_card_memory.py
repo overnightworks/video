@@ -265,7 +265,7 @@ def test_a_breach_while_the_provider_loads_ends_the_tree_and_starts_no_second_gr
     assert entry["processes_left_after_stop"]["value"] > 0
     assert entry["processes_alive_after_kill"] == value_of(0)
     assert entry[MemoryFigure.FREE_LEAST]["verdict"] == Verdict.MISSED
-    assert is_not_measured(entry[MemoryFigure.USED_AFTER], Reason.WATCHDOG_BREACH)
+    assert entry[MemoryFigure.USED_AFTER] == value_of(USED_MB)
     assert len(run.probe_run_log.read_text().splitlines()) == 1
     assert [log.name for log in run.logs()] == ["record.wire.log"]
     assert str(run.logs()[0]) in run.printed()
@@ -308,7 +308,11 @@ def test_a_breach_while_sessions_run_keeps_the_cells_finished_before_it(
     assert entry[MEMORY_STOP]["reason"] == reason
     assert entry["start_to_ready_ms"]["value"] > 0
     assert entry["processes_alive_after_kill"] == value_of(0)
-    assert is_not_measured(entry[MemoryFigure.USED_AFTER], Reason.WATCHDOG_BREACH)
+    assert (reason is StopReason.BELOW_FLOOR) == (
+        MemoryFigure.USED_AFTER in entry and "value" in entry[MemoryFigure.USED_AFTER]
+    )
+    if reason is StopReason.SAMPLE_FAILED:
+        assert is_not_measured(entry[MemoryFigure.USED_AFTER], Reason.SAMPLE_FAILED)
     assert run.wait_until(lambda: run.processes() == [], GONE_WITHIN_SECONDS)
 
 
