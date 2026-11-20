@@ -3,6 +3,6 @@ agent = "Claude 76251661-cb30-4447-a3ad-32a83a396daa"
 role = "builder"
 base = "bf169f154cd6815c81c1518f0762b2cacc85e194"
 branch = "claude/issue-51-p3d2b3b-card-mode-watchdog"
-scope = ["README.md", "scripts/card_drive.py", "scripts/card_memory.py", "scripts/card_record.py", "scripts/prove_card.py", "tests/scripts/conftest.py", "tests/scripts/test_card_drive.py", "tests/scripts/test_card_memory.py", "tests/scripts/test_prove_card.py", "tests/scripts/test_prove_card_kill.py", "tests/scripts/test_prove_card_memory.py", "tests/support/prove_card_support.py", "tests/support/worker_support.py"]
+scope = ["README.md", "scripts/card_drive.py", "scripts/card_memory.py", "scripts/card_record.py", "scripts/card_supervision.py", "scripts/prove_card.py", "tests/scripts/conftest.py", "tests/scripts/test_card_drive.py", "tests/scripts/test_card_memory.py", "tests/scripts/test_prove_card.py", "tests/scripts/test_prove_card_kill.py", "tests/scripts/test_prove_card_memory.py", "tests/support/prove_card_support.py", "tests/support/worker_support.py"]
 opened_commit = "725ef383adcdd482a221c04067328016af4c2ac1"
 whole_reason = "Card mode, its memory refusal and its outside watchdog killing through the top's end-of-group kill with probe-run spared, their tests and README's proofs guard one run on the shared card together."
