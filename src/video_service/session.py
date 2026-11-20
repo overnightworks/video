@@ -257,9 +257,9 @@ class Session:
                 ) as step,
             ):
                 end = await self._serve(trace)
-                self._place.end()
                 await self._media.close()
                 await self._finish(step, end)
+            self._place.end()
         finally:
             await self._media.close()
             closing = self._place.worker.submit(self._place.session.close)

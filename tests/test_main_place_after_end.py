@@ -13,8 +13,10 @@ from video_provider_fake import FakeProvider
 from websockets.asyncio.client import connect
 from websockets.exceptions import InvalidStatus
 
+from support.clock_support import FakeClock
 from support.identity_support import valid_headers
 from support.images import picture
+from support.scripted_session import play, scripted
 from support.service_support import READY_WITHIN_SECONDS, free_port, start_service
 from support.session_support import pcm, sentence_events, update_event
 from video_client.health import fetch_health
@@ -31,6 +33,7 @@ if TYPE_CHECKING:
     from support.runtime_support import BuildRuntime
 
 _STILL_WAITING_SECONDS = 0.3
+_MAX_LAG_MS = 150
 
 
 class _Service:
@@ -191,3 +194,20 @@ def test_an_upgrade_while_a_live_session_holds_the_place_is_busy(
     run_on_service(scenario)
 
     assert outcome == [HTTPStatus.TOO_MANY_REQUESTS]
+
+
+def test_the_place_counts_open_until_the_session_has_closed_its_socket() -> None:
+    clock = FakeClock()
+    socket = scripted([{"type": "no.such.event"}], sentences=0)
+    seen: list[int | None] = []
+
+    play(
+        socket,
+        provider=FakeProvider(sleep=clock.advance),
+        pacing=clock.pacing,
+        max_lag_ms=_MAX_LAG_MS,
+        end=lambda: seen.append(socket.close_code),
+    )
+
+    assert seen == [socket.close_code]
+    assert socket.close_code is not None
