@@ -23,15 +23,23 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
-MEMORY: Final = CardMemory(used_mb=7123, free_mb=17000, total_mb=24576)
-# nvidia-smi's own form of one line.
-MEMORY_LINE: Final = f"{MEMORY.used_mb}, {MEMORY.free_mb}, {MEMORY.total_mb}"
 # Long enough that only the reading's own bound ends a call that waits on it.
 STAND_IN_SECONDS: Final = 60
 # What a loaded machine may add to the bounds before the reading counts as held up.
 MARGIN_SECONDS: Final = 10
 # The stand-in's `PATH` holds no other tool.
 SLEEP: Final = shutil.which("sleep")
+
+
+@pytest.fixture
+def memory() -> CardMemory:
+    """A card's memory as one scenario states it."""
+    return CardMemory(used_mb=7123, free_mb=17000, total_mb=24576)
+
+
+def _line_of(memory: CardMemory) -> str:
+    """The line `nvidia-smi` prints for `memory`."""
+    return f"{memory.used_mb}, {memory.free_mb}, {memory.total_mb}"
 
 
 def _nvidia_smi(directory: Path, script: str) -> None:
@@ -41,21 +49,21 @@ def _nvidia_smi(directory: Path, script: str) -> None:
 
 
 def test_the_reading_is_the_used_free_and_total_memory_of_the_first_line(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    memory: CardMemory, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _nvidia_smi(tmp_path, f"printf '{MEMORY_LINE}\\n1, 2, 3\\n'")
+    _nvidia_smi(tmp_path, f"printf '{_line_of(memory)}\\n1, 2, 3\\n'")
     monkeypatch.setenv("PATH", str(tmp_path))
 
-    assert read_card_memory() == MEMORY
+    assert read_card_memory() == memory
 
 
 def test_health_reports_the_used_memory_of_the_reading(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    memory: CardMemory, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _nvidia_smi(tmp_path, f"printf '{MEMORY_LINE}\\n'")
+    _nvidia_smi(tmp_path, f"printf '{_line_of(memory)}\\n'")
     monkeypatch.setenv("PATH", str(tmp_path))
 
-    assert card_memory_mb() == MEMORY.used_mb
+    assert card_memory_mb() == memory.used_mb
 
 
 @pytest.mark.parametrize(
