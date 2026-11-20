@@ -31,12 +31,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Final
 
 from card_drive import (
+    KERNEL,
     STOP_SIGNALS,
     Audio,
     Kill,
+    ProcessControl,
     SessionEndedError,
     Window,
-    become_subreaper,
     end_processes_below,
     exit_on_stop,
     hold_workers,
@@ -490,26 +491,21 @@ def _under_probe_run(
             print(f"beside it: {log}")
 
 
-def _holding(stops: list[int]) -> Callable[[int, object], None]:
-    """A stop handler that records the stop and does nothing else."""
-
-    def hold(signum: int, _frame: object) -> None:
-        stops.append(signum)
-
-    return hold
-
-
 def _run_child(command: list[str], group: str, fragment: Path, stops: list[int]) -> int:
-    """Run `command` as the group's process; a stop is forwarded and recorded.
+    """Run `command` as the group's process; a stop is recorded and, meanwhile, sent on.
 
-    Once the process is reaped the handlers hold any further stop, until the caller
-    puts the handlers back.
+    Once the process is reaped a stop is only recorded; the caller puts the handlers
+    back.
     """
 
-    def forward(signum: int, frame: object) -> None:
+    def forward(signum: int, _frame: object) -> None:
+        stops.append(signum)
+        # Once the process is reaped the group's process has ended and its id may name
+        # another process.
+        if child.returncode is not None:
+            return
         # `timeout` kills its command at once on a signal, so the stop goes to the
         # group's process itself, which stops the service first and then exits.
-        _holding(stops)(signum, frame)
         try:
             os.kill(int(_pid_file(fragment).read_text()), signum)
         except OSError, ValueError:
@@ -522,14 +518,14 @@ def _run_child(command: list[str], group: str, fragment: Path, stops: list[int])
         # The group's service is cleaned up by the child, so a stop reaches it first.
         for stopping in STOP_SIGNALS:
             signal.signal(stopping, forward)
-        status = child.wait()
-        for stopping in STOP_SIGNALS:
-            signal.signal(stopping, _holding(stops))
-    return status
+        return child.wait()
 
 
 def _run_group_process(
-    group: str, arguments: argparse.Namespace, fragment: Path
+    group: str,
+    arguments: argparse.Namespace,
+    fragment: Path,
+    control: ProcessControl,
 ) -> tuple[int, Kill]:
     """Run `group`, then end whatever is left below the top: its status and the kill.
 
@@ -540,12 +536,13 @@ def _run_group_process(
     before = [signal.getsignal(stopping) for stopping in STOP_SIGNALS]
     stops: list[int] = []
     status = _under_probe_run(group, arguments, fragment, stops)
-    kill = end_processes_below()
-    if stops:
-        message = f"interrupted by {signal.Signals(stops[0]).name}"
-        raise SystemExit(message)
+    kill = end_processes_below(control)
+    # A stop after the handlers are back reaches the top's own handler; one before is
+    # in `stops`, which is read after.
     for stopping, handler in zip(STOP_SIGNALS, before, strict=True):
         signal.signal(stopping, handler)
+    if stops:
+        _interrupted(stops[0], None)
     return status, kill
 
 
@@ -575,7 +572,11 @@ def _kill_figures(kill: Kill) -> dict[str, object]:
 
 
 def _gather(
-    group: str, arguments: argparse.Namespace, scratch: Path, gathered: _Gathered
+    group: str,
+    arguments: argparse.Namespace,
+    scratch: Path,
+    gathered: _Gathered,
+    control: ProcessControl,
 ) -> None:
     """Run `group` unless a group failed before it, and add its fragment's figures.
 
@@ -587,7 +588,7 @@ def _gather(
     reason = Reason.EARLIER_GROUP_FAILED
     if gathered.failure is None:
         fragment = scratch / f"{group}.json"
-        status, kill = _run_group_process(group, arguments, fragment)
+        status, kill = _run_group_process(group, arguments, fragment, control)
         parts = _read_fragment(fragment)
         reason = Reason.NO_FRAGMENT
         kill_figures = _kill_figures(kill)
@@ -614,8 +615,11 @@ def _interrupted(signum: int, _frame: object) -> None:
     raise SystemExit(message)
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    """Run the chosen cells and write the record; refuse without `--dry-run`."""
+def main(argv: Sequence[str] | None = None, control: ProcessControl = KERNEL) -> int:
+    """Run the chosen cells and write the record; refuse without `--dry-run`.
+
+    `control` is what the end-of-group kill asks of the kernel.
+    """
     arguments = _arguments(sys.argv[1:] if argv is None else argv)
     if group := os.environ.get(_CHILD_MARKER):
         return _child(group, arguments)
@@ -624,7 +628,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not arguments.dry_run:
         raise SystemExit(_REFUSAL)
     try:
-        become_subreaper()
+        control.become_subreaper()
     except OSError as error:
         message = f"the command cannot become a child subreaper ({error.strerror})"
         raise SystemExit(message) from None
@@ -634,7 +638,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     with tempfile.TemporaryDirectory(prefix="prove-card-record-") as scratch:
         for group, members in GROUPS.items():
             if set(members) & set(arguments.cells):
-                _gather(group, arguments, Path(scratch), gathered)
+                _gather(group, arguments, Path(scratch), gathered, control)
     record = closed_record(
         dry_run=arguments.dry_run, cells=gathered.cells, services=gathered.services
     )

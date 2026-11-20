@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import signal
+import subprocess
 from typing import TYPE_CHECKING, Final
 
 import pytest
@@ -21,58 +22,69 @@ from support.prove_card_support import (
 )
 
 if TYPE_CHECKING:
-    import subprocess
     from pathlib import Path
 
 TEST_MARGIN_SECONDS: Final = 15
 
-# The command's own entry point, run in a process that is the top, with one thing the
-# test makes go wrong: a stop that arrives while the end-of-group kill runs, a kill
-# that raises, a subreaper that cannot be set.
+# The command's own entry point, run in a process that is the top, with the kernel
+# calls of the kill replaced by what makes one thing go wrong: a stop that arrives while
+# the end-of-group kill runs, a signal that is refused, a subreaper that cannot be set.
 HARNESS: Final = """
+import dataclasses
+import os
 import signal
 import subprocess
 import sys
+from pathlib import Path
 
 import card_drive
 import prove_card
 
 mode = sys.argv[1]
-end_processes_below = prove_card.end_processes_below
+kernel = card_drive.KERNEL
+opened = []
 
 
-def leave_a_process_below_the_top():
+def subreaper_that_leaves_a_process_below():
+    kernel.become_subreaper()
     # It must not hold the command's standard error open once the command has ended.
     subprocess.Popen(["sleep", "60"], stderr=subprocess.DEVNULL)
-
-
-def stop_during_the_kill():
-    leave_a_process_below_the_top()
-    signal.raise_signal(signal.SIGTERM)
-    return end_processes_below()
-
-
-def kill_that_raises():
-    leave_a_process_below_the_top()
-
-    def refuse(_pidfd):
-        raise PermissionError
-
-    card_drive._pidfd_send_kill = refuse
-    return end_processes_below()
 
 
 def subreaper_that_cannot_be_set():
     raise OSError(1, "Operation not permitted")
 
 
-if mode == "stop":
-    prove_card.end_processes_below = stop_during_the_kill
-elif mode == "raise":
-    prove_card.end_processes_below = kill_that_raises
-else:
-    prove_card.become_subreaper = subreaper_that_cannot_be_set
-raise SystemExit(prove_card.main(sys.argv[2:]))
+def open_during_a_stop_that_names_a_bystander(pid):
+    if not opened:
+        opened.append(pid)
+        # The group's process has ended, so the id it wrote may name another process.
+        for pid_file in Path(os.environ["TMPDIR"]).glob("prove-card-record-*/*.pid"):
+            pid_file.write_text(os.environ["BYSTANDER_PID"])
+        signal.raise_signal(signal.SIGTERM)
+    return kernel.open(pid)
+
+
+def refuse_to_signal(_pidfd):
+    raise PermissionError
+
+
+controls = {
+    "stop": dataclasses.replace(
+        kernel,
+        become_subreaper=subreaper_that_leaves_a_process_below,
+        open=open_during_a_stop_that_names_a_bystander,
+    ),
+    "raise": dataclasses.replace(
+        kernel,
+        become_subreaper=subreaper_that_leaves_a_process_below,
+        send_kill=refuse_to_signal,
+    ),
+    "subreaper": dataclasses.replace(
+        kernel, become_subreaper=subreaper_that_cannot_be_set
+    ),
+}
+raise SystemExit(prove_card.main(sys.argv[2:], controls[mode]))
 """
 
 
@@ -131,19 +143,26 @@ def test_a_subreaper_that_cannot_be_set_ends_the_command_before_any_group_starts
     assert run.processes() == []
 
 
-def test_a_stop_during_the_end_of_group_kill_is_held_until_the_kill_has_ended(
+def test_a_stop_during_the_end_of_group_kill_is_held_and_sent_to_no_process(
     run: Run, harness: Path
 ) -> None:
-    status, error = run.finish(
-        _start_with(run, harness, "stop", "--dry-run", "--cells", "clear", "lag")
-    )
+    bystander = subprocess.Popen(["sleep", "60"])  # noqa: S607 - the test's own bystander
+    run.environment["BYSTANDER_PID"] = str(bystander.pid)
+    try:
+        status, error = run.finish(
+            _start_with(run, harness, "stop", "--dry-run", "--cells", "clear", "lag")
+        )
 
-    assert status != 0
-    assert error.strip() == "interrupted by SIGTERM"
-    assert not run.record.exists()
-    assert len(run.probe_run_log.read_text().splitlines()) == 1
-    # The process the stand-in left below the top is the kill's to end.
-    assert run.processes() == []
+        assert status != 0
+        assert error.strip() == "interrupted by SIGTERM"
+        assert not run.record.exists()
+        assert len(run.probe_run_log.read_text().splitlines()) == 1
+        # The process the stand-in left below the top is the kill's to end.
+        assert run.processes() == []
+        assert bystander.poll() is None
+    finally:
+        bystander.kill()
+        bystander.wait()
 
 
 def test_a_kill_that_raises_is_recorded_as_failed_and_no_later_group_starts(
