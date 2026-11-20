@@ -1,0 +1,8 @@
+claim_id = "e3815087f98149cc80c433f5739c0951"
+agent = "Claude 76251661-cb30-4447-a3ad-32a83a396daa"
+role = "builder"
+base = "f4578d881ef8cc69d002c8918ca4fbd200fd7233"
+branch = "claude/issue-70-place-after-end"
+scope = ["docs/ARCHITECTURE.md", "docs/wire.md", "src/video_service/runtime.py", "src/video_service/session.py", "tests/test_main_place_after_end.py"]
+opened_commit = "6e7fe52282238864bb01ded3af4dfcb4811d0571"
+whole_reason = "One admission rule: the service code, the wire sentence, the architecture line and one socket test prove it together."
