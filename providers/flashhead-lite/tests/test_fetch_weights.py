@@ -268,14 +268,14 @@ def test_staging_left_by_an_interrupted_run_is_cleared_at_the_next_start(
 def test_the_command_ends_non_zero_naming_the_file_the_download_did_not_deliver(
     hub: Hub, weights: Weights, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    pin = hub.pin(b"model", "checkpoint/model.safetensors", served=b"tampered")
+    pin = PINNED_FILES[0]
+    hub.serve(pin, b"tampered")
     monkeypatch.setattr(sys, "prefix", str(weights.root.parent / ".venv"))
-    monkeypatch.setattr(fetch_weights, "PINNED_FILES", (pin,))
 
     with pytest.raises(SystemExit) as ended:
         fetch_weights.main(hub)
 
-    assert pin.destination.name in str(ended.value.code)
+    assert str(pin.destination) in str(ended.value.code)
     assert not (weights.root / pin.destination).exists()
 
 
