@@ -14,7 +14,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Final
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
 
 Figure = dict[str, object]
 
@@ -25,6 +25,15 @@ class Verdict(StrEnum):
     MET = "met"
     MISSED = "missed"
     NOT_MEASURED = "not_measured"
+
+
+class Reason(StrEnum):
+    """Why a figure was not measured when the proof itself ended before it."""
+
+    CELL_FAILED = "cell_failed"
+    GROUP_ENDED = "group_ended"
+    EARLIER_GROUP_FAILED = "earlier_group_failed"
+    NO_FRAGMENT = "no_fragment"
 
 
 @dataclass(frozen=True)
@@ -58,6 +67,15 @@ ENCODER_CORES_LINE: Final = Line(
     "the service's CPU at five viewers beyond none at most 2 cores", 2, operator.le
 )
 
+# What a service's entry in the record names, in its order.
+SERVICE_FIGURES: Final = (
+    "start_to_ready_ms",
+    "provider_load",
+    "look_preparations",
+    "stop_to_exit_ms",
+    "log",
+)
+
 NO_CARD_REASON: Final = "no card is driven, so a timing here is the fake's"
 
 
@@ -88,3 +106,19 @@ def closed_record(
         "cells": cells,
         "services": services,
     }
+
+
+def completed_cells(
+    names: Sequence[str], cells: dict[str, object], reason: Reason
+) -> dict[str, object]:
+    """Every cell of `names`: its figures in `cells`, or not measured for `reason`."""
+    return {name: cells.get(name, not_measured(reason)) for name in names}
+
+
+def completed_service(figures: dict[str, object], reason: Reason) -> dict[str, object]:
+    """A service's every figure: those in `figures`, the rest not measured for `reason`.
+
+    No figure in `figures` is dropped, so one the proof adds without naming it in
+    `SERVICE_FIGURES` shows in the record, where a finished group's keys are checked.
+    """
+    return {name: not_measured(reason) for name in SERVICE_FIGURES} | figures

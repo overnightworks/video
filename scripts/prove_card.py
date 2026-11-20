@@ -2,9 +2,11 @@
 
 `--dry-run` drives the `fake` provider, so every verdict that needs a card stays
 `not_measured`. Each group of cells runs as one service under `probe-run`, which
-this command calls itself; the record is written once every group has ended, and
+this command calls itself. Each group's process writes a fragment after every cell
+and when the group ends, and the record is written from the fragments however a
+group ends, so a failed group leaves its cells' figures and a reason for the rest;
 the recording and its contact sheets are written beside it, and each service's log
-is written there from the service's start, so it stays however the group ends.
+is written there from the service's start.
 """
 
 # ruff: noqa: T201 - the command reports its result on the command line
@@ -21,8 +23,10 @@ import subprocess
 import sys
 import tempfile
 import time
+import traceback
 from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
+from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Final
 
@@ -43,8 +47,12 @@ from card_record import (
     ENCODER_CORES_LINE,
     FIRST_OUTPUT_LINE,
     START_TO_READY_LINE,
+    Reason,
     closed_record,
+    completed_cells,
+    completed_service,
     judged,
+    not_measured,
     value_of,
 )
 from card_viewer import Recording, attached, clear_figure, figures
@@ -56,8 +64,8 @@ from video_client.session_wire import (
 from video_client.wire import RefusalCode
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
-    from contextlib import AbstractAsyncContextManager
+    from collections.abc import Callable, Sequence
+    from contextlib import AbstractAsyncContextManager, AbstractContextManager
 
     from card_drive import Service, Session
     from card_identity import Identity
@@ -74,6 +82,14 @@ KILL_GRACE_SECONDS: Final = 30
 CAP_SECONDS: Final = 1800
 _CHILD_MARKER: Final = "PROVE_CARD_GROUP"
 _SENTENCE_COLUMNS: Final = ("audio_ms", "frame_count", "late_frame_count", "outcome")
+
+
+class GroupOutcome(StrEnum):
+    """How far a group's process has come, as its fragment says."""
+
+    RUNNING = "running"
+    DONE = "done"
+    FAILED = "failed"
 
 
 @dataclass(frozen=True)
@@ -328,7 +344,7 @@ def _checked_record(path: Path) -> Path:
 def _service_figures(
     service: Service, log: Path, *, dry_run: bool
 ) -> dict[str, object]:
-    """The service's start, load and preparations, and its stop."""
+    """The service's start, load and preparations; its stop is added once it ends."""
     return {
         "start_to_ready_ms": judged(
             service.start_to_ready_ms, START_TO_READY_LINE, dry_run=dry_run
@@ -338,35 +354,79 @@ def _service_figures(
             {"look": value_of(line["look"])} | step_figures(line)
             for line in service.lines("look_preparation.ended")
         ],
-        "stop_to_exit_ms": value_of(service.stop_to_exit_ms),
         "log": value_of(log.name),
     }
 
 
+def _chosen(group: str, arguments: argparse.Namespace) -> list[str]:
+    """The cells of `group` the command was asked for, in the group's order."""
+    return [name for name in GROUPS[group] if name in arguments.cells]
+
+
+def _write_fragment(path: Path, fragment: dict[str, object]) -> None:
+    """Write `fragment` whole: to a temporary file, renamed into place."""
+    temporary = path.with_suffix(".tmp")
+    # The parent names the fragment's path in its own scratch directory.
+    temporary.write_text(json.dumps(fragment))  # NOSONAR(S8707)
+    temporary.replace(path)
+
+
 def _run_group(
-    group: str, arguments: argparse.Namespace, scratch: Path
-) -> dict[str, object]:
-    """Drive the cells of `group` through one service; its fragment of the record."""
+    group: str,
+    arguments: argparse.Namespace,
+    scratch: Path,
+    start_service: Callable[..., AbstractContextManager[Service]] = running_service,
+) -> GroupOutcome:
+    """Drive the cells of `group` through one service, keeping its fragment current.
+
+    The fragment is rewritten after each cell and once more when the group ends. A cell
+    that raises an `Exception` ends the group: it is `cell_failed`, the cells after it
+    `group_ended`, and the fragment holds both before the service stops. Anything
+    else, an interrupt's `SystemExit` included, is not caught.
+    """
     audio = read_audio(arguments.audio)
-    names = [name for name in GROUPS[group] if name in arguments.cells]
+    names = _chosen(group, arguments)
     log = _group_log(arguments.record, group)
+    cells: dict[str, object] = {}
     with (
         throwaway_identity(scratch) as identity,
-        running_service(identity, log, max_lag_ms=LAGS[group]) as service,
+        start_service(identity, log, max_lag_ms=LAGS[group]) as service,
     ):
         drive = Drive(
             service, identity, audio, dry_run=arguments.dry_run, record=arguments.record
         )
+        figures = _service_figures(service, log, dry_run=arguments.dry_run)
 
-        async def run_cells() -> dict[str, object]:
-            return {name: await GROUPS[group][name](drive) for name in names}
+        def save(outcome: GroupOutcome) -> None:
+            _write_fragment(
+                arguments.fragment,
+                {
+                    "outcome": outcome,
+                    "cells": cells,
+                    "services": {group: figures},
+                    "files": [path.name for path in drive.written],
+                },
+            )
 
-        cells = asyncio.run(run_cells())
-    return {
-        "cells": cells,
-        "services": {group: _service_figures(service, log, dry_run=arguments.dry_run)},
-        "files": [path.name for path in drive.written],
-    }
+        async def run_cells() -> GroupOutcome:
+            for position, name in enumerate(names):
+                try:
+                    cells[name] = await GROUPS[group][name](drive)
+                except Exception:  # noqa: BLE001 - the failure is the cell's record entry
+                    traceback.print_exc()
+                    cells[name] = not_measured(Reason.CELL_FAILED)
+                    cells.update(
+                        completed_cells(names[position + 1 :], {}, Reason.GROUP_ENDED)
+                    )
+                    save(GroupOutcome.RUNNING)
+                    return GroupOutcome.FAILED
+                save(GroupOutcome.RUNNING)
+            return GroupOutcome.DONE
+
+        outcome = asyncio.run(run_cells())
+    figures["stop_to_exit_ms"] = value_of(service.stop_to_exit_ms)
+    save(outcome)
+    return outcome
 
 
 def _pid_file(fragment: Path) -> Path:
@@ -375,19 +435,17 @@ def _pid_file(fragment: Path) -> Path:
 
 
 def _child(group: str, arguments: argparse.Namespace) -> int:
-    """Run one group where `probe-run` started it, and write its fragment."""
+    """Run one group where `probe-run` started it; non-zero when a cell failed."""
     for stopping in STOP_SIGNALS:
         signal.signal(stopping, exit_on_stop)
     _pid_file(arguments.fragment).write_text(str(os.getpid()))  # NOSONAR(S8707)
     with tempfile.TemporaryDirectory(prefix="prove-card-") as scratch:
-        fragment = _run_group(group, arguments, Path(scratch))
-    # The parent names the fragment's path in its own scratch directory.
-    arguments.fragment.write_text(json.dumps(fragment))  # NOSONAR(S8707)
-    return 0
+        outcome = _run_group(group, arguments, Path(scratch))
+    return 0 if outcome is GroupOutcome.DONE else 1
 
 
-def _under_probe_run(group: str, arguments: argparse.Namespace, fragment: Path) -> None:
-    """Run `group` as its own process under `probe-run`; a failure ends the proof."""
+def _under_probe_run(group: str, arguments: argparse.Namespace, fragment: Path) -> int:
+    """Run `group` as its own process under `probe-run`; its exit status."""
     for tool in (PROBE_RUN, "setpriv"):
         if shutil.which(tool) is None:
             message = f"{tool} is not on PATH; the proof does not run without it"
@@ -406,18 +464,18 @@ def _under_probe_run(group: str, arguments: argparse.Namespace, fragment: Path) 
         "--audio",
         str(arguments.audio),
         "--cells",
-        *[name for name in GROUPS[group] if name in arguments.cells],
+        *_chosen(group, arguments),
         *(["--dry-run"] if arguments.dry_run else []),
     ]
     try:
-        _run_child(command, group, fragment)
+        return _run_child(command, group, fragment)
     finally:
         if (log := _group_log(arguments.record, group)).exists():
             print(f"beside it: {log}")
 
 
-def _run_child(command: list[str], group: str, fragment: Path) -> None:
-    """Run `command` as the group's process; a stop is forwarded, a failure ends it."""
+def _run_child(command: list[str], group: str, fragment: Path) -> int:
+    """Run `command` as the group's process; a stop is forwarded and ends the proof."""
     interrupts: list[int] = []
 
     def forward(signum: int, _frame: object) -> None:
@@ -441,9 +499,48 @@ def _run_child(command: list[str], group: str, fragment: Path) -> None:
     if interrupts:
         message = f"interrupted by {signal.Signals(interrupts[0]).name}"
         raise SystemExit(message)
-    if status:
-        message = f"the {group} cells ended with status {status}"
-        raise SystemExit(message)
+    return status
+
+
+@dataclass
+class _Gathered:
+    """What the groups' fragments add up to, and the first group that failed."""
+
+    cells: dict[str, object] = field(default_factory=dict)
+    services: dict[str, object] = field(default_factory=dict)
+    files: list[str] = field(default_factory=list)
+    failure: str | None = None
+
+
+def _read_fragment(path: Path) -> dict[str, object]:
+    """The fragment a group's process wrote, or none when it wrote none."""
+    return json.loads(path.read_text()) if path.exists() else {}
+
+
+def _gather(
+    group: str, arguments: argparse.Namespace, scratch: Path, gathered: _Gathered
+) -> None:
+    """Run `group` unless a group failed before it, and add its fragment's figures.
+
+    A group that ended without a fragment or one it did not end is failed: what its
+    fragment lacks is `no_fragment`; a group never started is `earlier_group_failed`.
+    """
+    parts: dict[str, object] = {}
+    reason = Reason.EARLIER_GROUP_FAILED
+    if gathered.failure is None:
+        fragment = scratch / f"{group}.json"
+        status = _under_probe_run(group, arguments, fragment)
+        parts = _read_fragment(fragment)
+        reason = Reason.NO_FRAGMENT
+        if status or parts.get("outcome") != GroupOutcome.DONE:
+            gathered.failure = f"the {group} cells ended with status {status}"
+    gathered.cells |= completed_cells(
+        _chosen(group, arguments), parts.get("cells", {}), reason
+    )
+    gathered.services[group] = completed_service(
+        parts.get("services", {}).get(group, {}), reason
+    )
+    gathered.files += parts.get("files", [])
 
 
 def _interrupted(signum: int, _frame: object) -> None:
@@ -465,25 +562,21 @@ def main(argv: Sequence[str] | None = None) -> int:
         raise SystemExit(_REFUSAL)
     for stopping in STOP_SIGNALS:
         signal.signal(stopping, _interrupted)
-    cells: dict[str, object] = {}
-    services: dict[str, object] = {}
-    files: list[str] = []
+    gathered = _Gathered()
     with tempfile.TemporaryDirectory(prefix="prove-card-record-") as scratch:
         for group, members in GROUPS.items():
-            if not set(members) & set(arguments.cells):
-                continue
-            fragment = Path(scratch) / f"{group}.json"
-            _under_probe_run(group, arguments, fragment)
-            parts = json.loads(fragment.read_text())
-            cells |= parts["cells"]
-            services |= parts["services"]
-            files += parts["files"]
-    record = closed_record(dry_run=arguments.dry_run, cells=cells, services=services)
+            if set(members) & set(arguments.cells):
+                _gather(group, arguments, Path(scratch), gathered)
+    record = closed_record(
+        dry_run=arguments.dry_run, cells=gathered.cells, services=gathered.services
+    )
     # The operator names the record's path; writing it is this command's job.
     arguments.record.write_text(json.dumps(record, indent=2) + "\n")  # NOSONAR(S8707)
     print(f"record written to {arguments.record}")
-    for name in files:
+    for name in gathered.files:
         print(f"beside it: {arguments.record.with_name(name)}")
+    if gathered.failure:
+        raise SystemExit(gathered.failure)
     return 0
 
 
