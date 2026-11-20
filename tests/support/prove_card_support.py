@@ -15,7 +15,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Final
 
 import card_cells
-from card_record import FREE_MEMORY_LINE, Verdict
+from card_record import FREE_MEMORY_LINE, LagFigure, Verdict
+from video_service.config import Settings
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -31,9 +32,13 @@ GONE_WITHIN_SECONDS: Final = 15
 POLL_SECONDS: Final = 0.05
 AUDIO_RATE: Final = 16000
 AUDIO_SECONDS: Final = 2
+DEFAULT_LAG_MS: Final = Settings.model_fields["max_lag_ms"].default
+# The group a run without `--lag-ms` starts first.
+LAG_SERVICE: Final = f"lag-{DEFAULT_LAG_MS}"
 MARKER: Final = "PROVE_CARD_TEST_MARKER"
+# In the order the groups run: the sweep's before the wire group.
 CELLS_BY_GROUP: Final = {
-    group: list(cells) for group, cells in card_cells.GROUPS.items()
+    kind: list(card_cells.GROUPS[kind]) for kind in ("lag", "wire")
 }
 SERVICE_COMMAND: Final = "video_service"
 # A stand-in for the fleet's `probe-run`, which waits on the machine's load and then
@@ -59,8 +64,9 @@ esac
 """
 # The `flashhead-lite` worker of a provider root: the fake provider with the steps a
 # case scripts through the environment, each writing a reading for the stand-in. It
-# fails its load for the group whose lag the case names, and fails the preparation of
-# the looks the case lists. At its start it writes the `HOME` and `TMPDIR` it sees to
+# fails its load for the group the case names, and fails the preparation of
+# the looks the case lists. It renders in chunks as the case's environment says. At its
+# start it writes the `HOME` and `TMPDIR` it sees to
 # the file the case names and puts one entry into its `HOME`, as a compiler would.
 WORKER_STAND_IN: Final = f"""#!{sys.executable}
 import json
@@ -93,8 +99,8 @@ class Scripted(FakeProvider):
         compile_into_home()
         write_reading("WORKER_READING_AT_LOAD")
         time.sleep(float(os.environ.get("WORKER_LOAD_SECONDS", 0)))
-        failing_lag = os.environ.get("WORKER_FAILS_TO_START_AT_LAG")
-        if failing_lag == os.environ["VIDEO_MAX_LAG_MS"]:
+        failing_group = os.environ.get("WORKER_FAILS_TO_START_IN_GROUP")
+        if failing_group == os.environ["PROVE_CARD_GROUP"]:
             raise ProviderFailedError("the load was scripted to fail")
         return super().start()
 
@@ -103,7 +109,18 @@ class Scripted(FakeProvider):
         return super().open_session(look)
 
 
-run_worker(Scripted(refuses=os.environ.get("WORKER_REFUSES", "").split()))
+def seconds(name):
+    return float(os.environ.get(name, 0))
+
+
+run_worker(
+    Scripted(
+        refuses=os.environ.get("WORKER_REFUSES", "").split(),
+        render_seconds=seconds("WORKER_RENDER_SECONDS"),
+        idle_render_seconds=seconds("WORKER_IDLE_RENDER_SECONDS"),
+        chunk_frames=int(os.environ.get("WORKER_CHUNK_FRAMES", 1)),
+    )
+)
 """
 CAP_MB: Final = 4000
 # Long enough that the cells never finish before the watchdog has sampled.
@@ -175,6 +192,17 @@ def is_not_measured(figure: dict, reason: Reason) -> bool:
     return figure == {"verdict": Verdict.NOT_MEASURED, "reason": reason}
 
 
+def is_cell_not_measured(record: dict, name: str, reason: Reason) -> bool:
+    """Whether the record's cell `name` is nothing measured, for `reason`.
+
+    The lag cell is never whole not measured: its summary figures are.
+    """
+    cell = record["cells"][name]
+    if name == "lag":
+        return all(is_not_measured(cell[figure], reason) for figure in LagFigure)
+    return is_not_measured(cell, reason)
+
+
 def wait_until(condition: Callable[[], bool], seconds: float) -> bool:
     """Whether `condition` holds within `seconds`."""
     deadline = time.monotonic() + seconds
@@ -238,11 +266,19 @@ class Run:
             "WORKER_LOAD_SECONDS": str(LOAD_SECONDS),
         }
 
-    def fail_the_load_of(self, group: str) -> None:
-        """Have the provider's load fail in `group`, which the service's lag tells."""
+    def render_in_chunks(
+        self, *, chunk_frames: int, render_seconds: float, idle_render_seconds: float
+    ) -> None:
+        """Have the provider draw `chunk_frames` frames a render at a time."""
         self.environment = self.environment | {
-            "WORKER_FAILS_TO_START_AT_LAG": str(card_cells.LAGS[group])
+            "WORKER_CHUNK_FRAMES": str(chunk_frames),
+            "WORKER_RENDER_SECONDS": str(render_seconds),
+            "WORKER_IDLE_RENDER_SECONDS": str(idle_render_seconds),
         }
+
+    def fail_the_load_of(self, group: str) -> None:
+        """Have the provider's load fail in `group`, which the group's process names."""
+        self.environment = self.environment | {"WORKER_FAILS_TO_START_IN_GROUP": group}
 
     def fail_the_preparation_of(self, look: str) -> None:
         """Have the provider fail to prepare `look`."""

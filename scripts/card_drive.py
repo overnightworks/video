@@ -490,13 +490,6 @@ def _wait_until_ready(service: Service, started: float) -> None:
     raise DriveError(message)
 
 
-def hold_workers(service_pid: int) -> None:
-    """Stop the service's workers where they are, so no call to them is answered."""
-    for worker in worker_pids(service_pid):
-        with suppress(ProcessLookupError):
-            os.killpg(worker, signal.SIGSTOP)
-
-
 def _kill(service_pid: int) -> None:
     """Kill the groups of the service's worker children now, then the service's."""
     for worker in worker_pids(service_pid):
@@ -701,7 +694,7 @@ class Session:
         )
         await self.send(start)
         for offset in range(0, len(audio.pcm), CHUNK_BYTES):
-            await self.socket.send(audio.pcm[offset : offset + CHUNK_BYTES])
+            await self._deliver(audio.pcm[offset : offset + CHUNK_BYTES])
         await self.send(SentenceEnd(type="sentence.end", sentence=sentence))
         return trace_id
 
@@ -711,7 +704,21 @@ class Session:
 
     async def send(self, event: ClientEvent) -> None:
         """Send one client event."""
-        await self.socket.send(event.model_dump_json(exclude_none=True))
+        await self._deliver(event.model_dump_json(exclude_none=True))
+
+    async def _deliver(self, message: str | bytes) -> None:
+        """Send `message`; a closed connection raises the `error` event received first.
+
+        The service sends its `error` event and then closes, so the close can be seen
+        before the event is read; `recv` hands out what arrived before the close.
+        """
+        try:
+            await self.socket.send(message)
+        except ConnectionClosed:
+            with suppress(ConnectionClosed):
+                error = await self.until(ErrorEvent)
+                raise SessionEndedError(error.error.code) from None
+            raise
 
 
 @asynccontextmanager

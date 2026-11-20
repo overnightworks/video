@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Final
 from logline import Outcome
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Collection, Sequence
+    from collections.abc import Callable, Collection, Mapping, Sequence
     from pathlib import Path
 
     from card_drive import Service
@@ -48,6 +48,8 @@ class Reason(StrEnum):
     NO_LOUD_AUDIO_BEFORE_CLEAR = "no_loud_audio_before_clear"
     PROVIDER_NOT_LOADED = "provider_not_loaded"
     LOOK_NOT_PREPARED = "look_not_prepared"
+    NO_VALUE_STARVED = "no_value_starved"
+    LARGEST_VALUE_STARVED = "largest_value_starved"
 
 
 class CompilerHome(StrEnum):
@@ -118,10 +120,20 @@ class MemoryFigure(StrEnum):
 
 
 MEMORY_FIGURES: Final = tuple(MemoryFigure)
+
+
+class LagFigure(StrEnum):
+    """What the lag sweep concludes, in ms."""
+
+    SMALLEST_WITHOUT_STARVATION = "smallest_without_starvation_ms"
+    LARGEST_STARVED = "largest_starved_ms"
+
+
 # Only a group the top ended for memory has this entry.
 MEMORY_STOP: Final = "memory_stop"
 # What a service's entry in the record names, in its order.
 SERVICE_FIGURES: Final = (
+    "max_lag_ms",
     "compiler_home_at_start",
     "start_to_ready_ms",
     "provider_load",
@@ -210,9 +222,12 @@ def step_figures(line: dict[str, object]) -> dict[str, object]:
     }
 
 
-def service_figures(service: Service, log: Path, *, dry_run: bool) -> dict[str, object]:
-    """The service's start, load and preparations; its stop is added once it ends."""
+def service_figures(
+    service: Service, log: Path, max_lag_ms: int, *, dry_run: bool
+) -> dict[str, object]:
+    """The service's lag, start, load and preparations; its stop comes once it ends."""
     return {
+        "max_lag_ms": value_of(max_lag_ms),
         "start_to_ready_ms": judged(
             service.start_to_ready_ms, START_TO_READY_LINE, dry_run=dry_run
         ),
@@ -244,3 +259,44 @@ def failed_load(service: Service) -> tuple[Reason, str] | None:
                 f"the look {line['look']} was not prepared ({line['reason']})",
             )
     return None
+
+
+def _lag_entry(max_lag_ms: int, cell: object) -> dict[str, object]:
+    """One swept value's figures: its cell's, or its cell's reason where it has none."""
+    figures = cell if "starved" in cell else {"starved": cell, "sentences": cell}
+    return {"max_lag_ms": value_of(max_lag_ms)} | figures
+
+
+def lag_cell(sweep: Mapping[int, object]) -> dict[str, object]:
+    """The `lag` cell: each swept value's figures and the two figures the sweep is for.
+
+    `sweep` holds each value's cell as its group left it: its figures, or not
+    measured. The smallest value without starvation lies above every value that
+    starved. A value with no outcome leaves both figures not measured, for the reason
+    of the smallest such value.
+    """
+    entries = [_lag_entry(lag, sweep[lag]) for lag in sorted(sweep)]
+    outcomes = [entry["starved"] for entry in entries]
+    figures = {"values": entries}
+    if unmeasured := next(
+        (outcome for outcome in outcomes if "reason" in outcome), None
+    ):
+        gap = not_measured(unmeasured["reason"])
+        return figures | {
+            LagFigure.SMALLEST_WITHOUT_STARVATION: gap,
+            LagFigure.LARGEST_STARVED: gap,
+        }
+    starved = [
+        entry["max_lag_ms"]["value"]
+        for entry, outcome in zip(entries, outcomes, strict=True)
+        if outcome["value"]
+    ]
+    above = [lag for lag in sorted(sweep) if not starved or lag > max(starved)]
+    return figures | {
+        LagFigure.SMALLEST_WITHOUT_STARVATION: (
+            value_of(above[0]) if above else not_measured(Reason.LARGEST_VALUE_STARVED)
+        ),
+        LagFigure.LARGEST_STARVED: (
+            value_of(max(starved)) if starved else not_measured(Reason.NO_VALUE_STARVED)
+        ),
+    }

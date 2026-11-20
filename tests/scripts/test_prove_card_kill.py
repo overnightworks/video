@@ -16,9 +16,12 @@ from support.prove_card_support import (
     APPEARS_WITHIN_SECONDS,
     BELOW_THE_FLOOR,
     CELLS_BY_GROUP,
+    DEFAULT_LAG_MS,
     GONE_WITHIN_SECONDS,
+    LAG_SERVICE,
     Run,
     ended,
+    is_cell_not_measured,
     is_not_measured,
     lines,
 )
@@ -241,7 +244,8 @@ def test_a_stop_is_not_forwarded_to_a_process_that_is_no_child_of_probe_run(
             run, harness, "record", "--dry-run", "--cells", "clear", "lag"
         )
         serving = run.wait_until(
-            lambda: "process.ready" in _log_text(run, "wire"), APPEARS_WITHIN_SECONDS
+            lambda: "process.ready" in _log_text(run, LAG_SERVICE),
+            APPEARS_WITHIN_SECONDS,
         )
         # The id the group's process wrote now names a process probe-run did not start.
         (pid_file,) = run.scratch.glob("prove-card-record-*/*.pid")
@@ -273,7 +277,7 @@ def test_a_stop_is_forwarded_through_the_checked_send_to_the_child_of_probe_run(
         run, harness, "record", "--dry-run", "--cells", "clear", "lag"
     )
     serving = run.wait_until(
-        lambda: "process.ready" in _log_text(run, "wire"), APPEARS_WITHIN_SECONDS
+        lambda: "process.ready" in _log_text(run, LAG_SERVICE), APPEARS_WITHIN_SECONDS
     )
     os.kill(command.pid, signal.SIGTERM)
 
@@ -294,7 +298,7 @@ def test_a_stop_is_sent_to_no_process_when_the_check_of_its_child_cannot_be_made
 ) -> None:
     command = _start_with(run, harness, "blind", "--dry-run", "--cells", "clear", "lag")
     serving = run.wait_until(
-        lambda: "process.ready" in _log_text(run, "wire"), APPEARS_WITHIN_SECONDS
+        lambda: "process.ready" in _log_text(run, LAG_SERVICE), APPEARS_WITHIN_SECONDS
     )
     os.kill(command.pid, signal.SIGTERM)
 
@@ -316,15 +320,17 @@ def test_a_kill_that_raises_is_recorded_as_failed_and_no_later_group_starts(
         _start_with(run, harness, "raise", "--dry-run", "--cells", "clear", "lag")
     )
     record = json.loads(run.record.read_text())
-    entry = record["services"]["wire"]
+    entry = record["services"][LAG_SERVICE]
 
     assert status != 0
     assert len(error.strip().splitlines()) == 1
-    assert "wire" in error
+    assert LAG_SERVICE in error
     assert is_not_measured(entry["processes_left_after_stop"], Reason.KILL_FAILED)
     assert is_not_measured(entry["processes_alive_after_kill"], Reason.KILL_FAILED)
-    assert record["cells"]["clear"]["outcome"]["value"] == "cancelled"
-    assert is_not_measured(record["cells"]["lag"], Reason.EARLIER_GROUP_FAILED)
+    assert record["cells"]["lag"]["smallest_without_starvation_ms"] == value_of(
+        DEFAULT_LAG_MS
+    )
+    assert is_cell_not_measured(record, "clear", Reason.EARLIER_GROUP_FAILED)
     assert len(run.probe_run_log.read_text().splitlines()) == 1
 
 
@@ -338,7 +344,7 @@ def test_an_interrupt_during_the_second_group_ends_the_command_with_nothing_left
         *(["--dry-run"] if mode == "--dry-run" else []), "--cells", "clear", "lag"
     )
     second_group_serves = run.wait_until(
-        lambda: "process.ready" in _log_text(run, "lag"), APPEARS_WITHIN_SECONDS
+        lambda: "process.ready" in _log_text(run, "wire"), APPEARS_WITHIN_SECONDS
     )
     os.kill(command.pid, signal.SIGINT)
 
@@ -391,8 +397,8 @@ def test_a_stop_during_the_breachs_kill_is_held_and_forwarded_to_no_process(
     assert status == 1
     assert "watchdog breach" in error
     assert "interrupted" not in error
-    assert is_not_measured(record["cells"]["lag"], Reason.WATCHDOG_BREACH)
-    assert record["services"]["lag"]["processes_alive_after_kill"] == value_of(0)
+    assert is_cell_not_measured(record, "lag", Reason.WATCHDOG_BREACH)
+    assert record["services"][LAG_SERVICE]["processes_alive_after_kill"] == value_of(0)
     assert set(_signals_sent(signals)) <= {signal.SIGKILL.value}
     assert run.processes() == []
 
@@ -442,12 +448,12 @@ def test_a_kill_that_fails_on_the_breach_path_is_closed_and_the_record_is_writte
     group_follows = run.wait_until(lambda: run.processes() == [], GROUP_FOLLOWS_SECONDS)
     status, error = run.finish(command)
     record = json.loads(run.record.read_text())
-    entry = record["services"]["lag"]
+    entry = record["services"][LAG_SERVICE]
 
     assert status != 0
     assert "watchdog breach" in error
     assert lines(error)[-1] == (
-        "the lag group left a process below the top that was not ended"
+        f"the {LAG_SERVICE} group left a process below the top that was not ended"
     )
     assert is_not_measured(entry["processes_left_after_stop"], Reason.KILL_FAILED)
     assert is_not_measured(entry["processes_alive_after_kill"], Reason.KILL_FAILED)
