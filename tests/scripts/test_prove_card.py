@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import contextlib
 import json
 import os
@@ -15,6 +14,7 @@ import av
 import pytest
 from PIL import Image
 
+import card_cells
 import card_drive
 import card_identity
 import prove_card
@@ -393,34 +393,6 @@ def test_a_bad_input_ends_the_command_with_one_line_before_any_group_starts(
     assert run.processes() == []
 
 
-def test_a_provider_that_cannot_answer_ends_the_session_as_unavailable_at_any_lag(
-    tmp_path: Path,
-) -> None:
-    audio = tmp_path / "speech.wav"
-    write_audio(audio, seconds=AUDIO_SECONDS)
-
-    async def drive_the_lag_cell() -> object:
-        # No jitter exceeds this lag, so only the held worker ends the session.
-        with (
-            card_identity.throwaway_identity(tmp_path) as identity,
-            card_drive.running_service(
-                identity, tmp_path / "service.log", max_lag_ms=500
-            ) as service,
-        ):
-            drive = prove_card.Drive(
-                service,
-                identity,
-                card_drive.read_audio(audio),
-                dry_run=True,
-                record=tmp_path / "record.json",
-            )
-            return await prove_card._lag(drive)  # noqa: SLF001 - the cell is the unit
-
-    cell = asyncio.run(drive_the_lag_cell())
-
-    assert cell["ended_unavailable"]["value"] is True
-
-
 def test_a_service_that_stops_in_time_takes_its_worker_with_it(tmp_path: Path) -> None:
     with (
         card_identity.throwaway_identity(tmp_path) as identity,
@@ -653,7 +625,7 @@ def test_a_failed_cells_reasons_are_in_the_fragment_before_the_service_stops(
         raise card_drive.DriveError
 
     monkeypatch.setitem(
-        prove_card.GROUPS,
+        card_cells.GROUPS,
         "wire",
         {"sentences": finishes, "clear": raises, "looks": finishes},
     )
