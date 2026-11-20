@@ -250,8 +250,7 @@ for example:
 
 ```toml
 dependencies = [
-    "overnightworks-video-client @
-git+https://github.com/overnightworks/video@vX.Y.Z#subdirectory=packages/client",
+    "overnightworks-video-client @ git+https://github.com/overnightworks/video@vX.Y.Z#subdirectory=packages/client",
 ]
 ```
 
