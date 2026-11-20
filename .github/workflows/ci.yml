@@ -95,6 +95,14 @@ jobs:
       - name: Verify the dependency lock
         run: uv lock --check --project providers/flashhead-lite
 
+      - name: Check that no remote code is turned on
+        # grep reads the submodule's checked-out tree, which git grep does not enter;
+        # 1 means no match, and an unreadable tree (2) fails like a match
+        run: |
+          status=0
+          grep -rnIiP 'trust_remote_code(?![\x22\x27]?\s*[=:]\s*False)|custom_pipeline' providers/flashhead-lite/src providers/flashhead-lite/soulx-flashhead/flash_head || status=$?
+          [ "$status" -eq 1 ] || { echo "remote code is turned on, or a tree is unreadable" >&2; exit 1; }
+
       - name: Install locked dependencies
         run: |
           uv sync --locked --all-groups --no-build
