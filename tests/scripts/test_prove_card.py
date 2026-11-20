@@ -104,13 +104,14 @@ class Run:
 
     def start(self, *extra: str) -> subprocess.Popen[bytes]:
         """Start the command in a process group of its own."""
-        return subprocess.Popen(  # noqa: S603 - this checkout's interpreter and script
-            self.arguments(*extra),
-            env=self.environment,
-            stdout=self.output.open("wb"),
-            stderr=subprocess.PIPE,
-            start_new_session=True,
-        )
+        with self.output.open("wb") as output:
+            return subprocess.Popen(  # noqa: S603 - this checkout's interpreter and script
+                self.arguments(*extra),
+                env=self.environment,
+                stdout=output,
+                stderr=subprocess.PIPE,
+                start_new_session=True,
+            )
 
     def finish(self, command: subprocess.Popen[bytes]) -> tuple[int, str]:
         """Wait for the command: its exit status and what it wrote to standard error."""

@@ -137,15 +137,16 @@ session's tokens. `--audio` is a mono 16-bit WAV of at least a second, at a rate
 carries; the command checks it, and that `--record` names a file in an existing writable
 directory, before any service starts, and ends with one line when either fails. `--cells`
 names the cells to run (`sentences`, `clear`, `looks`, `viewer`, `viewers`, `lag`); each
-group of them runs as one service under `probe-run`, which the command calls itself. The
-service starts under `setpriv --pdeathsig KILL` (the host needs `setpriv`, as `probe-run` does), so a kill of the group's process ends it.
+group of them runs as one service under `probe-run`, which the command calls itself. The service starts under `setpriv --pdeathsig KILL`
+(the host needs `setpriv`, as `probe-run` does), so a kill of the group's process ends it.
 The command waits for the service's readiness as long as the service's own bounds for
 the provider's start and each look's preparation allow, plus a slack. Every exit stops
 the service first, which reaps its provider worker. A service that has not exited within
 the stop bound is killed, the groups of the workers that are its children at that moment
-first and its own group after, and the command ends within the stop bound and a margin of
-the interrupt, also for a service that cannot answer its stop. An interrupt (INT or TERM)
-ends the command with one line. Each group's service log is written beside the record
+first and its own group after, so the service and its workers are gone within the stop
+bound and a margin of the interrupt, also for a service that cannot answer its stop; the
+command itself ends after it has unwound its cells. An interrupt (INT or TERM) ends the
+command with one line. Each group's service log is written beside the record
 from the service's start, so it is there however the group ends (cells done, a failed
 cell, an interrupt, a kill), and the command prints its path. A kill of the command
 itself is not trapped: `probe-run`'s cap ends what it left. A service that dies by a
@@ -163,10 +164,9 @@ audio frame a viewer receives; per viewer (one, and each of five) the frames per
 the peer in a sentence and between sentences, the loud audio frames between sentences, the
 gaps in the video timestamps and the frame size the provider drew; the service's CPU, read
 from its own process's accounting, at no, one and five viewers, and the encoders' share at
-five; each session's opening time; each service's start, the provider's load and each look's preparation as the service
-logged them (outcome, the reason when one is logged, duration), and its stop's time to
-exit; and that
-a lag far too small ends the session as `unavailable`. Beside the record the command writes
+five; each session's opening time; each service's start, the provider's load and each look's
+preparation as the service logged them (outcome, the reason when one is logged,
+duration), and its stop's time to exit; and that a lag far too small ends the session as `unavailable`. Beside the record the command writes
 one viewer's audio and video as `<record>.viewer.mp4`, contact sheets of it as
 `<record>.viewer-sheet-<n>.png` for the judge of the picture, and each group's service log as
 `<record>.<group>.log`; the record names them and the command prints their paths. A dry run
