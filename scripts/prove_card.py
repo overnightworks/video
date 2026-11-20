@@ -160,6 +160,7 @@ def _arguments(argv: Sequence[str]) -> argparse.Namespace:
     )
     parser.add_argument("--fragment", type=Path, help=argparse.SUPPRESS)
     arguments = parser.parse_args(argv)
+    arguments.look_image_bytes = None
     arguments.lag_ms = _lags(arguments.lag_ms)
     return arguments
 
@@ -178,8 +179,8 @@ def _checked_record(path: Path) -> Path:
     return record
 
 
-def _checked_look_image(path: Path) -> None:
-    """Return once the service's own limits accept the file as a look's image."""
+def _checked_look_image(path: Path) -> bytes:
+    """The file's bytes once the service's own limits accept them as a look's image."""
     limits = _GivenSettings(provider=ProviderName.FAKE)
     try:
         data = path.read_bytes()
@@ -195,6 +196,14 @@ def _checked_look_image(path: Path) -> None:
     if reason is not None:
         message = f"--look-image {path}: the service refuses it ({reason})"
         raise SystemExit(message)
+    return data
+
+
+def _give_look_image(arguments: argparse.Namespace) -> None:
+    """Keep the checked bytes of the named look image; none named, none kept."""
+    if arguments.look_image is not None:
+        arguments.look_image = arguments.look_image.resolve()
+        arguments.look_image_bytes = _checked_look_image(arguments.look_image)
 
 
 class _GivenSettings(Settings):
@@ -329,13 +338,6 @@ async def _drive_cells(
     return GroupOutcome.DONE
 
 
-def _look_image_bytes(arguments: argparse.Namespace) -> bytes | None:
-    """The operator's look image, or `None` when the command names none."""
-    if arguments.look_image is None:
-        return None
-    return arguments.look_image.read_bytes()
-
-
 def _run_group(
     group: _Group,
     arguments: argparse.Namespace,
@@ -357,7 +359,7 @@ def _run_group(
     log = _group_log(arguments.record, group.name)
     cells: dict[str, object] = {}
     with (
-        throwaway_identity(scratch, _look_image_bytes(arguments)) as identity,
+        throwaway_identity(scratch, arguments.look_image_bytes) as identity,
         start_service(
             identity,
             log,
@@ -668,12 +670,11 @@ def main(argv: Sequence[str] | None = None, control: ProcessControl = KERNEL) ->
     """
     arguments = _arguments(sys.argv[1:] if argv is None else argv)
     if group := os.environ.get(CHILD_MARKER):
+        _give_look_image(arguments)
         return _child(group, arguments)
     arguments.record = _checked_record(arguments.record)
     read_audio(arguments.audio)
-    if arguments.look_image is not None:
-        arguments.look_image = arguments.look_image.resolve()
-        _checked_look_image(arguments.look_image)
+    _give_look_image(arguments)
     arguments.limits = (
         None
         if arguments.dry_run
