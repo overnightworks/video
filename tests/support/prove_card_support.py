@@ -14,7 +14,7 @@ import wave
 from pathlib import Path
 from typing import TYPE_CHECKING, Final
 
-import prove_card
+import card_cells
 from card_record import FREE_MEMORY_LINE, Verdict
 
 if TYPE_CHECKING:
@@ -33,7 +33,7 @@ AUDIO_RATE: Final = 16000
 AUDIO_SECONDS: Final = 2
 MARKER: Final = "PROVE_CARD_TEST_MARKER"
 CELLS_BY_GROUP: Final = {
-    group: list(cells) for group, cells in prove_card.GROUPS.items()
+    group: list(cells) for group, cells in card_cells.GROUPS.items()
 }
 SERVICE_COMMAND: Final = "video_service"
 # A stand-in for the fleet's `probe-run`, which waits on the machine's load and then
@@ -229,7 +229,7 @@ class Run:
     def fail_the_load_of(self, group: str) -> None:
         """Have the provider's load fail in `group`, which the service's lag tells."""
         self.environment = self.environment | {
-            "WORKER_FAILS_TO_START_AT_LAG": str(prove_card.LAGS[group])
+            "WORKER_FAILS_TO_START_AT_LAG": str(card_cells.LAGS[group])
         }
 
     def fail_the_preparation_of(self, look: str) -> None:
