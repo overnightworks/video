@@ -9,6 +9,7 @@ from http import HTTPStatus
 from typing import TYPE_CHECKING
 
 import pytest
+from aiortc import RTCPeerConnection
 from video_provider_fake import FakeProvider
 from websockets.asyncio.client import connect
 from websockets.exceptions import InvalidStatus
@@ -22,7 +23,6 @@ from support.session_support import pcm, sentence_events, update_event
 from video_client.health import fetch_health
 from video_client.wire import Health
 from video_service.config import Settings
-from video_service.media import Media
 from video_service.providers import ProviderName
 
 if TYPE_CHECKING:
@@ -32,6 +32,7 @@ if TYPE_CHECKING:
 
     from support.look_server import LookServer
     from support.runtime_support import BuildRuntime
+    from support.viewer_support import Service
 
 _STILL_WAITING_SECONDS = 0.3
 _MAX_LAG_MS = 150
@@ -249,25 +250,36 @@ def test_the_place_counts_open_until_the_session_has_closed_its_socket() -> None
 
 
 def test_a_session_whose_client_left_counts_open_no_more_while_its_viewers_wind_down(
-    monkeypatch: pytest.MonkeyPatch,
+    live: Callable[..., None],
 ) -> None:
-    clock = FakeClock()
-    ended: list[bool] = []
-    winding_down: list[bool] = []
-    close_viewers = Media.close
+    winding_down = asyncio.Event()
+    release = asyncio.Event()
+    open_sessions: list[int] = []
 
-    async def close_after_noting(media: Media) -> None:
-        winding_down.append(bool(ended))
-        await close_viewers(media)
+    class Winding(RTCPeerConnection):
+        async def close(self) -> None:
+            winding_down.set()
+            await release.wait()
+            await super().close()
 
-    monkeypatch.setattr(Media, "close", close_after_noting)
+    async def scenario(service: Service) -> None:
+        session = await service.open_session()
+        await service.watch(session)
+        await session.socket.close()
+        try:
+            async with asyncio.timeout(READY_WITHIN_SECONDS):
+                await winding_down.wait()
+                health = await asyncio.to_thread(
+                    fetch_health,
+                    service.base_url,
+                    deadline_seconds=2,
+                    cap_bytes=65536,
+                )
+            assert isinstance(health, Health)
+            open_sessions.append(health.sessions.open)
+        finally:
+            release.set()
 
-    play(
-        scripted([], sentences=0),
-        provider=FakeProvider(sleep=clock.advance),
-        pacing=clock.pacing,
-        max_lag_ms=_MAX_LAG_MS,
-        end=lambda: ended.append(True),
-    )
+    live(scenario, peers=Winding)
 
-    assert winding_down[0] is True
+    assert open_sessions == [0]
