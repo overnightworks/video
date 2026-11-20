@@ -503,24 +503,25 @@ def _settled_at_group(
     signum: int,
     control: ProcessControl,
 ) -> bool:
-    """Whether a stop was settled at the group's process: sent, or deliberately not.
+    """Whether the pid file names the group's process, which settles the stop there.
 
     The stop is sent only to a process whose parent is `probe-run`, checked by
     `signal_if_unchanged`; `timeout` may have reaped the group's process and the kernel
-    reused its id. An id that names no process or another's child is sent nothing.
-    Where the id is not yet written or the check cannot be made, the stop is not
-    settled and goes to the unreaped `probe-run`, which `timeout` passes it on from.
+    reused its id. An id that names no process or another's child, and a check that
+    cannot be made, send nothing: the stop stays recorded and the end-of-group kill
+    follows. Where the id is not yet written or holds no number, the stop is not
+    settled and goes to `probe-run`.
     """
     try:
         group_pid = int(_pid_file(fragment).read_text())
-        if probe_run is None:
-            return False
-        group = read_process(group_pid, control)
-        if group is None or group.parent != probe_run.pid:
-            return True
-        return signal_if_unchanged((group, probe_run), signum, control)
     except OSError, ValueError:
         return False
+    if probe_run is not None:
+        with suppress(OSError):
+            group = read_process(group_pid, control)
+            if group is not None and group.parent == probe_run.pid:
+                signal_if_unchanged((group, probe_run), signum, control)
+    return True
 
 
 def _run_child(

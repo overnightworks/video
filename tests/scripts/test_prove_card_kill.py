@@ -217,7 +217,7 @@ def test_a_stop_is_not_forwarded_to_a_process_that_is_no_child_of_probe_run(
         bystander.wait()
 
 
-def test_a_stop_goes_to_probe_run_when_the_check_of_its_child_cannot_be_made(
+def test_a_stop_is_sent_to_no_process_when_the_check_of_its_child_cannot_be_made(
     run: Run, harness: Path
 ) -> None:
     command = _start_with(run, harness, "blind", "--dry-run", "--cells", "clear", "lag")
@@ -232,7 +232,8 @@ def test_a_stop_goes_to_probe_run_when_the_check_of_its_child_cannot_be_made(
     assert status != 0
     assert error.strip() == "interrupted by SIGTERM"
     assert not run.record.exists()
-    assert not run.has_spoken()
+    assert len(run.probe_run_log.read_text().splitlines()) == 1
+    assert run.has_spoken()
     assert run.processes() == []
 
 
