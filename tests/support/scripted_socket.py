@@ -43,6 +43,9 @@ class ScriptedSocket:
         if not sentences:
             self._all_stopped.set()
 
+    async def accept(self) -> None:
+        """Take the upgrade."""
+
     async def receive(self) -> Message:
         """The next scripted message, which waits only for the steps before it."""
         while self._script and callable(step := self._script[0]):

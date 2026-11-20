@@ -122,6 +122,17 @@ async def _still_waiting(upgrade: asyncio.Task[ClientConnection]) -> bool:
     return not done
 
 
+async def _admitted_once_free(service: _Service) -> ClientConnection:
+    """Upgrade until admitted: a session whose client left is open until it sees so."""
+    while True:
+        try:
+            return await service.upgrade()
+        except InvalidStatus as refused:
+            if refused.response.status_code != HTTPStatus.TOO_MANY_REQUESTS:
+                raise
+            await asyncio.sleep(0.05)
+
+
 def test_an_upgrade_after_a_session_ended_waits_for_its_place(
     run_on_service: Callable[[Scenario], None],
 ) -> None:
@@ -195,6 +206,27 @@ def test_an_upgrade_while_a_live_session_holds_the_place_is_busy(
     run_on_service(scenario)
 
     assert outcome == [HTTPStatus.TOO_MANY_REQUESTS]
+
+
+def test_a_waiting_upgrade_whose_client_left_gives_the_place_to_the_next_one(
+    run_on_service: Callable[[Scenario], None],
+) -> None:
+    outcome: list[object] = []
+
+    async def scenario(service: _Service) -> None:
+        await service.leave_holding_a_call()
+        gone = service.upgrade()
+        outcome.append(await _still_waiting(gone))
+        gone.cancel()
+        service.gate.set()
+        async with asyncio.timeout(READY_WITHIN_SECONDS):
+            admitted = await _admitted_once_free(service)
+        outcome.append(json.loads(await admitted.recv())["type"])
+        await admitted.close()
+
+    run_on_service(scenario)
+
+    assert outcome == [True, "session.created"]
 
 
 def test_the_place_counts_open_until_the_session_has_closed_its_socket() -> None:
