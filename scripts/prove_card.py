@@ -34,8 +34,10 @@ from typing import TYPE_CHECKING, Final
 from pydantic import ValidationError
 
 from card_drive import (
+    ENVIRONMENT_PREFIX,
     FAKE_PROVIDER,
     KERNEL,
+    PROVIDER_VARIABLE,
     STOP_SIGNALS,
     Audio,
     Kill,
@@ -58,13 +60,14 @@ from card_record import (
     FREE_MEMORY_LINE,
     KILL_FIGURES,
     MEMORY_FIGURES,
-    START_TO_READY_LINE,
     Reason,
     closed_record,
     completed_cells,
     completed_service,
+    failed_load,
     judged,
     not_measured,
+    service_figures,
     value_of,
 )
 from card_supervision import (
@@ -105,6 +108,9 @@ DEFAULT_LAG_MS: Final = 500
 PROBE_RUN: Final = "probe-run"
 KILL_GRACE_SECONDS: Final = 30
 CAP_SECONDS: Final = 1800
+# A clear with nothing queued gets no confirmation, so the wait for the viewer's first
+# loud frame ends well inside the sentence's playing time.
+CLEAR_WAIT_SHARE: Final = 0.5
 _SENTENCE_COLUMNS: Final = ("audio_ms", "frame_count", "late_frame_count", "outcome")
 
 
@@ -143,15 +149,6 @@ def _beside(record: Path, suffix: str) -> Path:
 def _group_log(record: Path, group: str) -> Path:
     """Where the service of `group` writes its log."""
     return _beside(record, f"{group}.log")
-
-
-def step_figures(line: dict[str, object]) -> dict[str, object]:
-    """A load or preparation as the service logged it: outcome, reason, duration."""
-    return {
-        name: value_of(line[name])
-        for name in ("outcome", "reason", "duration_ms")
-        if name in line
-    }
 
 
 def _sentence_figures(
@@ -193,13 +190,21 @@ async def _sentences(drive: Drive) -> object:
 
 
 async def _clear(drive: Drive) -> object:
-    """A clear inside a sentence, watched by a viewer: confirmation and silence."""
+    """A clear inside a sentence, watched by a viewer: confirmation and silence.
+
+    The clear waits for the viewer's first loud audio frame, since the viewer's audio
+    arrives after the sentence has started, for at most `CLEAR_WAIT_SHARE` of the
+    audio's length.
+    """
     async with (
         drive.session(LOOK_NAMES[0]) as session,
         attached(drive.service, drive.identity, session.created) as viewer,
     ):
         trace_id = await session.speak("cleared", drive.audio)
         await session.until(OutputAudioBufferStarted)
+        await viewer.heard_loud_audio(
+            within_seconds=drive.audio.milliseconds * CLEAR_WAIT_SHARE / 1000
+        )
         started = time.monotonic()
         await session.clear()
         cleared = await session.until(OutputAudioBufferCleared)
@@ -331,9 +336,20 @@ GROUPS: Final = {
 }
 LAGS: Final = {"wire": DEFAULT_LAG_MS, "lag": TOO_SMALL_LAG_MS}
 CELLS: Final = tuple(cell for group in GROUPS.values() for cell in group)
-_PREFIX: Final[str] = Settings.model_config["env_prefix"]
-_PROVIDER_VARIABLE: Final = f"{_PREFIX}PROVIDER"
 _PROVIDER_FIELDS: Final = ("provider_root", "card_memory_mb")
+
+
+def _non_negative(text: str) -> int:
+    """A whole number of at least 0, as an argument."""
+    try:
+        number = int(text)
+    except ValueError:
+        message = f"{text!r} is not a whole number"
+        raise argparse.ArgumentTypeError(message) from None
+    if number < 0:
+        message = f"{number} is below 0"
+        raise argparse.ArgumentTypeError(message)
+    return number
 
 
 def _arguments(argv: Sequence[str]) -> argparse.Namespace:
@@ -346,7 +362,7 @@ def _arguments(argv: Sequence[str]) -> argparse.Namespace:
     parser.add_argument("--cells", nargs="+", choices=CELLS, default=list(CELLS))
     parser.add_argument(
         "--memory-floor-mb",
-        type=int,
+        type=_non_negative,
         default=int(FREE_MEMORY_LINE.limit),
         help="free card memory in MiB the run keeps beside the provider's cap",
     )
@@ -394,7 +410,9 @@ def _card_provider(environ: Mapping[str, str]) -> CardProvider:
 
     The refusal names the setting alone: the validation error carries the value.
     """
-    variables = {name: f"{_PREFIX}{name.upper()}" for name in _PROVIDER_FIELDS}
+    variables = {
+        name: f"{ENVIRONMENT_PREFIX}{name.upper()}" for name in _PROVIDER_FIELDS
+    }
     given = {
         name: environ[variable]
         for name, variable in variables.items()
@@ -407,9 +425,9 @@ def _card_provider(environ: Mapping[str, str]) -> CardProvider:
         settings = _GivenSettings(provider=ProviderName.FLASHHEAD_LITE, **given)
     except ValidationError as error:
         field_name = str(error.errors()[0]["loc"][0])
-        message = f"{_PREFIX}{field_name.upper()} is missing or invalid"
+        message = f"{ENVIRONMENT_PREFIX}{field_name.upper()} is missing or invalid"
         raise SystemExit(message) from None
-    environment = {_PROVIDER_VARIABLE: ProviderName.FLASHHEAD_LITE.value} | {
+    environment = {PROVIDER_VARIABLE: ProviderName.FLASHHEAD_LITE.value} | {
         variables[name]: value for name, value in given.items()
     }
     return CardProvider(environment, settings.card_memory_mb)
@@ -420,23 +438,6 @@ def _provider_of(arguments: argparse.Namespace) -> Mapping[str, str]:
     if arguments.dry_run:
         return FAKE_PROVIDER
     return _card_provider(os.environ).environment
-
-
-def _service_figures(
-    service: Service, log: Path, *, dry_run: bool
-) -> dict[str, object]:
-    """The service's start, load and preparations; its stop is added once it ends."""
-    return {
-        "start_to_ready_ms": judged(
-            service.start_to_ready_ms, START_TO_READY_LINE, dry_run=dry_run
-        ),
-        "provider_load": step_figures(service.lines("provider_load.ended")[0]),
-        "look_preparations": [
-            {"look": value_of(line["look"])} | step_figures(line)
-            for line in service.lines("look_preparation.ended")
-        ],
-        "log": value_of(log.name),
-    }
 
 
 def _stop_figure(service: Service) -> dict[str, object]:
@@ -459,6 +460,27 @@ def _write_fragment(path: Path, fragment: dict[str, object]) -> None:
     temporary.replace(path)
 
 
+async def _drive_cells(
+    group: str,
+    names: list[str],
+    drive: Drive,
+    cells: dict[str, object],
+    save: Callable[[GroupOutcome], None],
+) -> GroupOutcome:
+    """Drive `names` in turn, saving after each; a cell that raises ends the group."""
+    for position, name in enumerate(names):
+        try:
+            cells[name] = await GROUPS[group][name](drive)
+        except Exception:  # noqa: BLE001 - the failure is the cell's record entry
+            traceback.print_exc()
+            cells[name] = not_measured(Reason.CELL_FAILED)
+            cells.update(completed_cells(names[position + 1 :], {}, Reason.GROUP_ENDED))
+            save(GroupOutcome.RUNNING)
+            return GroupOutcome.FAILED
+        save(GroupOutcome.RUNNING)
+    return GroupOutcome.DONE
+
+
 def _run_group(
     group: str,
     arguments: argparse.Namespace,
@@ -470,7 +492,9 @@ def _run_group(
     The fragment is rewritten after each cell and once more when the group ends. A cell
     that raises an `Exception` ends the group: it is `cell_failed`, the cells after it
     `group_ended`, and the fragment holds both before the service stops. Anything
-    else, an interrupt's `SystemExit` included, is not caught.
+    else, an interrupt's `SystemExit` included, is not caught. A service whose provider
+    did not load or whose look was not prepared runs no cell: every cell is not
+    measured for that, and one line on standard error says which step failed.
     """
     audio = read_audio(arguments.audio)
     names = _chosen(group, arguments)
@@ -485,7 +509,7 @@ def _run_group(
         drive = Drive(
             service, identity, audio, dry_run=arguments.dry_run, record=arguments.record
         )
-        figures = _service_figures(service, log, dry_run=arguments.dry_run)
+        figures = service_figures(service, log, dry_run=arguments.dry_run)
 
         def save(outcome: GroupOutcome) -> None:
             _write_fragment(
@@ -498,22 +522,14 @@ def _run_group(
                 },
             )
 
-        async def run_cells() -> GroupOutcome:
-            for position, name in enumerate(names):
-                try:
-                    cells[name] = await GROUPS[group][name](drive)
-                except Exception:  # noqa: BLE001 - the failure is the cell's record entry
-                    traceback.print_exc()
-                    cells[name] = not_measured(Reason.CELL_FAILED)
-                    cells.update(
-                        completed_cells(names[position + 1 :], {}, Reason.GROUP_ENDED)
-                    )
-                    save(GroupOutcome.RUNNING)
-                    return GroupOutcome.FAILED
-                save(GroupOutcome.RUNNING)
-            return GroupOutcome.DONE
-
-        outcome = asyncio.run(run_cells())
+        if (failure := failed_load(service)) is None:
+            outcome = asyncio.run(_drive_cells(group, names, drive, cells, save))
+        else:
+            reason, message = failure
+            cells.update(completed_cells(names, {}, reason))
+            print(f"the {group} group: {message}", file=sys.stderr)
+            save(GroupOutcome.RUNNING)
+            outcome = GroupOutcome.FAILED
     figures["stop_to_exit_ms"] = _stop_figure(service)
     save(outcome)
     return outcome

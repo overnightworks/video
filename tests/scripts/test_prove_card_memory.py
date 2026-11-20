@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Final
 import pytest
 
 import card_drive
+import card_identity
 from card_record import (
     FREE_MEMORY_LINE,
     MEMORY_FIGURES,
@@ -115,11 +116,34 @@ def test_a_missing_or_invalid_provider_setting_ends_the_command_naming_only_the_
     assert not run.record.exists()
 
 
+def test_a_negative_floor_is_refused_by_the_argument_parser_before_anything_starts(
+    run: Run,
+) -> None:
+    run.in_card_mode()
+
+    status, error = run.finish(run.start("--cells", "lag", "--memory-floor-mb", "-1"))
+
+    assert status != 0
+    assert "--memory-floor-mb" in lines(error)[-1]
+    assert not run.probe_run_log.exists()
+    assert not run.record.exists()
+    assert run.processes() == []
+
+
+def test_a_floor_of_zero_is_the_operators_choice_and_the_group_runs(run: Run) -> None:
+    run.in_card_mode()
+
+    status, error = run.finish(run.start("--cells", "lag", "--memory-floor-mb", "0"))
+
+    assert status == 0, error
+    assert _record(run)["services"]["lag"][MemoryFigure.FLOOR] == value_of(0)
+
+
 def test_a_group_the_card_has_no_room_for_is_refused_and_nothing_of_it_starts(
     run: Run,
 ) -> None:
     run.in_card_mode()
-    run.reading.write_text(NO_ROOM_FOR_THE_CAP)
+    run.write_reading(NO_ROOM_FOR_THE_CAP)
 
     status, error = run.finish(run.start("--cells", "clear", "lag"))
     record = _record(run)
@@ -148,7 +172,7 @@ def test_a_first_sample_that_fails_refuses_the_group_and_names_the_failed_sample
     run: Run, reading: str
 ) -> None:
     run.in_card_mode()
-    run.reading.write_text(reading)
+    run.write_reading(reading)
 
     status, error = run.finish(run.start("--cells", "lag"))
     entry = _record(run)["services"]["lag"]
@@ -205,7 +229,7 @@ def test_a_group_is_refused_when_the_memory_falls_before_its_service_exists(
     run.environment["PROBE_RUN_HOLD"] = str(release)
     command = run.start("--cells", "lag")
     held = run.wait_until(run.probe_run_log.exists, APPEARS_WITHIN_SECONDS)
-    run.reading.write_text(NO_ROOM_FOR_THE_CAP)
+    run.write_reading(NO_ROOM_FOR_THE_CAP)
 
     status, error = run.finish(command)
 
@@ -283,22 +307,25 @@ def test_a_breach_while_the_provider_loads_ends_the_tree_and_starts_no_second_gr
 
 
 @pytest.mark.parametrize(
-    ("reading", "reason"),
+    ("reading", "reason", "peaks_unmeasured_for"),
     [
-        (BELOW_THE_FLOOR, StopReason.BELOW_FLOOR),
-        ("fail", StopReason.SAMPLE_FAILED),
-        ("hang", StopReason.SAMPLE_FAILED),
+        (BELOW_THE_FLOOR, StopReason.BELOW_FLOOR, None),
+        ("fail", StopReason.SAMPLE_FAILED, Reason.SAMPLE_FAILED),
+        ("hang", StopReason.SAMPLE_FAILED, Reason.SAMPLE_FAILED),
     ],
 )
 def test_a_breach_while_sessions_run_keeps_the_cells_finished_before_it(
-    run: Run, reading: str, reason: StopReason
+    run: Run,
+    reading: str,
+    reason: StopReason,
+    peaks_unmeasured_for: Reason | None,
 ) -> None:
     run.in_card_mode()
     command = run.start("--cells", "sentences", "viewers")
     first = run.wait_until(
         lambda: run.fragment_cells() == ["sentences"], APPEARS_WITHIN_SECONDS
     )
-    run.reading.write_text(reading)
+    run.write_reading(reading)
 
     status, error = run.finish(command)
     record = _record(run)
@@ -318,6 +345,15 @@ def test_a_breach_while_sessions_run_keeps_the_cells_finished_before_it(
     assert entry["start_to_ready_ms"]["value"] > 0
     assert entry["processes_alive_after_kill"] == value_of(0)
     assert is_not_measured(entry[MemoryFigure.USED_AFTER], Reason.WATCHDOG_BREACH)
+    peaks = (
+        MemoryFigure.FREE_LEAST,
+        MemoryFigure.USED_MOST,
+        MemoryFigure.USED_BEYOND_CAP,
+    )
+    if peaks_unmeasured_for is None:
+        assert entry[MemoryFigure.FREE_LEAST]["verdict"] == Verdict.MISSED
+    else:
+        assert all(is_not_measured(entry[name], peaks_unmeasured_for) for name in peaks)
     assert run.answers_given(reading) == 1
     assert run.wait_until(lambda: run.processes() == [], GONE_WITHIN_SECONDS)
 
@@ -331,7 +367,7 @@ def test_a_breach_while_the_group_stops_after_an_interrupt_kills_at_once(
     # A stopped service holds the group's own stop for its whole bound.
     os.kill(run.service_pid(), signal.SIGSTOP)
     os.kill(command.pid, signal.SIGINT)
-    run.reading.write_text(BELOW_THE_FLOOR)
+    run.write_reading(BELOW_THE_FLOOR)
 
     status, error = run.finish(command)
 
@@ -354,3 +390,95 @@ def test_a_dry_run_records_the_memory_figures_as_not_measured_and_samples_no_car
     assert all(is_not_measured(entry[name], Reason.NO_CARD) for name in MEMORY_FIGURES)
     assert MEMORY_STOP not in entry
     assert not run.nvidia_smi_log.exists()
+
+
+def _ended_by_a_step(error: str, group: str) -> str:
+    """The one line the group's process wrote for a failed step; no traceback."""
+    ended = [line for line in lines(error) if line.startswith(f"the {group} group")]
+
+    assert len(ended) == 1
+    assert "Traceback" not in error
+    return ended[0]
+
+
+def test_a_provider_that_fails_to_load_ends_its_group_before_its_first_cell(
+    run: Run,
+) -> None:
+    run.in_card_mode()
+    run.fail_the_load_of("wire")
+
+    status, error = run.finish(run.start("--cells", "clear", "lag"))
+    record = _record(run)
+    entry = record["services"]["wire"]
+
+    assert status != 0
+    assert "provider_failed" in _ended_by_a_step(error, "wire")
+    assert is_not_measured(record["cells"]["clear"], Reason.PROVIDER_NOT_LOADED)
+    assert is_not_measured(record["cells"]["lag"], Reason.EARLIER_GROUP_FAILED)
+    assert entry["provider_load"]["outcome"] == value_of("failed")
+    assert entry["provider_load"]["reason"] == value_of("provider_failed")
+    assert entry["look_preparations"] == []
+    assert len(run.probe_run_log.read_text().splitlines()) == 1
+    assert [log.name for log in run.logs()] == ["record.wire.log"]
+    assert run.processes() == []
+    assert list(run.scratch.iterdir()) == []
+
+
+def test_a_provider_that_fails_to_load_in_a_later_group_keeps_the_cells_before_it(
+    run: Run,
+) -> None:
+    run.in_card_mode()
+    run.fail_the_load_of("lag")
+
+    status, error = run.finish(run.start("--cells", "clear", "lag"))
+    record = _record(run)
+
+    assert status != 0
+    assert "provider_failed" in _ended_by_a_step(error, "lag")
+    assert record["cells"]["clear"]["outcome"]["value"] == "cancelled"
+    assert is_not_measured(record["cells"]["lag"], Reason.PROVIDER_NOT_LOADED)
+    assert record["services"]["lag"]["provider_load"]["outcome"] == value_of("failed")
+    assert run.processes() == []
+
+
+def test_a_look_that_is_not_prepared_ends_its_group_naming_the_look_and_the_reason(
+    run: Run,
+) -> None:
+    look = card_identity.LOOK_NAMES[-1]
+    run.in_card_mode()
+    run.fail_the_preparation_of(look)
+
+    status, error = run.finish(run.start("--cells", "clear", "lag"))
+    record = _record(run)
+    entry = record["services"]["wire"]
+    prepared = {
+        preparation["look"]["value"]: preparation["outcome"]["value"]
+        for preparation in entry["look_preparations"]
+    }
+    line = _ended_by_a_step(error, "wire")
+
+    assert status != 0
+    assert look in line
+    assert "provider_failed" in line
+    assert is_not_measured(record["cells"]["clear"], Reason.LOOK_NOT_PREPARED)
+    assert is_not_measured(record["cells"]["lag"], Reason.EARLIER_GROUP_FAILED)
+    assert entry["provider_load"]["outcome"] == value_of("ok")
+    assert prepared == {
+        name: "failed" if name == look else "ok" for name in card_identity.LOOK_NAMES
+    }
+    assert run.processes() == []
+
+
+def test_a_provider_root_without_the_worker_ends_the_group_as_a_failed_load(
+    run: Run,
+) -> None:
+    run.in_card_mode()
+    run.without_worker()
+
+    status, error = run.finish(run.start("--cells", "lag"))
+    record = _record(run)
+
+    assert status != 0
+    assert "provider_failed" in _ended_by_a_step(error, "lag")
+    assert is_not_measured(record["cells"]["lag"], Reason.PROVIDER_NOT_LOADED)
+    assert run.processes() == []

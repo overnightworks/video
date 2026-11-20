@@ -13,8 +13,13 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING, Final
 
+from logline import Outcome
+
 if TYPE_CHECKING:
     from collections.abc import Callable, Collection, Sequence
+    from pathlib import Path
+
+    from card_drive import Service
 
 Figure = dict[str, object]
 
@@ -40,6 +45,9 @@ class Reason(StrEnum):
     WATCHDOG_BREACH = "watchdog_breach"
     SAMPLE_FAILED = "sample_failed"
     NO_CARD = "no_card"
+    NO_LOUD_AUDIO_BEFORE_CLEAR = "no_loud_audio_before_clear"
+    PROVIDER_NOT_LOADED = "provider_not_loaded"
+    LOOK_NOT_PREPARED = "look_not_prepared"
 
 
 class StopReason(StrEnum):
@@ -183,3 +191,48 @@ def completed_service(figures: dict[str, object], reason: Reason) -> dict[str, o
     `SERVICE_FIGURES` shows in the record, where a finished group's keys are checked.
     """
     return {name: not_measured(reason) for name in SERVICE_FIGURES} | figures
+
+
+def step_figures(line: dict[str, object]) -> dict[str, object]:
+    """A load or preparation as the service logged it: outcome, reason, duration."""
+    return {
+        name: value_of(line[name])
+        for name in ("outcome", "reason", "duration_ms")
+        if name in line
+    }
+
+
+def service_figures(service: Service, log: Path, *, dry_run: bool) -> dict[str, object]:
+    """The service's start, load and preparations; its stop is added once it ends."""
+    return {
+        "start_to_ready_ms": judged(
+            service.start_to_ready_ms, START_TO_READY_LINE, dry_run=dry_run
+        ),
+        "provider_load": step_figures(service.lines("provider_load.ended")[0]),
+        "look_preparations": [
+            {"look": value_of(line["look"])} | step_figures(line)
+            for line in service.lines("look_preparation.ended")
+        ],
+        "log": value_of(log.name),
+    }
+
+
+def failed_load(service: Service) -> tuple[Reason, str] | None:
+    """Why the cells cannot run, and the line that says so, when the load failed.
+
+    A step is failed by its logged outcome; a failed step read after ready carries the
+    reason the service logged.
+    """
+    load = service.lines("provider_load.ended")[0]
+    if load["outcome"] == Outcome.FAILED:
+        return (
+            Reason.PROVIDER_NOT_LOADED,
+            f"the provider did not load ({load['reason']})",
+        )
+    for line in service.lines("look_preparation.ended"):
+        if line["outcome"] == Outcome.FAILED:
+            return (
+                Reason.LOOK_NOT_PREPARED,
+                f"the look {line['look']} was not prepared ({line['reason']})",
+            )
+    return None

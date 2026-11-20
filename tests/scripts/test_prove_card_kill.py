@@ -413,7 +413,7 @@ def test_a_breach_replaces_the_group_ended_of_the_cells_a_failed_cell_left_unfin
     first = run.wait_until(
         lambda: run.fragment_cells() == ["sentences"], APPEARS_WITHIN_SECONDS
     )
-    run.reading.write_text(BELOW_THE_FLOOR)
+    run.write_reading(BELOW_THE_FLOOR)
 
     status, error = run.finish(command)
     cells = json.loads(run.record.read_text())["cells"]

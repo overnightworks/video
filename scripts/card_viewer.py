@@ -25,7 +25,9 @@ from card_record import (
     CLEAR_TO_SILENCE_LINE,
     FRAMES_PER_SECOND_LINE,
     Figure,
+    Reason,
     judged,
+    not_measured,
     value_of,
 )
 
@@ -116,6 +118,7 @@ class Viewer:
         self._recorder = MediaRecorder(str(recording.video)) if recording else None
         self._tasks: list[asyncio.Task[None]] = []
         self._first_frame = asyncio.Event()
+        self._first_loud_frame = asyncio.Event()
         for kind in ("audio", "video"):
             self.peer.addTransceiver(kind, direction="recvonly")
         self.peer.on("track", self._collect)
@@ -144,6 +147,7 @@ class Viewer:
         samples = array.array("h", bytes(frame.planes[0])[:size])
         if max(map(abs, samples), default=0) > LOUD_PEAK:
             self.received.loud_times.append(arrived)
+            self._first_loud_frame.set()
 
     async def start(
         self, service: Service, identity: Identity, session_id: str
@@ -181,6 +185,16 @@ class Viewer:
     def loud_frames_in(self, window: Window) -> int:
         """How many loud audio frames arrived within `window`."""
         return sum(window.start <= at <= window.end for at in self.received.loud_times)
+
+    async def heard_loud_audio(self, *, within_seconds: float) -> None:
+        """Wait for the first loud audio frame, for at most `within_seconds`."""
+        with suppress(TimeoutError):
+            async with asyncio.timeout(within_seconds):
+                await self._first_loud_frame.wait()
+
+    def heard_loud_audio_before(self, moment: float) -> bool:
+        """Whether a loud audio frame reached the viewer before `moment`."""
+        return any(at < moment for at in self.received.loud_times)
 
     def last_loud_ms_after(self, moment: float) -> float:
         """Milliseconds from `moment` to the last loud audio frame; 0 if none came."""
@@ -230,7 +244,12 @@ async def attached(
 
 
 def clear_figure(viewer: Viewer, cleared_at: float, *, dry_run: bool) -> Figure:
-    """The time from a clear to the last loud audio frame the viewer received."""
+    """The time from a clear to the last loud audio frame the viewer received.
+
+    A viewer that had received no loud frame before the clear has nothing to time.
+    """
+    if not viewer.heard_loud_audio_before(cleared_at):
+        return not_measured(Reason.NO_LOUD_AUDIO_BEFORE_CLEAR, CLEAR_TO_SILENCE_LINE)
     return judged(
         viewer.last_loud_ms_after(cleared_at), CLEAR_TO_SILENCE_LINE, dry_run=dry_run
     )

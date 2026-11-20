@@ -24,6 +24,7 @@ from card_record import (
     SERVICE_FIGURES,
     Reason,
     completed_service,
+    step_figures,
     value_of,
 )
 from support.prove_card_support import (
@@ -159,12 +160,12 @@ def test_the_wait_for_ready_covers_the_services_bounds_for_every_look(
 def test_a_failed_step_is_recorded_as_the_service_logged_it() -> None:
     logged = {"outcome": "failed", "reason": "provider_failed", "duration_ms": 12.5}
 
-    assert prove_card.step_figures(logged) == {
+    assert step_figures(logged) == {
         "outcome": {"value": "failed"},
         "reason": {"value": "provider_failed"},
         "duration_ms": {"value": 12.5},
     }
-    assert "reason" not in prove_card.step_figures({"outcome": "ok", "duration_ms": 1})
+    assert "reason" not in step_figures({"outcome": "ok", "duration_ms": 1})
 
 
 @pytest.mark.parametrize("named", ["lag", "clear"])
@@ -254,10 +255,30 @@ def test_five_viewers_each_have_their_figures_and_the_encoders_share_is_recorded
     assert dry_run[1]["cells"]["viewer"]["service_cpu_cores"]["one_viewer"]["value"] > 0
 
 
-def test_a_clear_with_a_viewer_records_the_time_to_the_last_loud_frame(
+def test_a_clear_after_the_viewers_first_loud_frame_records_the_time_to_the_last_one(
     dry_run: tuple[Run, dict],
 ) -> None:
-    assert dry_run[1]["cells"]["clear"]["clear_to_last_loud_frame_ms"]["value"] > 0
+    figure = dry_run[1]["cells"]["clear"]["clear_to_last_loud_frame_ms"]
+
+    assert figure["value"] >= 0
+    assert figure["reason"] == Reason.NO_CARD
+
+
+def test_a_clear_when_no_loud_frame_reached_the_viewer_is_not_measured(
+    run: Run,
+) -> None:
+    write_audio(run.audio, seconds=AUDIO_SECONDS, amplitude=0)
+
+    status, error = run.finish(run.start("--dry-run", "--cells", "clear"))
+    cell = json.loads(run.record.read_text())["cells"]["clear"]
+
+    assert status == 0, error
+    assert cell["clear_to_last_loud_frame_ms"]["verdict"] == "not_measured"
+    assert (
+        cell["clear_to_last_loud_frame_ms"]["reason"]
+        == Reason.NO_LOUD_AUDIO_BEFORE_CLEAR
+    )
+    assert cell["clear_to_confirmation_ms"]["value"] >= 0
 
 
 def test_the_recording_is_playable_and_its_sheets_are_images_named_in_the_record(
@@ -314,6 +335,18 @@ def _stereo_audio(run: Run) -> None:
     write_audio(run.audio, seconds=2, channels=2)
 
 
+def _text_audio(run: Run) -> None:
+    run.audio.write_text("this is no sound")
+
+
+def _empty_audio(run: Run) -> None:
+    run.audio.write_bytes(b"")
+
+
+def _audio_cut_inside_its_header(run: Run) -> None:
+    run.audio.write_bytes(run.audio.read_bytes()[:20])
+
+
 def _missing_audio(run: Run) -> None:
     run.audio.unlink()
 
@@ -336,6 +369,9 @@ def _record_in_a_read_only_directory(run: Run) -> None:
     [
         (_short_audio, "audio"),
         (_stereo_audio, "audio"),
+        (_text_audio, "audio"),
+        (_empty_audio, "audio"),
+        (_audio_cut_inside_its_header, "audio"),
         (_missing_audio, "audio"),
         (_unreadable_audio, "audio"),
         (_record_in_a_missing_directory, "--record"),
@@ -352,6 +388,7 @@ def test_a_bad_input_ends_the_command_with_one_line_before_any_group_starts(
     assert status != 0
     assert len(error.strip().splitlines()) == 1
     assert named in error
+    assert "()" not in error
     assert not run.probe_run_log.exists()
     assert run.processes() == []
 

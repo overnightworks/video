@@ -14,6 +14,7 @@ import wave
 from pathlib import Path
 from typing import TYPE_CHECKING, Final
 
+import prove_card
 from card_record import FREE_MEMORY_LINE, Verdict
 
 if TYPE_CHECKING:
@@ -32,8 +33,7 @@ AUDIO_RATE: Final = 16000
 AUDIO_SECONDS: Final = 2
 MARKER: Final = "PROVE_CARD_TEST_MARKER"
 CELLS_BY_GROUP: Final = {
-    "wire": ["sentences", "clear", "looks", "viewer", "viewers"],
-    "lag": ["lag"],
+    group: list(cells) for group, cells in prove_card.GROUPS.items()
 }
 SERVICE_COMMAND: Final = "video_service"
 # A stand-in for the fleet's `probe-run`, which waits on the machine's load and then
@@ -58,25 +58,34 @@ case "$reading" in
 esac
 """
 # The `flashhead-lite` worker of a provider root: the fake provider with the steps a
-# case scripts through the environment, each writing a reading for the stand-in.
+# case scripts through the environment, each writing a reading for the stand-in. It
+# fails its load for the group whose lag the case names, and fails the preparation of
+# the looks the case lists.
 WORKER_STAND_IN: Final = f"""#!{sys.executable}
 import os
 import time
 from pathlib import Path
 
+from video_provider_contract import ProviderFailedError
 from video_provider_contract.worker import run_worker
 from video_provider_fake import FakeProvider
 
 
 def write_reading(name):
     if name in os.environ:
-        Path(os.environ["NVIDIA_SMI_READING"]).write_text(os.environ[name])
+        reading = Path(os.environ["NVIDIA_SMI_READING"])
+        temporary = reading.with_suffix(".tmp")
+        temporary.write_text(os.environ[name])
+        temporary.replace(reading)
 
 
 class Scripted(FakeProvider):
     def start(self):
         write_reading("WORKER_READING_AT_LOAD")
         time.sleep(float(os.environ.get("WORKER_LOAD_SECONDS", 0)))
+        failing_lag = os.environ.get("WORKER_FAILS_TO_START_AT_LAG")
+        if failing_lag == os.environ["VIDEO_MAX_LAG_MS"]:
+            raise ProviderFailedError("the load was scripted to fail")
         return super().start()
 
     def open_session(self, look):
@@ -84,7 +93,7 @@ class Scripted(FakeProvider):
         return super().open_session(look)
 
 
-run_worker(Scripted())
+run_worker(Scripted(refuses=os.environ.get("WORKER_REFUSES", "").split()))
 """
 CAP_MB: Final = 4000
 # Long enough that the cells never finish before the watchdog has sampled.
@@ -98,9 +107,11 @@ NO_ROOM_FOR_THE_CAP: Final = f"{USED_MB}, {CAP_MB - 1}, 24576"
 BELOW_THE_FLOOR: Final = f"{USED_MB}, {FLOOR_MB - 1}, 24576"
 
 
-def write_audio(path: Path, *, seconds: float, channels: int = 1) -> None:
-    """A WAV of a square wave, which a viewer hears as loud."""
-    square = struct.pack("<8h", *([9000] * 4 + [-9000] * 4)) * channels
+def write_audio(
+    path: Path, *, seconds: float, channels: int = 1, amplitude: int = 9000
+) -> None:
+    """A WAV of a square wave, which a viewer hears as loud; amplitude 0 is quiet."""
+    square = struct.pack("<8h", *([amplitude] * 4 + [-amplitude] * 4)) * channels
     with wave.open(str(path), "wb") as sound:
         sound.setnchannels(channels)
         sound.setsampwidth(2)
@@ -187,14 +198,15 @@ class Run:
             stand_in.write_text(text)
             stand_in.chmod(0o755)
         self.reading = directory / "nvidia-smi.reading"
-        self.reading.write_text(ROOMY)
+        self.write_reading(ROOMY)
         self.nvidia_smi_log = directory / "nvidia-smi.log"
         self.nvidia_smi_answers = directory / "nvidia-smi.answers"
         self.provider_root = directory / "providers"
-        worker = self.provider_root / "flashhead-lite" / ".venv" / "bin"
-        worker.mkdir(parents=True)
-        (worker / "video-flashhead-lite-worker").write_text(WORKER_STAND_IN)
-        (worker / "video-flashhead-lite-worker").chmod(0o755)
+        bin_directory = self.provider_root / "flashhead-lite" / ".venv" / "bin"
+        bin_directory.mkdir(parents=True)
+        self.worker = bin_directory / "video-flashhead-lite-worker"
+        self.worker.write_text(WORKER_STAND_IN)
+        self.worker.chmod(0o755)
         write_audio(self.audio, seconds=AUDIO_SECONDS)
         self.environment = os.environ | {
             "PATH": f"{binaries}{os.pathsep}{os.environ['PATH']}",
@@ -213,6 +225,26 @@ class Run:
             "WORKER_READING_AT_LOAD": BELOW_THE_FLOOR,
             "WORKER_LOAD_SECONDS": str(LOAD_SECONDS),
         }
+
+    def fail_the_load_of(self, group: str) -> None:
+        """Have the provider's load fail in `group`, which the service's lag tells."""
+        self.environment = self.environment | {
+            "WORKER_FAILS_TO_START_AT_LAG": str(prove_card.LAGS[group])
+        }
+
+    def fail_the_preparation_of(self, look: str) -> None:
+        """Have the provider fail to prepare `look`."""
+        self.environment = self.environment | {"WORKER_REFUSES": look}
+
+    def without_worker(self) -> None:
+        """Take the worker out of the provider root, so the provider cannot start."""
+        self.worker.unlink()
+
+    def write_reading(self, reading: str) -> None:
+        """Replace the stand-in's reading whole, so it never reads half of one."""
+        temporary = self.reading.with_suffix(".tmp")
+        temporary.write_text(reading)
+        temporary.replace(self.reading)
 
     def answers_given(self, reading: str) -> int:
         """How many times the `nvidia-smi` stand-in answered with `reading`."""
