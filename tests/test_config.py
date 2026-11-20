@@ -85,6 +85,10 @@ def test_a_missing_provider_names_its_setting() -> None:
         ("VIDEO_LOOK_SOURCES", '["https://images.example//looks/"]'),
         ("VIDEO_LOOK_SOURCES", '["https://images.example/lo%6fks/"]'),
         ("VIDEO_LOOK_SOURCES", '["https:///looks/"]'),
+        ("VIDEO_CARD_MEMORY_MB", "0"),
+        ("VIDEO_CARD_MEMORY_MB", "-3"),
+        ("VIDEO_CARD_MEMORY_MB", "twelve"),
+        ("VIDEO_CARD_MEMORY_MB", "1.5"),
     ],
 )
 def test_a_setting_that_is_not_valid_stops_the_start_naming_it_and_echoing_nothing(
@@ -97,6 +101,44 @@ def test_a_setting_that_is_not_valid_stops_the_start_naming_it_and_echoing_nothi
         load_settings()
 
     assert value not in str(stopped.value)
+
+
+def test_an_empty_card_memory_stops_the_start_naming_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("VIDEO_PROVIDER", "fake")
+    monkeypatch.setenv("VIDEO_CARD_MEMORY_MB", "")
+
+    with pytest.raises(ValueError, match="VIDEO_CARD_MEMORY_MB"):
+        load_settings()
+
+
+def test_flashhead_lite_without_a_card_memory_stops_the_start_naming_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("VIDEO_PROVIDER", "flashhead-lite")
+
+    with pytest.raises(ValueError, match="VIDEO_CARD_MEMORY_MB"):
+        load_settings()
+
+
+@pytest.mark.parametrize("cap", ["1024", str(10**12)])
+def test_flashhead_lite_reads_any_card_memory_of_at_least_one(
+    cap: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("VIDEO_PROVIDER", "flashhead-lite")
+    monkeypatch.setenv("VIDEO_CARD_MEMORY_MB", cap)
+
+    settings = load_settings()
+
+    assert settings.provider is ProviderName.FLASHHEAD_LITE
+    assert settings.card_memory_mb == int(cap)
+
+
+def test_fake_needs_no_card_memory(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("VIDEO_PROVIDER", "fake")
+
+    assert load_settings().card_memory_mb is None
 
 
 @pytest.mark.parametrize(

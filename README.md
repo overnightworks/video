@@ -5,15 +5,13 @@ app hands it an agent's spoken sentences as audio and a few facts, and each view
 receives one live stream of picture and sound, with the model behind it chosen by
 setting. The operator starts and configures it; an app developer reads the wire.
 
-What runs today: one process that runs the provider `VIDEO_PROVIDER` names (only
-`fake` exists) in a child process of its own, fetches each look's image once at start, answers `GET /health` with
+What runs today: one process that runs the provider `VIDEO_PROVIDER` names (`fake`, and `flashhead-lite`, which needs a card) in a child process of its own, fetches each look's image once at start, answers `GET /health` with
 the provider's readiness, what it plays and each look's readiness, and serves
 sessions over `WS /v1/sessions`: an app opens one on a look with two tokens, queues
 sentences of audio, clears them, and reads when each starts and stops. The session's
 opener adds viewers over `POST /v1/sessions/{id}/viewers` with a WebRTC offer and gets
 one Opus and VP8 stream of the provider's picture and sound, with the idle picture
-and silence between sentences. The browser package shows that stream in a page. A real
-model is not built. The service downloads no weights and has no image to deploy.
+and silence between sentences. The browser package shows that stream in a page. No image exists to deploy, and the service downloads no weights.
 
 ## Quick start
 
@@ -88,10 +86,11 @@ holds the settings that shape the wire.
 
 | Setting | Default | Meaning |
 |---|---|---|
-| `VIDEO_PROVIDER` | required | The provider this instance runs: `fake`. |
+| `VIDEO_PROVIDER` | required | The provider this instance runs: `fake` or `flashhead-lite`. |
 | `VIDEO_PROVIDER_ROOT` | unset | The absolute path of the directory that holds each provider's own environment. The provider runs as `<root>/<provider>/.venv/bin/video-<provider>-worker`; unset, it runs as `video-<provider>-worker` beside the service's interpreter. No other location is searched, and a worker that is missing or not executable makes the provider fail to start. |
 | `VIDEO_HOST` | `127.0.0.1` | The address to listen on. |
 | `VIDEO_PORT` | `8080` | The port to listen on. |
+| `VIDEO_CARD_MEMORY_MB` | unset | The memory, in mebibytes, the provider may use on the card: an integer of at least 1, required for `flashhead-lite`, optional for `fake`. It binds torch's allocator, not the card's context; whether the card holds it is the worker's judgement at start, and a cap too large leaves the provider failed. The child receives this value and no other. |
 | `VIDEO_LOOKS_FILE` | unset | The absolute path of the look file; unset offers no look. |
 | `VIDEO_LOOK_SOURCES` | `[]` | A JSON list of the URL prefixes a look's image may come from. Each is http or https with a lowercase host, no user, query or fragment, and a path that starts and ends with `/` and holds only ASCII letters, digits and `-._~/`, with no empty, `.` or `..` segment. A redirect is never followed. |
 | `VIDEO_LOOK_MAX_BYTES` | `8388608` | The most bytes an image may have. |
@@ -105,6 +104,12 @@ holds the settings that shape the wire.
 
 The `fake` provider is a development dependency (`uv sync --all-groups` installs
 it, and its `video-fake-worker` runs beside the interpreter) that no image installs.
+
+To run `flashhead-lite` from source, check out the submodule, create the provider's own environment
+(`git submodule update --init`, then `uv sync --locked --all-groups --project providers/flashhead-lite`),
+and set `VIDEO_PROVIDER_ROOT` to the repository's `providers` directory, `VIDEO_CARD_MEMORY_MB` and
+the weights beside that environment. On a host without a card the worker refuses: the provider is
+failed, health shows it not ready and the service keeps running.
 
 A provider runs as a child process of the service, with its own interpreter and
 packages, so a model may pin a Python and libraries the service does not. A child

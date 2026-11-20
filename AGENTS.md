@@ -7,7 +7,7 @@ Run each from the repository root.
 - `uv sync --locked --all-groups`: installs the workspace. After a new package directory or module appears, add `--reinstall-package <distribution>`, or its editable install stays empty.
 - `uv run --locked ruff check` and `uv run --locked ruff format --check`: lint and format.
 - `uv run --locked pytest -q <named tests>`: targeted tests; CI adds `-n auto --cov`, and `--no-build` to every uv command, so only the packages `[tool.uv] no-binary-package` names are built from source.
-- `git submodule update --init`, then `uv sync --locked --all-groups --project providers/flashhead-lite` and `CUDA_VISIBLE_DEVICES= uv run --locked --project providers/flashhead-lite pytest -q providers/flashhead-lite/tests`: the FlashHead lite provider (Python 3.14).
+- `git submodule update --init`, then `uv sync --locked --all-groups --project providers/flashhead-lite` and `CUDA_VISIBLE_DEVICES= uv run --locked --project providers/flashhead-lite pytest -q providers/flashhead-lite/tests`: the FlashHead lite provider (Python 3.14); then `CUDA_VISIBLE_DEVICES= uv run --locked pytest -q -m flashhead_lite tests` starts its real worker through the service.
 - `uv run --locked python scripts/check_release.py [X.Y.Z]`: every `pyproject.toml` and `packages/*/package.json` stands at one version, the given one if named.
 - In `packages/browser`: `pnpm install --frozen-lockfile`, `pnpm run check` (types) and `pnpm run build` (emits `dist`, which the browser layer loads, so build first); `node scripts/pack-release.js <empty directory>` packs the tarball and installs it into an empty project.
 - `uv run --locked playwright install chromium` once, then `probe-run uv run --locked pytest -q -m browser tests`: the browser layer in headless Chromium, one worker.
@@ -25,13 +25,11 @@ Run each from the repository root.
 - A new mandatory CI job is added by its display name to `mandatory_jobs` in `quality/config.toml`; the required check is `quality / verdict`.
 - A new root entry is declared in `quality/config.toml` with a reason, or lives in its owner's directory.
 - `sonar-project.properties` carries only the keys the quality gate allows.
-- `packages/browser` receives no token and has no runtime dependency; the app's route relays the offer (`docs/wire.md`, WIRE-14).
 - The browser layer's lcov is `coverage-browser.lcov`, with paths from the repository root; the CI `coverage` job merges it with `coverage-root.xml`. CI measures the two scripts in `packages/browser/scripts` as `pnpm exec mcr -c mcr.config.js node scripts/<script>.js …` with `MCR_LCOV_FILE` naming `coverage-browser-pack.lcov` or `coverage-browser-report.lcov`; no coverage exclusion hides them.
 - Coverage reports are `coverage-<job>.xml`, written without `relative_files`: SonarCloud's module per uv workspace member resolves each file against the absolute `<source>`.
 
 ## Owners
 
-- `packages/client` owns the wire's types.
 - `packages/browser` owns the browser side of a viewer, `watch`.
 - `docs/wire.md` owns the wire's ruled behaviour.
 

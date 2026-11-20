@@ -129,7 +129,7 @@ def live_in_browser(
     """
 
     def run(scenario: Callable[[Service], Awaitable[None]], **limits: object) -> None:
-        provider = make_provider(bounds=ProcessBounds())
+        provider = make_provider()
         with ThreadPoolExecutor(max_workers=1) as thread:
             thread.submit(
                 live,
@@ -191,6 +191,8 @@ def make_provider(stub_environment: Path, tmp_path: Path) -> Iterator[MakeProvid
         body: str | None = None,
         bounds: ProcessBounds | None = None,
         call_seconds: float = CALL_SECONDS,
+        card_memory_mb: int | None = None,
+        max_image_pixels: int = 1_000_000,
     ) -> ProcessProvider:
         executable = (
             worker_executable(ProviderName.FAKE, None)
@@ -198,7 +200,11 @@ def make_provider(stub_environment: Path, tmp_path: Path) -> Iterator[MakeProvid
             else install_worker(tmp_path / "root", body)
         )
         provider = ProcessProvider(
-            ProviderLaunch(executable=executable, max_image_pixels=1_000_000),
+            ProviderLaunch(
+                executable=executable,
+                max_image_pixels=max_image_pixels,
+                card_memory_mb=card_memory_mb,
+            ),
             bounds or ProcessBounds(),
             call_seconds,
         )

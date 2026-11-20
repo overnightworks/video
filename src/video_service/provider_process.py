@@ -46,10 +46,10 @@ from video_provider_contract.protocol import (
     session_of,
     write_frame,
 )
-from video_provider_contract.worker import MAX_IMAGE_PIXELS_ENV
+from video_provider_contract.worker import CARD_MEMORY_MB_ENV, MAX_IMAGE_PIXELS_ENV
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Iterator, Mapping
     from pathlib import Path
 
     from video_provider_contract import (
@@ -95,10 +95,11 @@ class ProcessBounds:
 
 @dataclass(frozen=True, slots=True)
 class ProviderLaunch:
-    """The worker to run, and the most pixels an image it prepares may have."""
+    """The worker to run, the most pixels an image it prepares may have and the cap."""
 
     executable: Path
     max_image_pixels: int
+    card_memory_mb: int | None
 
 
 class _ReportedFailureError(Exception):
@@ -499,13 +500,27 @@ def _stream(pipe: IO[bytes] | None) -> IO[bytes]:
     return cast("IO[bytes]", pipe)
 
 
+def child_environment(
+    launch: ProviderLaunch, ambient: Mapping[str, str]
+) -> dict[str, str]:
+    """The service's environment with the launch's own values on top.
+
+    The cap is the one the service read, never an inherited one.
+    """
+    environment = {**ambient, MAX_IMAGE_PIXELS_ENV: str(launch.max_image_pixels)}
+    environment.pop(CARD_MEMORY_MB_ENV, None)
+    if launch.card_memory_mb is not None:
+        environment[CARD_MEMORY_MB_ENV] = str(launch.card_memory_mb)
+    return environment
+
+
 def _launch(launch: ProviderLaunch) -> subprocess.Popen[bytes]:
     return subprocess.Popen(  # noqa: S603 - the one worker executable without a shell or arguments
         [str(launch.executable)],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        env={**os.environ, MAX_IMAGE_PIXELS_ENV: str(launch.max_image_pixels)},
+        env=child_environment(launch, os.environ),
         close_fds=True,
         start_new_session=True,
     )
