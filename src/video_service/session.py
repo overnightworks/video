@@ -257,6 +257,7 @@ class Session:
                 ) as step,
             ):
                 end = await self._serve(trace)
+                self._place.end()
                 await self._media.close()
                 await self._finish(step, end)
         finally:

@@ -212,8 +212,12 @@ The opening of a provider session and every call into it run on a daemon thread 
 the session's own, so the provider is never entered twice and a call that never
 returns holds back neither the session's end nor the process's exit: a call not back
 within `VIDEO_MAX_LAG_MS` ends the session `unavailable`, and the session gives up its
-place once the close of the provider session has taken that long. A session cut at
-the process's exit queues the close and gives up its place without waiting for it.
+place once the close of the provider session has taken that long. A session counts
+open until it has ended, but its place is given back only after that close, so an
+upgrade that finds every place held and one of them by an ended session waits for the
+give-back, with no deadline of its own, and is refused `busy` only when every place is
+held by a live session. A session cut at the process's exit queues the close and
+gives up its place without waiting for it.
 The producer is cancelled and gathered before the close is queued. A sentence's
 `started`, `stopped` and `cleared` are sent under one lock that also decides whether
 the sentence was dropped, so no event follows its `cleared`.

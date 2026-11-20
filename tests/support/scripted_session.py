@@ -54,6 +54,7 @@ def play(
         pacing=pacing,
         peers=RTCPeerConnection,
         draining=asyncio.Event(),
+        end=lambda: None,
         release=lambda: None,
     )
 

@@ -6,9 +6,11 @@ is ready until `load` ends, since no session could open before. A look that fail
 stays not ready and the others serve; a provider that fails leaves every look not
 ready.
 
-A session takes a place while it runs: `open_session` checks the look and the
-limit in the order the wire refuses them, and `begin_drain` stops new places and new
-viewers and tells every open session to finish. `enrol` makes an open session findable
+A session takes a place while it runs and keeps it until its provider session is
+closed: `open_session` checks the look and the limit in the order the wire refuses
+them, and an upgrade that finds every place held by sessions that have ended waits for
+one to be given back. `begin_drain` stops new places and new viewers and tells every
+open session to finish. `enrol` makes an open session findable
 by its id, for the route of its viewers.
 """
 
@@ -170,6 +172,7 @@ class Place:
         pacing: Pacing,
         peers: PeerFactory,
         draining: asyncio.Event,
+        end: Callable[[], None],
         release: Callable[[], None],
     ) -> None:
         """Hold the open provider session, the thread that calls it, and its format."""
@@ -180,10 +183,19 @@ class Place:
         self.pacing = pacing
         self.peers = peers
         self.draining = draining
+        self._end = end
         self._release = release
+        self._ended = False
+
+    def end(self) -> None:
+        """Note that the session has ended: it counts open no more, its place stays."""
+        if not self._ended:
+            self._ended = True
+            self._end()
 
     def release(self) -> None:
-        """Give the place back."""
+        """Give the place back, the session ended or not."""
+        self.end()
         self._release()
 
 
@@ -218,7 +230,9 @@ class Runtime:
         self._lock = threading.Lock()
         self._offer: Offer | None = None
         self._ready_looks: set[str] = set()
+        self._held = 0
         self._open = 0
+        self._given_back = asyncio.Event()
         self._sessions: dict[str, Session] = {}
         self._draining = False
         self._drain_begun = asyncio.Event()
@@ -293,8 +307,13 @@ class Runtime:
 
     async def open_session(self, look: str) -> Place | RefusalCode:
         """A place on `look`, or the refusal, checked in the order the wire names."""
-        with self._lock:
-            admitted = self._admit(look)
+        while True:
+            with self._lock:
+                admitted = self._admit(look)
+                given_back = self._given_back
+            if admitted is not None:
+                break
+            await given_back.wait()
         if isinstance(admitted, RefusalCode):
             return admitted
         # The session's own daemon thread, since a call stuck on the loop's default
@@ -306,6 +325,7 @@ class Runtime:
             )
         except ProviderFailedError:
             worker.stop()
+            self._end_session()
             self._give_back()
             return RefusalCode.UNAVAILABLE
         return Place(
@@ -316,6 +336,7 @@ class Runtime:
             pacing=self._pacing,
             peers=self._peers,
             draining=self._drain_begun,
+            end=self._end_session,
             release=self._give_back,
         )
 
@@ -339,15 +360,19 @@ class Runtime:
         with self._lock:
             self._draining = True
             self._drain_begun.set()
-            if self._open == 0:
+            if self._held == 0:
                 self._idle.set()
 
     async def wait_idle(self) -> None:
         """Return once the drain has begun and no session is open."""
         await self._idle.wait()
 
-    def _admit(self, look: str) -> VideoFormat | RefusalCode:
-        """Take a place on `look` and return the picture it draws, or refuse."""
+    def _admit(self, look: str) -> VideoFormat | RefusalCode | None:
+        """Take a place on `look` and return the picture it draws, or refuse.
+
+        Returns `None` when every place is held and one is held by a session that has
+        ended: the place comes back once its provider session is closed.
+        """
         offer = self._serving()
         if look not in self._looks:
             return RefusalCode.INVALID_REQUEST
@@ -355,18 +380,27 @@ class Runtime:
             return RefusalCode.UNAVAILABLE
         if self._open >= self._max_sessions:
             return RefusalCode.BUSY
+        if self._held >= self._max_sessions:
+            return None
         self._open += 1
+        self._held += 1
         return offer.video
 
     def _serving(self) -> Offer | None:
         """What the provider offers; `None` before its start and after its failure."""
         return None if self._provider_failed() else self._offer
 
-    def _give_back(self) -> None:
+    def _end_session(self) -> None:
         with self._lock:
             self._open -= 1
-            if self._draining and self._open == 0:
+
+    def _give_back(self) -> None:
+        with self._lock:
+            self._held -= 1
+            if self._draining and self._held == 0:
                 self._idle.set()
+            given_back, self._given_back = self._given_back, asyncio.Event()
+        given_back.set()
 
     def health(self) -> Health:
         """`GET /health` as the service answers it now."""
