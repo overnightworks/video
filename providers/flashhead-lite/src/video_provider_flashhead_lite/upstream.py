@@ -34,6 +34,7 @@ _STAGING = "weights-staging"
 _CHECKPOINT = "SoulX-FlashHead-1_3B"
 _WAV2VEC = "wav2vec2-base-960h"
 _NOTICES = "notices"
+_CONFIG = "config.json"
 # A pin is a configuration, a safetensors file or a licence notice, never code or a
 # pickle: upstream's `torch.load` runs only on a file this set leaves out.
 _ADMITTED_SUFFIXES = frozenset({".json", ".safetensors", ".txt", ".md"})
@@ -93,7 +94,7 @@ PINNED_FILES: tuple[PinnedFile, ...] = (
         _FLASHHEAD_COMMIT,
         "Model_Lite/config.json",
         "2ac56ba975a80da49f8ef1b27bfe740be473a1b250fced52f8f1df9ac101bc2c",
-        Path(_CHECKPOINT, "Model_Lite", "config.json"),
+        Path(_CHECKPOINT, "Model_Lite", _CONFIG),
     ),
     PinnedFile(
         _FLASHHEAD,
@@ -107,7 +108,7 @@ PINNED_FILES: tuple[PinnedFile, ...] = (
         _FLASHHEAD_COMMIT,
         "VAE_LTX/config.json",
         "e8f12ad5305b1508f6e456797d48ab8e9fdd091c686ccf814a293ee96ce89dbb",
-        Path(_CHECKPOINT, "VAE_LTX", "config.json"),
+        Path(_CHECKPOINT, "VAE_LTX", _CONFIG),
     ),
     PinnedFile(
         _FLASHHEAD,
@@ -119,9 +120,9 @@ PINNED_FILES: tuple[PinnedFile, ...] = (
     PinnedFile(
         _WAV2VEC_REPOSITORY,
         _WAV2VEC_COMMIT,
-        "config.json",
+        _CONFIG,
         "d3ec255c063d9f95057b553b19c20135b259875834a4fe9deb218a6be25b4cf3",
-        Path(_WAV2VEC, "config.json"),
+        Path(_WAV2VEC, _CONFIG),
     ),
     PinnedFile(
         _WAV2VEC_REPOSITORY,
