@@ -237,8 +237,9 @@ async def _looks(drive: Drive) -> object:
 async def _lag(drive: Drive) -> object:
     """Two sentences of one session at the service's lag; whether the session starved.
 
-    A session the service ends `unavailable` is starved: the provider did not answer
-    a call within the lag. The sentences that completed before are recorded.
+    A session the service ends `unavailable` counts as starved, whatever made a call
+    fail: a call that missed the lag, or any other failure of the worker. The sentences
+    that completed before are recorded.
     """
     spoken: list[dict[str, object]] = []
     starved = False

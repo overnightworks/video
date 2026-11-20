@@ -146,9 +146,10 @@ service's own default of `VIDEO_MAX_LAG_MS`; a value below 1, not a whole number
 twice ends the command with one line before any service starts. The `lag` cell sweeps them:
 each value runs, smallest first and before the other cells (the `wire` group), as a group of
 its own named `lag-<value>`, one service with `VIDEO_MAX_LAG_MS` at the value, driving one
-session's two sentences with idle between them. A session the service ends `unavailable` is
-starved: the provider did not answer a call within the lag. Starvation is the value's
-outcome, not a failed cell; any other end of the session fails the cell. The cell holds, per
+session's two sentences with idle between them. A session the service ends `unavailable`
+counts as starved, whatever made a call fail: a call that missed the lag, or any other
+failure of the worker. Starvation is the value's outcome, not a failed cell; any other end of
+the session fails the cell. The cell holds, per
 value, `max_lag_ms`, `starved` and the figures of each sentence that completed, then
 `smallest_without_starvation_ms` (the smallest value at which and at every larger value no
 session starved) and `largest_starved_ms`. Each is `not_measured` with the reason
