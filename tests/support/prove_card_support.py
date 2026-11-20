@@ -14,6 +14,7 @@ import wave
 from pathlib import Path
 from typing import TYPE_CHECKING, Final
 
+import prove_card
 from card_record import FREE_MEMORY_LINE, Verdict
 
 if TYPE_CHECKING:
@@ -32,8 +33,7 @@ AUDIO_RATE: Final = 16000
 AUDIO_SECONDS: Final = 2
 MARKER: Final = "PROVE_CARD_TEST_MARKER"
 CELLS_BY_GROUP: Final = {
-    "wire": ["sentences", "clear", "looks", "viewer", "viewers"],
-    "lag": ["lag"],
+    group: list(cells) for group, cells in prove_card.GROUPS.items()
 }
 SERVICE_COMMAND: Final = "video_service"
 # A stand-in for the fleet's `probe-run`, which waits on the machine's load and then
@@ -70,7 +70,10 @@ from video_provider_fake import FakeProvider
 
 def write_reading(name):
     if name in os.environ:
-        Path(os.environ["NVIDIA_SMI_READING"]).write_text(os.environ[name])
+        reading = Path(os.environ["NVIDIA_SMI_READING"])
+        temporary = reading.with_suffix(".tmp")
+        temporary.write_text(os.environ[name])
+        temporary.replace(reading)
 
 
 class Scripted(FakeProvider):
@@ -187,7 +190,7 @@ class Run:
             stand_in.write_text(text)
             stand_in.chmod(0o755)
         self.reading = directory / "nvidia-smi.reading"
-        self.reading.write_text(ROOMY)
+        self.write_reading(ROOMY)
         self.nvidia_smi_log = directory / "nvidia-smi.log"
         self.nvidia_smi_answers = directory / "nvidia-smi.answers"
         self.provider_root = directory / "providers"
@@ -213,6 +216,12 @@ class Run:
             "WORKER_READING_AT_LOAD": BELOW_THE_FLOOR,
             "WORKER_LOAD_SECONDS": str(LOAD_SECONDS),
         }
+
+    def write_reading(self, reading: str) -> None:
+        """Replace the stand-in's reading whole, so it never reads half of one."""
+        temporary = self.reading.with_suffix(".tmp")
+        temporary.write_text(reading)
+        temporary.replace(self.reading)
 
     def answers_given(self, reading: str) -> int:
         """How many times the `nvidia-smi` stand-in answered with `reading`."""

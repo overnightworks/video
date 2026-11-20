@@ -34,8 +34,10 @@ from typing import TYPE_CHECKING, Final
 from pydantic import ValidationError
 
 from card_drive import (
+    ENVIRONMENT_PREFIX,
     FAKE_PROVIDER,
     KERNEL,
+    PROVIDER_VARIABLE,
     STOP_SIGNALS,
     Audio,
     Kill,
@@ -331,9 +333,20 @@ GROUPS: Final = {
 }
 LAGS: Final = {"wire": DEFAULT_LAG_MS, "lag": TOO_SMALL_LAG_MS}
 CELLS: Final = tuple(cell for group in GROUPS.values() for cell in group)
-_PREFIX: Final[str] = Settings.model_config["env_prefix"]
-_PROVIDER_VARIABLE: Final = f"{_PREFIX}PROVIDER"
 _PROVIDER_FIELDS: Final = ("provider_root", "card_memory_mb")
+
+
+def _non_negative(text: str) -> int:
+    """A whole number of at least 0, as an argument."""
+    try:
+        number = int(text)
+    except ValueError:
+        message = f"{text!r} is not a whole number"
+        raise argparse.ArgumentTypeError(message) from None
+    if number < 0:
+        message = f"{number} is below 0"
+        raise argparse.ArgumentTypeError(message)
+    return number
 
 
 def _arguments(argv: Sequence[str]) -> argparse.Namespace:
@@ -346,7 +359,7 @@ def _arguments(argv: Sequence[str]) -> argparse.Namespace:
     parser.add_argument("--cells", nargs="+", choices=CELLS, default=list(CELLS))
     parser.add_argument(
         "--memory-floor-mb",
-        type=int,
+        type=_non_negative,
         default=int(FREE_MEMORY_LINE.limit),
         help="free card memory in MiB the run keeps beside the provider's cap",
     )
@@ -394,7 +407,9 @@ def _card_provider(environ: Mapping[str, str]) -> CardProvider:
 
     The refusal names the setting alone: the validation error carries the value.
     """
-    variables = {name: f"{_PREFIX}{name.upper()}" for name in _PROVIDER_FIELDS}
+    variables = {
+        name: f"{ENVIRONMENT_PREFIX}{name.upper()}" for name in _PROVIDER_FIELDS
+    }
     given = {
         name: environ[variable]
         for name, variable in variables.items()
@@ -407,9 +422,9 @@ def _card_provider(environ: Mapping[str, str]) -> CardProvider:
         settings = _GivenSettings(provider=ProviderName.FLASHHEAD_LITE, **given)
     except ValidationError as error:
         field_name = str(error.errors()[0]["loc"][0])
-        message = f"{_PREFIX}{field_name.upper()} is missing or invalid"
+        message = f"{ENVIRONMENT_PREFIX}{field_name.upper()} is missing or invalid"
         raise SystemExit(message) from None
-    environment = {_PROVIDER_VARIABLE: ProviderName.FLASHHEAD_LITE.value} | {
+    environment = {PROVIDER_VARIABLE: ProviderName.FLASHHEAD_LITE.value} | {
         variables[name]: value for name, value in given.items()
     }
     return CardProvider(environment, settings.card_memory_mb)

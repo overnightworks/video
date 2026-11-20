@@ -54,7 +54,9 @@ from video_client.wire import (
     RefusalCode,
     viewers_path,
 )
+from video_service.config import Settings
 from video_service.provider_process import ProcessBounds
+from video_service.providers import ProviderName
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Mapping
@@ -80,8 +82,10 @@ STOP_SIGNALS: Final = (signal.SIGINT, signal.SIGTERM)
 _SIGNAL_EXIT_BASE: Final = 128
 _HOST: Final = "127.0.0.1"
 _PARENT_DEATH_COMMAND: Final = ("setpriv", "--pdeathsig", "KILL")
-_ENVIRONMENT_PREFIX: Final = "VIDEO_"
-FAKE_PROVIDER: Final = MappingProxyType({"VIDEO_PROVIDER": "fake"})
+# The service's own settings name the variables that configure it.
+ENVIRONMENT_PREFIX: Final[str] = Settings.model_config["env_prefix"]
+PROVIDER_VARIABLE: Final = f"{ENVIRONMENT_PREFIX}PROVIDER"
+FAKE_PROVIDER: Final = MappingProxyType({PROVIDER_VARIABLE: ProviderName.FAKE.value})
 _SET_CHILD_SUBREAPER: Final = 36
 # The interpreter this repository runs on is a standalone build whose `os` has no
 # pidfd calls, so they are the kernel's system calls, numbered alike on every
@@ -573,7 +577,7 @@ def running_service(
     environment = {
         key: value
         for key, value in os.environ.items()
-        if not key.startswith(_ENVIRONMENT_PREFIX)
+        if not key.startswith(ENVIRONMENT_PREFIX)
     } | {
         "PYTHONUNBUFFERED": "1",
         "SSL_CERT_FILE": str(identity.ca_file),

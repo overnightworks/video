@@ -115,11 +115,34 @@ def test_a_missing_or_invalid_provider_setting_ends_the_command_naming_only_the_
     assert not run.record.exists()
 
 
+def test_a_negative_floor_is_refused_by_the_argument_parser_before_anything_starts(
+    run: Run,
+) -> None:
+    run.in_card_mode()
+
+    status, error = run.finish(run.start("--cells", "lag", "--memory-floor-mb", "-1"))
+
+    assert status != 0
+    assert "--memory-floor-mb" in lines(error)[-1]
+    assert not run.probe_run_log.exists()
+    assert not run.record.exists()
+    assert run.processes() == []
+
+
+def test_a_floor_of_zero_is_the_operators_choice_and_the_group_runs(run: Run) -> None:
+    run.in_card_mode()
+
+    status, error = run.finish(run.start("--cells", "lag", "--memory-floor-mb", "0"))
+
+    assert status == 0, error
+    assert _record(run)["services"]["lag"][MemoryFigure.FLOOR] == value_of(0)
+
+
 def test_a_group_the_card_has_no_room_for_is_refused_and_nothing_of_it_starts(
     run: Run,
 ) -> None:
     run.in_card_mode()
-    run.reading.write_text(NO_ROOM_FOR_THE_CAP)
+    run.write_reading(NO_ROOM_FOR_THE_CAP)
 
     status, error = run.finish(run.start("--cells", "clear", "lag"))
     record = _record(run)
@@ -148,7 +171,7 @@ def test_a_first_sample_that_fails_refuses_the_group_and_names_the_failed_sample
     run: Run, reading: str
 ) -> None:
     run.in_card_mode()
-    run.reading.write_text(reading)
+    run.write_reading(reading)
 
     status, error = run.finish(run.start("--cells", "lag"))
     entry = _record(run)["services"]["lag"]
@@ -205,7 +228,7 @@ def test_a_group_is_refused_when_the_memory_falls_before_its_service_exists(
     run.environment["PROBE_RUN_HOLD"] = str(release)
     command = run.start("--cells", "lag")
     held = run.wait_until(run.probe_run_log.exists, APPEARS_WITHIN_SECONDS)
-    run.reading.write_text(NO_ROOM_FOR_THE_CAP)
+    run.write_reading(NO_ROOM_FOR_THE_CAP)
 
     status, error = run.finish(command)
 
@@ -298,7 +321,7 @@ def test_a_breach_while_sessions_run_keeps_the_cells_finished_before_it(
     first = run.wait_until(
         lambda: run.fragment_cells() == ["sentences"], APPEARS_WITHIN_SECONDS
     )
-    run.reading.write_text(reading)
+    run.write_reading(reading)
 
     status, error = run.finish(command)
     record = _record(run)
@@ -331,7 +354,7 @@ def test_a_breach_while_the_group_stops_after_an_interrupt_kills_at_once(
     # A stopped service holds the group's own stop for its whole bound.
     os.kill(run.service_pid(), signal.SIGSTOP)
     os.kill(command.pid, signal.SIGINT)
-    run.reading.write_text(BELOW_THE_FLOOR)
+    run.write_reading(BELOW_THE_FLOOR)
 
     status, error = run.finish(command)
 
