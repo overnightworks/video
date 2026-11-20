@@ -3,7 +3,8 @@
 `--dry-run` drives the `fake` provider, so every verdict that needs a card stays
 `not_measured`. Each group of cells runs as one service under `probe-run`, which
 this command calls itself; the record is written once every group has ended, and
-the recording, its contact sheets and each service's log are written beside it.
+the recording and its contact sheets are written beside it, and each service's log
+is written there from the service's start, so it stays however the group ends.
 """
 
 # ruff: noqa: T201 - the command reports its result on the command line
@@ -31,6 +32,7 @@ from card_drive import (
     SessionEndedError,
     Window,
     exit_on_stop,
+    hold_workers,
     opened_session,
     read_audio,
     running_service,
@@ -87,11 +89,29 @@ class Drive:
 
     def beside(self, suffix: str) -> Path:
         """A path beside the record, named after it."""
-        return self.record.with_name(f"{self.record.stem}.{suffix}")
+        return _beside(self.record, suffix)
 
     def session(self, look: str) -> AbstractAsyncContextManager[Session]:
         """An opened session on `look`."""
         return opened_session(self.service, self.identity, look)
+
+
+def _beside(record: Path, suffix: str) -> Path:
+    return record.with_name(f"{record.stem}.{suffix}")
+
+
+def _group_log(record: Path, group: str) -> Path:
+    """Where the service of `group` writes its log."""
+    return _beside(record, f"{group}.log")
+
+
+def step_figures(line: dict[str, object]) -> dict[str, object]:
+    """A load or preparation as the service logged it: outcome, reason, duration."""
+    return {
+        name: value_of(line[name])
+        for name in ("outcome", "reason", "duration_ms")
+        if name in line
+    }
 
 
 def _sentence_figures(
@@ -240,10 +260,15 @@ async def _looks(drive: Drive) -> object:
 
 
 async def _lag(drive: Drive) -> object:
-    """A lag far too small ends the session as unavailable."""
+    """A provider that cannot answer within a lag far too small ends the session.
+
+    The worker is held once the session is open, so the outcome does not wait for the
+    provider to be slower than the lag by chance.
+    """
     code = None
     try:
         async with drive.session(LOOK_NAMES[0]) as session:
+            hold_workers(drive.service.process.pid)
             await session.until(OutputAudioBufferStarted)
     except SessionEndedError as ended:
         code = ended.code
@@ -300,15 +325,34 @@ def _checked_record(path: Path) -> Path:
     return record
 
 
+def _service_figures(
+    service: Service, log: Path, *, dry_run: bool
+) -> dict[str, object]:
+    """The service's start, load and preparations, and its stop."""
+    return {
+        "start_to_ready_ms": judged(
+            service.start_to_ready_ms, START_TO_READY_LINE, dry_run=dry_run
+        ),
+        "provider_load": step_figures(service.lines("provider_load.ended")[0]),
+        "look_preparations": [
+            {"look": value_of(line["look"])} | step_figures(line)
+            for line in service.lines("look_preparation.ended")
+        ],
+        "stop_to_exit_ms": value_of(service.stop_to_exit_ms),
+        "log": value_of(log.name),
+    }
+
+
 def _run_group(
     group: str, arguments: argparse.Namespace, scratch: Path
 ) -> dict[str, object]:
     """Drive the cells of `group` through one service; its fragment of the record."""
     audio = read_audio(arguments.audio)
     names = [name for name in GROUPS[group] if name in arguments.cells]
+    log = _group_log(arguments.record, group)
     with (
         throwaway_identity(scratch) as identity,
-        running_service(identity, scratch, max_lag_ms=LAGS[group]) as service,
+        running_service(identity, log, max_lag_ms=LAGS[group]) as service,
     ):
         drive = Drive(
             service, identity, audio, dry_run=arguments.dry_run, record=arguments.record
@@ -318,22 +362,10 @@ def _run_group(
             return {name: await GROUPS[group][name](drive) for name in names}
 
         cells = asyncio.run(run_cells())
-    log = drive.beside(f"{group}.log")
-    shutil.copyfile(service.log, log)
     return {
         "cells": cells,
-        "services": {
-            group: {
-                "start_to_ready_ms": judged(
-                    service.start_to_ready_ms,
-                    START_TO_READY_LINE,
-                    dry_run=arguments.dry_run,
-                ),
-                "stop_to_exit_ms": value_of(service.stop_to_exit_ms),
-                "log": value_of(log.name),
-            }
-        },
-        "files": [path.name for path in [*drive.written, log]],
+        "services": {group: _service_figures(service, log, dry_run=arguments.dry_run)},
+        "files": [path.name for path in drive.written],
     }
 
 
@@ -356,9 +388,10 @@ def _child(group: str, arguments: argparse.Namespace) -> int:
 
 def _under_probe_run(group: str, arguments: argparse.Namespace, fragment: Path) -> None:
     """Run `group` as its own process under `probe-run`; a failure ends the proof."""
-    if shutil.which(PROBE_RUN) is None:
-        message = f"{PROBE_RUN} is not on PATH; the proof does not run without it"
-        raise SystemExit(message)
+    for tool in (PROBE_RUN, "setpriv"):
+        if shutil.which(tool) is None:
+            message = f"{tool} is not on PATH; the proof does not run without it"
+            raise SystemExit(message)
     command = [
         PROBE_RUN,
         "-k",
@@ -376,6 +409,15 @@ def _under_probe_run(group: str, arguments: argparse.Namespace, fragment: Path) 
         *[name for name in GROUPS[group] if name in arguments.cells],
         *(["--dry-run"] if arguments.dry_run else []),
     ]
+    try:
+        _run_child(command, group, fragment)
+    finally:
+        if (log := _group_log(arguments.record, group)).exists():
+            print(f"beside it: {log}")
+
+
+def _run_child(command: list[str], group: str, fragment: Path) -> None:
+    """Run `command` as the group's process; a stop is forwarded, a failure ends it."""
     interrupts: list[int] = []
 
     def forward(signum: int, _frame: object) -> None:
