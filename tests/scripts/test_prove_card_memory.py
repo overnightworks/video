@@ -33,12 +33,15 @@ from support.prove_card_support import (
     APPEARS_WITHIN_SECONDS,
     BELOW_THE_FLOOR,
     CAP_MB,
+    DEFAULT_LAG_MS,
     FLOOR_MB,
     GONE_WITHIN_SECONDS,
+    LAG_SERVICE,
     NO_ROOM_FOR_THE_CAP,
     ROOMY,
     USED_MB,
     Run,
+    is_cell_not_measured,
     is_not_measured,
     lines,
 )
@@ -53,7 +56,7 @@ def _record(run: Run) -> dict:
 
 
 def _cells_are(record: dict, reason: Reason) -> bool:
-    return all(is_not_measured(cell, reason) for cell in record["cells"].values())
+    return all(is_cell_not_measured(record, name, reason) for name in record["cells"])
 
 
 def test_a_card_run_with_room_records_the_cards_memory_and_judges_its_lines(
@@ -66,11 +69,13 @@ def test_a_card_run_with_room_records_the_cards_memory_and_judges_its_lines(
         run.start("--cells", "lag", "--memory-floor-mb", str(FLOOR_ARGUMENT))
     )
     record = _record(run)
-    entry = record["services"]["lag"]
+    entry = record["services"][LAG_SERVICE]
 
     assert status == 0, error
     assert record["mode"] == "card"
-    assert record["cells"]["lag"]["ended_unavailable"]["value"] is True
+    assert record["cells"]["lag"]["smallest_without_starvation_ms"] == value_of(
+        DEFAULT_LAG_MS
+    )
     assert entry[MemoryFigure.USED_BEFORE] == value_of(USED_MB)
     assert entry[MemoryFigure.USED_MOST] == value_of(USED_MB)
     assert entry[MemoryFigure.USED_AFTER] == value_of(USED_MB)
@@ -97,8 +102,10 @@ def test_a_card_run_starts_its_services_on_one_compiler_home_that_is_gone_after_
     (home,) = homes
 
     assert status == 0, error
-    assert services["wire"]["compiler_home_at_start"] == value_of(CompilerHome.EMPTY)
-    assert services["lag"]["compiler_home_at_start"] == value_of(CompilerHome.FILLED)
+    assert services[LAG_SERVICE]["compiler_home_at_start"] == value_of(
+        CompilerHome.EMPTY
+    )
+    assert services["wire"]["compiler_home_at_start"] == value_of(CompilerHome.FILLED)
     assert all(saw["HOME"] == saw["TMPDIR"] for saw in run.workers_saw())
     assert len(run.workers_saw()) == len(services)
     assert run.scratch in Path(home).parents
@@ -155,7 +162,7 @@ def test_a_floor_of_zero_is_the_operators_choice_and_the_group_runs(run: Run) ->
     status, error = run.finish(run.start("--cells", "lag", "--memory-floor-mb", "0"))
 
     assert status == 0, error
-    assert _record(run)["services"]["lag"][MemoryFigure.FLOOR] == value_of(0)
+    assert _record(run)["services"][LAG_SERVICE][MemoryFigure.FLOOR] == value_of(0)
 
 
 def test_a_group_the_card_has_no_room_for_is_refused_and_nothing_of_it_starts(
@@ -166,7 +173,7 @@ def test_a_group_the_card_has_no_room_for_is_refused_and_nothing_of_it_starts(
 
     status, error = run.finish(run.start("--cells", "clear", "lag"))
     record = _record(run)
-    entry = record["services"]["wire"]
+    entry = record["services"][LAG_SERVICE]
 
     assert status != 0
     assert len(lines(error)) == 1
@@ -176,13 +183,13 @@ def test_a_group_the_card_has_no_room_for_is_refused_and_nothing_of_it_starts(
     assert is_not_measured(entry["start_to_ready_ms"], Reason.MEMORY_REFUSED)
     assert is_not_measured(entry["compiler_home_at_start"], Reason.MEMORY_REFUSED)
     assert is_not_measured(
-        record["services"]["lag"]["card_free_least_mb"], Reason.MEMORY_REFUSED
+        record["services"]["wire"]["card_free_least_mb"], Reason.MEMORY_REFUSED
     )
     assert entry[MEMORY_STOP]["reason"] == StopReason.SHORT_FOR_CAP
     assert entry[MEMORY_STOP]["refused"] is True
     assert entry[MemoryFigure.USED_BEFORE] == value_of(USED_MB)
     assert entry["processes_alive_after_kill"] == value_of(0)
-    assert MEMORY_STOP not in record["services"]["lag"]
+    assert MEMORY_STOP not in record["services"]["wire"]
     assert run.logs() == []
     assert run.processes() == []
 
@@ -195,7 +202,7 @@ def test_a_first_sample_that_fails_refuses_the_group_and_names_the_failed_sample
     run.write_reading(reading)
 
     status, error = run.finish(run.start("--cells", "lag"))
-    entry = _record(run)["services"]["lag"]
+    entry = _record(run)["services"][LAG_SERVICE]
     stop = entry[MEMORY_STOP]
 
     assert status != 0
@@ -217,7 +224,9 @@ def test_the_floor_argument_is_what_the_refusal_judges_by(run: Run) -> None:
 
     assert status != 0
     assert str(floor) in error
-    assert _record(run)["services"]["lag"][MEMORY_STOP]["floor_mb"] == value_of(floor)
+    assert _record(run)["services"][LAG_SERVICE][MEMORY_STOP]["floor_mb"] == value_of(
+        floor
+    )
 
 
 def test_a_second_group_the_card_has_no_room_for_is_refused_after_the_first_ran(
@@ -233,12 +242,14 @@ def test_a_second_group_the_card_has_no_room_for_is_refused_after_the_first_ran(
 
     assert status != 0
     assert "refused" in error
-    assert record["cells"]["clear"]["outcome"]["value"] == "cancelled"
-    assert is_not_measured(record["cells"]["lag"], Reason.MEMORY_REFUSED)
-    assert MEMORY_STOP in record["services"]["lag"]
-    assert MEMORY_STOP not in record["services"]["wire"]
+    assert record["cells"]["lag"]["smallest_without_starvation_ms"] == value_of(
+        DEFAULT_LAG_MS
+    )
+    assert is_cell_not_measured(record, "clear", Reason.MEMORY_REFUSED)
+    assert MEMORY_STOP in record["services"]["wire"]
+    assert MEMORY_STOP not in record["services"][LAG_SERVICE]
     assert len(run.probe_run_log.read_text().splitlines()) == 1
-    assert [log.name for log in run.logs()] == ["record.wire.log"]
+    assert [log.name for log in run.logs()] == [f"record.{LAG_SERVICE}.log"]
 
 
 def test_a_group_is_refused_when_the_memory_falls_before_its_service_exists(
@@ -256,9 +267,9 @@ def test_a_group_is_refused_when_the_memory_falls_before_its_service_exists(
     assert held
     assert status != 0
     assert "refused" in error
-    assert _record(run)["services"]["lag"][MEMORY_STOP]["refused"] is True
+    assert _record(run)["services"][LAG_SERVICE][MEMORY_STOP]["refused"] is True
     assert is_not_measured(
-        _record(run)["services"]["lag"][MemoryFigure.USED_AFTER],
+        _record(run)["services"][LAG_SERVICE][MemoryFigure.USED_AFTER],
         Reason.MEMORY_REFUSED,
     )
     assert run.answers_given(NO_ROOM_FOR_THE_CAP) == 1
@@ -295,7 +306,7 @@ def test_a_breach_while_the_provider_loads_ends_the_tree_and_starts_no_second_gr
 
     status, error = run.finish(run.start("--cells", "clear", "lag"))
     record = _record(run)
-    entry = record["services"]["wire"]
+    entry = record["services"][LAG_SERVICE]
     stop = entry[MEMORY_STOP]
 
     assert status != 0
@@ -305,7 +316,7 @@ def test_a_breach_while_the_provider_loads_ends_the_tree_and_starts_no_second_gr
     assert is_not_measured(entry["start_to_ready_ms"], Reason.WATCHDOG_BREACH)
     assert all(
         is_not_measured(figure, Reason.WATCHDOG_BREACH)
-        for figure in record["services"]["lag"].values()
+        for figure in record["services"]["wire"].values()
     )
     assert stop["reason"] == StopReason.BELOW_FLOOR
     assert stop["refused"] is False
@@ -320,7 +331,7 @@ def test_a_breach_while_the_provider_loads_ends_the_tree_and_starts_no_second_gr
     )
     assert run.answers_given(BELOW_THE_FLOOR) == 1
     assert len(run.probe_run_log.read_text().splitlines()) == 1
-    assert [log.name for log in run.logs()] == ["record.wire.log"]
+    assert [log.name for log in run.logs()] == [f"record.{LAG_SERVICE}.log"]
     assert str(run.logs()[0]) in run.printed()
     assert run.processes() == []
     assert list(run.scratch.iterdir()) == []
@@ -404,7 +415,7 @@ def test_a_dry_run_records_the_memory_figures_as_not_measured_and_samples_no_car
     run: Run,
 ) -> None:
     status, error = run.finish(run.start("--dry-run", "--cells", "lag"))
-    entry = _record(run)["services"]["lag"]
+    entry = _record(run)["services"][LAG_SERVICE]
 
     assert status == 0, error
     assert all(is_not_measured(entry[name], Reason.NO_CARD) for name in MEMORY_FIGURES)
@@ -435,27 +446,27 @@ def test_a_provider_that_fails_to_load_ends_its_group_before_its_first_cell(
     run: Run,
 ) -> None:
     run.in_card_mode()
-    run.fail_the_load_of("wire")
+    run.fail_the_load_of(LAG_SERVICE)
 
     status, error = run.finish(run.start("--cells", "clear", "lag"))
     record = _record(run)
-    entry = record["services"]["wire"]
+    entry = record["services"][LAG_SERVICE]
 
     assert status != 0
-    assert "provider_failed" in _ended_by_a_step(error, "wire")
-    assert is_not_measured(record["cells"]["clear"], Reason.PROVIDER_NOT_LOADED)
-    assert is_not_measured(record["cells"]["lag"], Reason.EARLIER_GROUP_FAILED)
+    assert "provider_failed" in _ended_by_a_step(error, LAG_SERVICE)
+    assert is_cell_not_measured(record, "lag", Reason.PROVIDER_NOT_LOADED)
+    assert is_cell_not_measured(record, "clear", Reason.EARLIER_GROUP_FAILED)
     assert entry["provider_load"]["outcome"] == value_of("failed")
     assert entry["provider_load"]["reason"] == value_of("provider_failed")
     assert _unmeasured_for(entry, Reason.PROVIDER_NOT_LOADED)
     assert entry["compiler_home_at_start"] == value_of(CompilerHome.EMPTY)
     assert is_not_measured(
-        record["services"]["lag"]["compiler_home_at_start"],
+        record["services"]["wire"]["compiler_home_at_start"],
         Reason.EARLIER_GROUP_FAILED,
     )
     assert entry["look_preparations"] == []
     assert len(run.probe_run_log.read_text().splitlines()) == 1
-    assert [log.name for log in run.logs()] == ["record.wire.log"]
+    assert [log.name for log in run.logs()] == [f"record.{LAG_SERVICE}.log"]
     assert run.processes() == []
     assert list(run.scratch.iterdir()) == []
 
@@ -464,21 +475,48 @@ def test_a_provider_that_fails_to_load_in_a_later_group_keeps_the_cells_before_i
     run: Run,
 ) -> None:
     run.in_card_mode()
-    run.fail_the_load_of("lag")
+    run.fail_the_load_of("wire")
 
     status, error = run.finish(run.start("--cells", "clear", "lag"))
     record = _record(run)
 
     assert status != 0
-    assert "provider_failed" in _ended_by_a_step(error, "lag")
-    assert record["cells"]["clear"]["outcome"]["value"] == "cancelled"
-    assert is_not_measured(record["cells"]["lag"], Reason.PROVIDER_NOT_LOADED)
-    assert record["services"]["lag"]["provider_load"]["outcome"] == value_of("failed")
-    assert _unmeasured_for(record["services"]["lag"], Reason.PROVIDER_NOT_LOADED)
-    assert record["services"]["wire"]["start_to_ready_ms"]["verdict"] in {
+    assert "provider_failed" in _ended_by_a_step(error, "wire")
+    assert record["cells"]["lag"]["smallest_without_starvation_ms"] == value_of(
+        DEFAULT_LAG_MS
+    )
+    assert is_cell_not_measured(record, "clear", Reason.PROVIDER_NOT_LOADED)
+    assert record["services"]["wire"]["provider_load"]["outcome"] == value_of("failed")
+    assert _unmeasured_for(record["services"]["wire"], Reason.PROVIDER_NOT_LOADED)
+    assert record["services"][LAG_SERVICE]["start_to_ready_ms"]["verdict"] in {
         Verdict.MET,
         Verdict.MISSED,
     }
+    assert run.processes() == []
+
+
+def test_a_swept_value_whose_load_fails_has_no_outcome_and_ends_the_later_groups(
+    run: Run,
+) -> None:
+    run.in_card_mode()
+    run.fail_the_load_of("lag-2000")
+
+    status, error = run.finish(
+        run.start("--cells", "clear", "lag", "--lag-ms", "2000", "1000")
+    )
+    record = _record(run)
+    lag = record["cells"]["lag"]
+
+    assert status != 0
+    assert "provider_failed" in _ended_by_a_step(error, "lag-2000")
+    assert [value["max_lag_ms"]["value"] for value in lag["values"]] == [1000, 2000]
+    assert lag["values"][0]["starved"] == value_of(False)  # noqa: FBT003
+    assert is_not_measured(lag["values"][1]["starved"], Reason.PROVIDER_NOT_LOADED)
+    assert is_cell_not_measured(record, "lag", Reason.PROVIDER_NOT_LOADED)
+    assert is_cell_not_measured(record, "clear", Reason.EARLIER_GROUP_FAILED)
+    assert is_not_measured(
+        record["services"]["wire"]["max_lag_ms"], Reason.EARLIER_GROUP_FAILED
+    )
     assert run.processes() == []
 
 
@@ -491,18 +529,18 @@ def test_a_look_that_is_not_prepared_ends_its_group_naming_the_look_and_the_reas
 
     status, error = run.finish(run.start("--cells", "clear", "lag"))
     record = _record(run)
-    entry = record["services"]["wire"]
+    entry = record["services"][LAG_SERVICE]
     prepared = {
         preparation["look"]["value"]: preparation["outcome"]["value"]
         for preparation in entry["look_preparations"]
     }
-    line = _ended_by_a_step(error, "wire")
+    line = _ended_by_a_step(error, LAG_SERVICE)
 
     assert status != 0
     assert look in line
     assert "provider_failed" in line
-    assert is_not_measured(record["cells"]["clear"], Reason.LOOK_NOT_PREPARED)
-    assert is_not_measured(record["cells"]["lag"], Reason.EARLIER_GROUP_FAILED)
+    assert is_cell_not_measured(record, "lag", Reason.LOOK_NOT_PREPARED)
+    assert is_cell_not_measured(record, "clear", Reason.EARLIER_GROUP_FAILED)
     assert entry["provider_load"]["outcome"] == value_of("ok")
     assert _unmeasured_for(entry, Reason.LOOK_NOT_PREPARED)
     assert prepared == {
@@ -521,7 +559,7 @@ def test_a_provider_root_without_the_worker_ends_the_group_as_a_failed_load(
     record = _record(run)
 
     assert status != 0
-    assert "provider_failed" in _ended_by_a_step(error, "lag")
-    assert is_not_measured(record["cells"]["lag"], Reason.PROVIDER_NOT_LOADED)
-    assert _unmeasured_for(record["services"]["lag"], Reason.PROVIDER_NOT_LOADED)
+    assert "provider_failed" in _ended_by_a_step(error, LAG_SERVICE)
+    assert is_cell_not_measured(record, "lag", Reason.PROVIDER_NOT_LOADED)
+    assert _unmeasured_for(record["services"][LAG_SERVICE], Reason.PROVIDER_NOT_LOADED)
     assert run.processes() == []

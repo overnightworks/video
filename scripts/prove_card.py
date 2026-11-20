@@ -34,7 +34,6 @@ from pydantic import ValidationError
 from card_cells import (
     CELLS,
     GROUPS,
-    LAGS,
     Drive,
     beside,
 )
@@ -63,6 +62,7 @@ from card_record import (
     completed_cells,
     completed_service,
     failed_load,
+    lag_cell,
     not_measured,
     service_figures,
     value_of,
@@ -114,6 +114,8 @@ def _group_log(record: Path, group: str) -> Path:
 
 
 _PROVIDER_FIELDS: Final = ("provider_root", "card_memory_mb")
+# The lag the service runs at when the command names none.
+_DEFAULT_LAG_MS: Final = Settings.model_fields["max_lag_ms"].default
 
 
 def _non_negative(text: str) -> int:
@@ -143,8 +145,17 @@ def _arguments(argv: Sequence[str]) -> argparse.Namespace:
         default=int(FREE_MEMORY_LINE.limit),
         help="free card memory in MiB the run keeps beside the provider's cap",
     )
+    parser.add_argument(
+        "--lag-ms",
+        nargs="+",
+        default=[str(_DEFAULT_LAG_MS)],
+        metavar="MS",
+        help="the lags in ms the lag cell sweeps; the wire group runs at the largest",
+    )
     parser.add_argument("--fragment", type=Path, help=argparse.SUPPRESS)
-    return parser.parse_args(argv)
+    arguments = parser.parse_args(argv)
+    arguments.lag_ms = _lags(arguments.lag_ms)
+    return arguments
 
 
 def _checked_record(path: Path) -> Path:
@@ -172,6 +183,26 @@ class _GivenSettings(Settings):
         **_other_sources: PydanticBaseSettingsSource,
     ) -> tuple[PydanticBaseSettingsSource, ...]:
         return (init_settings,)
+
+
+def _lags(texts: Sequence[str]) -> list[int]:
+    """The lags named, once the service accepts each and none is named twice.
+
+    The refusal is one line that names the argument.
+    """
+    lags = []
+    for text in texts:
+        try:
+            lag = int(text)
+            _GivenSettings(provider=ProviderName.FAKE, max_lag_ms=lag)
+        except ValueError, ValidationError:
+            message = f"--lag-ms {text}: the service takes whole numbers of at least 1"
+            raise SystemExit(message) from None
+        lags.append(lag)
+    if len(set(lags)) != len(lags):
+        message = "--lag-ms names a value twice"
+        raise SystemExit(message)
+    return lags
 
 
 @dataclass(frozen=True)
@@ -225,12 +256,18 @@ def _stop_figure(service: Service) -> dict[str, object]:
 
 
 def _groups(arguments: argparse.Namespace) -> list[_Group]:
-    """The groups the command was asked for, in the order they run."""
-    return [
-        _Group(kind, kind, LAGS[kind])
-        for kind, members in GROUPS.items()
-        if set(members) & set(arguments.cells)
+    """The groups the command was asked for, in the order they run.
+
+    The lag cell runs once at each lag named, the smallest first; the wire group runs
+    after them at the largest.
+    """
+    lags = sorted(arguments.lag_ms)
+    groups = [
+        _Group(f"lag-{lag}", "lag", lag) for lag in lags if "lag" in arguments.cells
     ]
+    if set(GROUPS["wire"]) & set(arguments.cells):
+        groups.append(_Group("wire", "wire", lags[-1]))
+    return groups
 
 
 def _chosen(group: _Group, arguments: argparse.Namespace) -> list[str]:
@@ -300,7 +337,7 @@ def _run_group(
         drive = Drive(
             service, identity, audio, dry_run=arguments.dry_run, record=arguments.record
         )
-        figures = service_figures(service, log, dry_run=arguments.dry_run)
+        figures = service_figures(service, log, group.lag_ms, dry_run=arguments.dry_run)
 
         def save(outcome: GroupOutcome) -> None:
             _write_fragment(
@@ -400,6 +437,8 @@ def _under_probe_run(
         str(arguments.audio),
         "--cells",
         *_chosen(group, arguments),
+        "--lag-ms",
+        str(group.lag_ms),
         *(["--dry-run"] if arguments.dry_run else []),
     ]
     try:
@@ -450,11 +489,25 @@ class _Gathered:
     """What the groups' fragments add up to, and why no group follows the last."""
 
     cells: dict[str, object] = field(default_factory=dict)
+    sweep: dict[int, object] = field(default_factory=dict)
     services: dict[str, object] = field(default_factory=dict)
     files: list[str] = field(default_factory=list)
     failure: str | None = None
     stopped: bool = False
     later: Reason = Reason.EARLIER_GROUP_FAILED
+
+    @property
+    def recorded_cells(self) -> dict[str, object]:
+        """Every cell run, the sweep's merged into the lag cell, in the cells' order."""
+        cells = self.cells | ({"lag": lag_cell(self.sweep)} if self.sweep else {})
+        return {name: cells[name] for name in CELLS if name in cells}
+
+    def add_cells(self, group: _Group, cells: dict[str, object]) -> None:
+        """Add `group`'s cells: a sweep group's lag cell is one value of the sweep."""
+        if group.kind == "lag":
+            self.sweep[group.lag_ms] = cells["lag"]
+        else:
+            self.cells |= cells
 
     @property
     def ended(self) -> bool:
@@ -485,6 +538,29 @@ class CardLimits:
     floor_mb: int
 
 
+def _watch_of(limits: CardLimits | None) -> GroupWatch | None:
+    """What samples the card for a group in card mode; none in a dry run."""
+    if limits is None:
+        return None
+    return GroupWatch(read_card_memory, limits.cap_mb, limits.floor_mb)
+
+
+def _failure(
+    group: _Group,
+    kill: Kill,
+    status: int | None,
+    parts: dict[str, object],
+    *,
+    stopped: bool,
+) -> str | None:
+    """Why no group follows `group`, when it left something below the top or failed."""
+    if kill.failed:
+        return f"the {group.name} group left a process below the top that was not ended"
+    if not stopped and (status or parts.get("outcome") != GroupOutcome.DONE):
+        return f"the {group.name} cells ended with status {status}"
+    return None
+
+
 def _gather(
     group: _Group,
     arguments: argparse.Namespace,
@@ -505,12 +581,7 @@ def _gather(
     unfinished: tuple[Reason, ...] = ()
     if not gathered.ended:
         fragment = scratch / f"{group.name}.json"
-        limits = arguments.limits
-        watch = (
-            None
-            if limits is None
-            else GroupWatch(read_card_memory, limits.cap_mb, limits.floor_mb)
-        )
+        watch = _watch_of(arguments.limits)
         compiler_home_at_start = _compiler_home_at_start(scratch)
         probed, kill = _run_group_process(group, arguments, fragment, control, watch)
         status = probed.status
@@ -529,17 +600,17 @@ def _gather(
             # A cell the stop failed may have left later cells `group_ended`.
             unfinished = (Reason.GROUP_ENDED,)
             gathered.stopped = True
-        if kill.failed:
-            gathered.failure = (
-                f"the {group.name} group left a process below the top that was"
-                " not ended"
-            )
-        elif not gathered.stopped and (
-            status or parts.get("outcome") != GroupOutcome.DONE
-        ):
-            gathered.failure = f"the {group.name} cells ended with status {status}"
-    gathered.cells |= completed_cells(
-        _chosen(group, arguments), parts.get("cells", {}), reason, replacing=unfinished
+        gathered.failure = _failure(
+            group, kill, status, parts, stopped=gathered.stopped
+        )
+    gathered.add_cells(
+        group,
+        completed_cells(
+            _chosen(group, arguments),
+            parts.get("cells", {}),
+            reason,
+            replacing=unfinished,
+        ),
     )
     gathered.services[group.name] = completed_service(
         parts.get("services", {}).get(group.name, {}) | top_figures, reason
@@ -587,7 +658,9 @@ def main(argv: Sequence[str] | None = None, control: ProcessControl = KERNEL) ->
         for group in _groups(arguments):
             _gather(group, arguments, Path(scratch), gathered, control)
     record = closed_record(
-        dry_run=arguments.dry_run, cells=gathered.cells, services=gathered.services
+        dry_run=arguments.dry_run,
+        cells=gathered.recorded_cells,
+        services=gathered.services,
     )
     # The operator names the record's path; writing it is this command's job.
     arguments.record.write_text(json.dumps(record, indent=2) + "\n")  # NOSONAR(S8707)

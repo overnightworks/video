@@ -12,7 +12,6 @@ from card_drive import (
     Audio,
     SessionEndedError,
     Window,
-    hold_workers,
     opened_session,
     timed,
 )
@@ -43,8 +42,6 @@ IDLE_SECONDS: Final = 0.5
 SETTLE_SECONDS: Final = 0.5
 STEADY_SECONDS: Final = 1.5
 FIVE_VIEWERS: Final = 5
-TOO_SMALL_LAG_MS: Final = 1
-DEFAULT_LAG_MS: Final = 500
 # A clear with nothing queued gets no confirmation, so the wait for the viewer's first
 # loud frame ends well inside the sentence's playing time.
 CLEAR_WAIT_SHARE: Final = 0.5
@@ -101,16 +98,24 @@ async def _spoken(drive: Drive, session: Session, name: str) -> dict[str, object
     )
 
 
+async def _two_sentences(
+    drive: Drive, session: Session, spoken: list[dict[str, object]]
+) -> None:
+    """Two sentences of `session` with idle between them, each added to `spoken`."""
+    spoken.append(await _spoken(drive, session, "first"))
+    await asyncio.sleep(IDLE_SECONDS)
+    spoken.append(await _spoken(drive, session, "second"))
+
+
 async def _sentences(drive: Drive) -> object:
     """Two sentences of one session on a look, with idle between them."""
+    spoken: list[dict[str, object]] = []
     async with drive.session(LOOK_NAMES[0]) as session:
-        first = await _spoken(drive, session, "first")
-        await asyncio.sleep(IDLE_SECONDS)
-        second = await _spoken(drive, session, "second")
+        await _two_sentences(drive, session, spoken)
         return {
             "look": LOOK_NAMES[0],
             "opening_ms": value_of(session.opening_ms),
-            "sentences": [first, second],
+            "sentences": spoken,
         }
 
 
@@ -230,25 +235,24 @@ async def _looks(drive: Drive) -> object:
 
 
 async def _lag(drive: Drive) -> object:
-    """A provider that cannot answer within a lag far too small ends the session.
+    """Two sentences of one session at the service's lag; whether the session starved.
 
-    The worker is held once the session is open, so the outcome does not wait for the
-    provider to be slower than the lag by chance.
+    A session the service ends `unavailable` is starved: the provider did not answer
+    a call within the lag. The sentences that completed before are recorded.
     """
-    code = None
+    spoken: list[dict[str, object]] = []
+    starved = False
     try:
         async with drive.session(LOOK_NAMES[0]) as session:
-            hold_workers(drive.service.process.pid)
-            await session.until(OutputAudioBufferStarted)
+            await _two_sentences(drive, session, spoken)
     except SessionEndedError as ended:
-        code = ended.code
-    return {
-        "max_lag_ms": value_of(TOO_SMALL_LAG_MS),
-        "ended_unavailable": value_of(code == RefusalCode.UNAVAILABLE),
-    }
+        if ended.code != RefusalCode.UNAVAILABLE:
+            raise
+        starved = True
+    return {"starved": value_of(starved), "sentences": spoken}
 
 
-# A group is one service; the lag cell needs a service of its own.
+# A group is one service; each value of the lag sweep runs in a service of its own.
 GROUPS: Final = {
     "wire": {
         "sentences": _sentences,
@@ -259,5 +263,4 @@ GROUPS: Final = {
     },
     "lag": {"lag": _lag},
 }
-LAGS: Final = {"wire": DEFAULT_LAG_MS, "lag": TOO_SMALL_LAG_MS}
 CELLS: Final = tuple(cell for group in GROUPS.values() for cell in group)

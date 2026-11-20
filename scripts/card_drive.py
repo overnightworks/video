@@ -490,13 +490,6 @@ def _wait_until_ready(service: Service, started: float) -> None:
     raise DriveError(message)
 
 
-def hold_workers(service_pid: int) -> None:
-    """Stop the service's workers where they are, so no call to them is answered."""
-    for worker in worker_pids(service_pid):
-        with suppress(ProcessLookupError):
-            os.killpg(worker, signal.SIGSTOP)
-
-
 def _kill(service_pid: int) -> None:
     """Kill the groups of the service's worker children now, then the service's."""
     for worker in worker_pids(service_pid):

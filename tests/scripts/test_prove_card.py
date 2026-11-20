@@ -32,10 +32,13 @@ from support.prove_card_support import (
     APPEARS_WITHIN_SECONDS,
     AUDIO_SECONDS,
     CELLS_BY_GROUP,
+    DEFAULT_LAG_MS,
     GONE_WITHIN_SECONDS,
+    LAG_SERVICE,
     RUN_WITHIN_SECONDS,
     Run,
     ended,
+    is_cell_not_measured,
     is_not_measured,
     write_audio,
 )
@@ -106,16 +109,38 @@ def test_two_looks_in_sequence_are_each_recorded_under_their_look(
     assert all(session["frame_count"]["value"] > 0 for session in looks)
 
 
-def test_a_lag_far_too_small_is_recorded_as_unavailable(
+def test_a_dry_run_sweeps_the_default_lag_and_no_session_starves_at_it(
     dry_run: tuple[Run, dict],
 ) -> None:
-    assert dry_run[1]["cells"]["lag"]["ended_unavailable"]["value"] is True
+    lag = dry_run[1]["cells"]["lag"]
+
+    (swept,) = lag["values"]
+    assert swept["max_lag_ms"] == value_of(DEFAULT_LAG_MS)
+    assert swept["starved"] == value_of(False)  # noqa: FBT003 - the figure's value
+    assert [sentence["sentence"] for sentence in swept["sentences"]] == [
+        "first",
+        "second",
+    ]
+    assert lag["smallest_without_starvation_ms"] == value_of(DEFAULT_LAG_MS)
+    assert is_not_measured(lag["largest_starved_ms"], Reason.NO_VALUE_STARVED)
+
+
+def test_a_dry_runs_services_name_the_lag_each_runs_at(
+    dry_run: tuple[Run, dict],
+) -> None:
+    services = dry_run[1]["services"]
+
+    assert list(services) == [LAG_SERVICE, "wire"]
+    assert all(
+        service["max_lag_ms"] == value_of(DEFAULT_LAG_MS)
+        for service in services.values()
+    )
 
 
 def test_the_first_service_of_a_run_starts_on_an_empty_compiler_home(
     dry_run: tuple[Run, dict],
 ) -> None:
-    first = dry_run[1]["services"]["wire"]
+    first = dry_run[1]["services"][LAG_SERVICE]
 
     assert first["compiler_home_at_start"] == value_of(CompilerHome.EMPTY)
 
@@ -125,7 +150,7 @@ def test_every_service_of_the_run_stops_and_none_is_left(
 ) -> None:
     services = dry_run[1]["services"]
 
-    assert set(services) == {"wire", "lag"}
+    assert set(services) == {LAG_SERVICE, "wire"}
     assert all(set(service) == set(SERVICE_FIGURES) for service in services.values())
     assert all(
         service["stop_to_exit_ms"]["value"] >= 0 for service in services.values()
@@ -588,14 +613,14 @@ def test_a_failed_group_ends_the_command_and_no_later_group_starts(run: Run) -> 
 
     assert status != 0
     assert list(record["cells"]) == ["viewer", "lag"]
-    assert is_not_measured(record["cells"]["viewer"], Reason.CELL_FAILED)
-    assert is_not_measured(record["cells"]["lag"], Reason.EARLIER_GROUP_FAILED)
+    assert is_not_measured(record["cells"]["viewer"], Reason.EARLIER_GROUP_FAILED)
+    assert is_cell_not_measured(record, "lag", Reason.CELL_FAILED)
     assert all(
         is_not_measured(figure, Reason.EARLIER_GROUP_FAILED)
-        for figure in record["services"]["lag"].values()
+        for figure in record["services"]["wire"].values()
     )
     assert len(run.probe_run_log.read_text().splitlines()) == 1
-    assert [log.name for log in run.logs()] == ["record.wire.log"]
+    assert [log.name for log in run.logs()] == [f"record.{LAG_SERVICE}.log"]
 
 
 class _ServiceAtItsStop:
