@@ -1,8 +1,9 @@
 """The service as a process of its own, and a session driven through the wire.
 
-The service starts from this checkout in a process group of its own; every exit stops
-it first and kills only a service that outlives its stop. Its log lines are the
-figures' source; the session's events are the rest.
+The service starts from this checkout in a process group of its own, under a
+parent-death signal; every exit stops it first and kills only a service that
+outlives its stop, its workers first. Its log lines are the figures' source; the
+session's events are the rest.
 """
 
 from __future__ import annotations
@@ -27,6 +28,7 @@ from pydantic import ValidationError
 from websockets.asyncio.client import connect
 from websockets.exceptions import ConnectionClosed
 
+from card_identity import LOOK_NAMES
 from video_client.session_wire import (
     BYTES_PER_SAMPLE,
     ClientEvent,
@@ -49,6 +51,7 @@ from video_client.wire import (
     RefusalCode,
     viewers_path,
 )
+from video_service.provider_process import ProcessBounds
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
@@ -57,8 +60,11 @@ if TYPE_CHECKING:
 
     from card_identity import Identity
 
-READY_WITHIN_SECONDS: Final = 120.0
+# On top of the service's own bounds for the provider's start and each preparation.
+READY_SLACK_SECONDS: Final = 30.0
 STOP_WITHIN_SECONDS: Final = 20.0
+# What the unwinding of the drive may take after the kill of a service that stayed.
+KILL_MARGIN_SECONDS: Final = 10.0
 EVENT_WITHIN_SECONDS: Final = 10.0
 LINE_WITHIN_SECONDS: Final = 10.0
 DRAIN_SECONDS: Final = 5
@@ -68,6 +74,7 @@ MINIMUM_AUDIO_SECONDS: Final = 1
 STOP_SIGNALS: Final = (signal.SIGINT, signal.SIGTERM)
 _SIGNAL_EXIT_BASE: Final = 128
 _HOST: Final = "127.0.0.1"
+_PARENT_DEATH_COMMAND: Final = ("setpriv", "--pdeathsig", "KILL")
 _ENVIRONMENT_PREFIX: Final = "VIDEO_"
 _READY_EVENT: Final = "process.ready"
 _NO_ICE: Final = IceConfiguration(ice_servers=[], ice_transport_policy="all")
@@ -204,8 +211,17 @@ class Service:
         return f"{origin}{SESSIONS_PATH}?{LOOK_PARAM}={look}"
 
 
+def ready_within_seconds(look_count: int) -> float:
+    """How long the service may take to be ready, by its own bounds and `look_count`."""
+    bounds = ProcessBounds()
+    return (
+        bounds.start_seconds + look_count * bounds.prepare_seconds + READY_SLACK_SECONDS
+    )
+
+
 def _wait_until_ready(service: Service, started: float) -> None:
-    while time.monotonic() - started < READY_WITHIN_SECONDS:
+    ready_within = ready_within_seconds(len(LOOK_NAMES))
+    while time.monotonic() - started < ready_within:
         if service.process.poll() is not None:
             message = "the service exited before it was ready"
             raise DriveError(message)
@@ -217,14 +233,22 @@ def _wait_until_ready(service: Service, started: float) -> None:
     raise DriveError(message)
 
 
+def _kill(service_pid: int) -> None:
+    """Kill the groups of the service's worker children now, then the service's."""
+    for worker in worker_pids(service_pid):
+        with suppress(ProcessLookupError):
+            os.killpg(worker, signal.SIGKILL)
+    with suppress(ProcessLookupError):
+        os.killpg(service_pid, signal.SIGKILL)
+
+
 def _stop(service: Service) -> bool:
     """Stop the service and time its exit; whether it exited within the bound.
 
     The stop comes first and reaps the worker. A service that stays is killed
-    together with the worker groups it started.
+    together with the worker groups that are its children at that moment.
     """
     process = service.process
-    workers = set(worker_pids(process.pid))
     stopping = time.monotonic()
     if process.poll() is None:
         process.send_signal(signal.SIGTERM)
@@ -233,14 +257,11 @@ def _stop(service: Service) -> bool:
         in_time = True
     except subprocess.TimeoutExpired:
         in_time = False
-        workers.update(worker_pids(process.pid))
-    service.stop_to_exit_ms = round((time.monotonic() - stopping) * 1000)
-    with suppress(ProcessLookupError):
-        os.killpg(process.pid, signal.SIGKILL)
-    process.wait()
-    for worker in () if in_time else workers:
-        with suppress(ProcessLookupError):
-            os.killpg(worker, signal.SIGKILL)
+        service.stop_to_exit_ms = round((time.monotonic() - stopping) * 1000)
+        _kill(process.pid)
+        process.wait()
+    else:
+        service.stop_to_exit_ms = round((time.monotonic() - stopping) * 1000)
     return in_time
 
 
@@ -275,9 +296,13 @@ def _stop_first(service: Service) -> Callable[[int, object], None]:
 
 @contextmanager
 def running_service(
-    identity: Identity, directory: Path, *, max_lag_ms: int
+    identity: Identity, log: Path, *, max_lag_ms: int
 ) -> Iterator[Service]:
-    """Start the fake-provider service; the block's end stops it first."""
+    """Start the fake-provider service, logging to `log`; the block's end stops it.
+
+    The parent-death signal follows the thread that starts the service, so the
+    caller is the main thread, which lives until the process ends.
+    """
     environment = {
         key: value
         for key, value in os.environ.items()
@@ -293,11 +318,10 @@ def running_service(
         "VIDEO_MAX_LAG_MS": str(max_lag_ms),
         "VIDEO_DRAIN_SECONDS": str(DRAIN_SECONDS),
     }
-    log = directory / f"service-{port}.log"
     with log.open("wb") as output:
         started = time.monotonic()
-        process = subprocess.Popen(
-            [sys.executable, "-m", "video_service"],
+        process = subprocess.Popen(  # noqa: S603 - fixed tools and this interpreter
+            [*_PARENT_DEATH_COMMAND, sys.executable, "-m", "video_service"],
             env=environment,
             stdout=output,
             stderr=subprocess.STDOUT,

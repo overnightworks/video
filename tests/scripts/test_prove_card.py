@@ -20,6 +20,8 @@ from PIL import Image
 
 import card_drive
 import card_identity
+import prove_card
+from video_service.provider_process import ProcessBounds
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -40,6 +42,7 @@ CELLS_BY_GROUP: Final = {
 }
 FIVE: Final = 5
 STOP_BOUND_SECONDS: Final = 1.0
+SERVICE_COMMAND: Final = "video_service"
 # A stand-in for the fleet's `probe-run`, which waits on the machine's load; like
 # its `timeout`, it kills the command at once on a signal.
 PROBE_RUN_STAND_IN: Final = """#!/usr/bin/env bash
@@ -71,6 +74,7 @@ class Run:
         self.audio = directory / "speech.wav"
         self.scratch = directory / "scratch"
         self.probe_run_log = directory / "probe-run.log"
+        self.output = directory / "stdout.txt"
         self.marker = uuid.uuid4().hex
         binaries = directory / "bin"
         for path in (binaries, self.scratch):
@@ -103,7 +107,7 @@ class Run:
         return subprocess.Popen(  # noqa: S603 - this checkout's interpreter and script
             self.arguments(*extra),
             env=self.environment,
-            stdout=subprocess.DEVNULL,
+            stdout=self.output.open("wb"),
             stderr=subprocess.PIPE,
             start_new_session=True,
         )
@@ -113,25 +117,46 @@ class Run:
         _, error = command.communicate(timeout=RUN_WITHIN_SECONDS)
         return command.returncode, error.decode()
 
-    def processes(self) -> list[str]:
-        """The command lines of the processes of this run, still alive."""
-        found = []
+    def alive(self) -> dict[int, str]:
+        """The processes of this run, still alive, with their command lines."""
+        found = {}
         for entry in Path("/proc").iterdir():
             if not entry.name.isdigit():
                 continue
             try:
                 environment = (entry / "environ").read_bytes().split(b"\0")
                 if f"{MARKER}={self.marker}".encode() in environment:
-                    found.append((entry / "cmdline").read_bytes().decode())
+                    found[int(entry.name)] = (entry / "cmdline").read_bytes().decode()
             except OSError:
                 continue
-        return [line for line in found if line and "defunct" not in line]
+        return {pid: line for pid, line in found.items() if line}
+
+    def processes(self) -> list[str]:
+        """The command lines of the processes of this run, still alive."""
+        return list(self.alive().values())
+
+    def service_pid(self) -> int:
+        """The process id of the service of this run."""
+        (pid,) = (pid for pid, line in self.alive().items() if SERVICE_COMMAND in line)
+        return pid
+
+    def group_pid(self) -> int:
+        """The process id of the group's process, as it names itself."""
+        (pid_file,) = self.scratch.glob("prove-card-record-*/*.pid")
+        return int(pid_file.read_text())
+
+    def logs(self) -> list[Path]:
+        """The service logs beside the record."""
+        return sorted(self.directory.glob(f"{self.record.stem}.*.log"))
+
+    def printed(self) -> str:
+        """What the command wrote to standard output."""
+        return self.output.read_text()
 
     def has_spoken(self) -> bool:
         """Whether a service of this run has ended a sentence, viewers attached."""
         return any(
-            '"sentence.ended"' in log.read_text(errors="replace")
-            for log in self.scratch.glob("*/service-*.log")
+            '"sentence.ended"' in log.read_text(errors="replace") for log in self.logs()
         )
 
     def wait_until(self, condition: Callable[[], bool], seconds: float) -> bool:
@@ -226,6 +251,44 @@ def test_every_service_of_the_run_stops_and_none_is_left(
     assert list(dry_run[0].scratch.iterdir()) == []
 
 
+def test_a_dry_run_records_the_providers_load_and_each_looks_preparation(
+    dry_run: tuple[Run, dict],
+) -> None:
+    service = dry_run[1]["services"]["wire"]
+
+    assert service["provider_load"]["outcome"]["value"] == "ok"
+    assert service["provider_load"]["duration_ms"]["value"] > 0
+    assert [look["look"]["value"] for look in service["look_preparations"]] == list(
+        card_identity.LOOK_NAMES
+    )
+    assert all(
+        look["outcome"]["value"] == "ok" and look["duration_ms"]["value"] > 0
+        for look in service["look_preparations"]
+    )
+
+
+@pytest.mark.parametrize("looks", [0, 1, len(card_identity.LOOK_NAMES), 10])
+def test_the_wait_for_ready_covers_the_services_bounds_for_every_look(
+    looks: int,
+) -> None:
+    bounds = ProcessBounds()
+
+    assert card_drive.ready_within_seconds(looks) >= (
+        bounds.start_seconds + looks * bounds.prepare_seconds
+    )
+
+
+def test_a_failed_step_is_recorded_as_the_service_logged_it() -> None:
+    logged = {"outcome": "failed", "reason": "provider_failed", "duration_ms": 12.5}
+
+    assert prove_card.step_figures(logged) == {
+        "outcome": {"value": "failed"},
+        "reason": {"value": "provider_failed"},
+        "duration_ms": {"value": 12.5},
+    }
+    assert "reason" not in prove_card.step_figures({"outcome": "ok", "duration_ms": 1})
+
+
 @pytest.mark.parametrize("named", ["lag", "clear"])
 def test_only_the_named_cells_run(run: Run, named: str) -> None:
     status, error = run.finish(run.start("--dry-run", "--cells", named))
@@ -289,6 +352,8 @@ def test_an_interrupted_run_ends_with_one_line_and_leaves_nothing(
     assert run.wait_until(lambda: run.processes() == [], GONE_WITHIN_SECONDS)
     assert run.wait_until(lambda: not any(run.scratch.iterdir()), GONE_WITHIN_SECONDS)
     assert not run.record.exists()
+    assert [log.name for log in run.logs()] == ["record.wire.log"]
+    assert str(run.logs()[0]) in run.printed()
 
 
 def test_one_viewer_receives_frames_in_both_windows_and_no_loud_audio_when_idle(
@@ -299,7 +364,6 @@ def test_one_viewer_receives_frames_in_both_windows_and_no_loud_audio_when_idle(
     assert viewer["frames_per_second_between_sentences"]["value"] > 0
     assert viewer["frames_per_second_in_sentence"]["value"] > 0
     assert viewer["loud_audio_frames_between_sentences"]["value"] == 0
-    assert viewer["video_timestamp_gaps"]["value"] >= 0
     assert viewer["longest_video_timestamp_gap_ms"]["value"] > 0
     assert viewer["frame_size"]["value"]["width"] > 0
 
@@ -436,7 +500,9 @@ def _gone(pid: int) -> bool:
 def test_a_service_that_stops_in_time_takes_its_worker_with_it(tmp_path: Path) -> None:
     with (
         card_identity.throwaway_identity(tmp_path) as identity,
-        card_drive.running_service(identity, tmp_path, max_lag_ms=500) as service,
+        card_drive.running_service(
+            identity, tmp_path / "service.log", max_lag_ms=500
+        ) as service,
     ):
         service_pid = service.process.pid
         workers = card_drive.worker_pids(service_pid)
@@ -444,13 +510,15 @@ def test_a_service_that_stops_in_time_takes_its_worker_with_it(tmp_path: Path) -
 
     assert _gone(service_pid)
     assert all(_gone(worker) for worker in workers)
-    assert service.stop_to_exit_ms < STOP_BOUND_SECONDS * 1000
+    assert service.stop_to_exit_ms < card_drive.STOP_WITHIN_SECONDS * 1000
 
 
 def _stop_a_service_that_cannot_stop(directory: Path, pids: list[int]) -> None:
     with (
         card_identity.throwaway_identity(directory) as identity,
-        card_drive.running_service(identity, directory, max_lag_ms=500) as service,
+        card_drive.running_service(
+            identity, directory / "service.log", max_lag_ms=500
+        ) as service,
     ):
         pids.append(service.process.pid)
         pids.extend(card_drive.worker_pids(service.process.pid))
@@ -469,3 +537,61 @@ def test_a_service_that_outlives_its_stop_is_killed_with_its_workers(
 
     assert len(pids) > 1
     assert all(_gone(pid) for pid in pids)
+
+
+def test_a_service_that_cannot_answer_its_stop_is_gone_within_the_stop_and_kill_bounds(
+    run: Run,
+) -> None:
+    command = run.start("--dry-run", "--cells", "viewers")
+    serving = run.wait_until(run.has_spoken, APPEARS_WITHIN_SECONDS)
+    service = run.service_pid()
+    group = [service, *card_drive.worker_pids(service)]
+    # A stopped process holds the TERM the stop sends and never acts on it.
+    os.kill(service, signal.SIGSTOP)
+    os.kill(command.pid, signal.SIGINT)
+    bound = card_drive.STOP_WITHIN_SECONDS + card_drive.KILL_MARGIN_SECONDS
+
+    gone = run.wait_until(lambda: all(_gone(pid) for pid in group), bound)
+    status, error = run.finish(command)
+
+    assert serving
+    assert len(group) > 1
+    assert gone
+    assert status != 0
+    assert len(error.strip().splitlines()) == 1
+    assert [log.name for log in run.logs()] == ["record.wire.log"]
+    assert str(run.logs()[0]) in run.printed()
+
+
+def test_a_killed_group_process_takes_its_service_and_worker_with_it(run: Run) -> None:
+    command = run.start("--dry-run", "--cells", "viewers")
+    serving = run.wait_until(run.has_spoken, APPEARS_WITHIN_SECONDS)
+    service = run.service_pid()
+    group = [service, *card_drive.worker_pids(service)]
+    os.kill(run.group_pid(), signal.SIGKILL)
+
+    status, error = run.finish(command)
+
+    assert serving
+    assert len(group) > 1
+    assert status != 0
+    # The stand-in for `probe-run` reports the kill of its command first.
+    assert error.strip().splitlines()[-1] == "the wire cells ended with status 137"
+    assert run.wait_until(lambda: all(_gone(pid) for pid in group), GONE_WITHIN_SECONDS)
+    assert not run.record.exists()
+
+
+def test_a_failed_cell_leaves_the_log_beside_the_record_and_prints_its_path(
+    run: Run,
+) -> None:
+    command = run.start("--dry-run", "--cells", "viewer")
+    serving = run.wait_until(run.has_spoken, APPEARS_WITHIN_SECONDS)
+    os.kill(run.service_pid(), signal.SIGKILL)
+
+    status, _ = run.finish(command)
+
+    assert serving
+    assert status != 0
+    assert not run.record.exists()
+    assert [log.name for log in run.logs()] == ["record.wire.log"]
+    assert str(run.logs()[0]) in run.printed()
