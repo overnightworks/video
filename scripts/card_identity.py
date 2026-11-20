@@ -217,8 +217,13 @@ def _configuration(issuer: str, key_set_url: str) -> str:
 
 
 @contextmanager
-def throwaway_identity(directory: Path) -> Iterator[Identity]:
-    """Serve the issuer and the looks under `directory` until the block ends."""
+def throwaway_identity(
+    directory: Path, alpha_image: bytes | None = None
+) -> Iterator[Identity]:
+    """Serve the issuer and the looks under `directory` until the block ends.
+
+    `alpha_image` is served unchanged as the look `alpha`, in place of its square.
+    """
     private = rsa.generate_private_key(public_exponent=65537, key_size=_KEY_BITS)
     private_pem = private.private_bytes(
         serialization.Encoding.PEM,
@@ -228,6 +233,8 @@ def throwaway_identity(directory: Path) -> Iterator[Identity]:
     jwk = json.loads(jwt.algorithms.RSAAlgorithm.to_jwk(private.public_key()))
     jwk |= {"kid": _KEY_IDENTIFIER, "use": "sig", "alg": _ALGORITHM}
     looks = {name: _look_png(name) for name in LOOK_NAMES}
+    if alpha_image is not None:
+        looks["alpha"] = alpha_image
     files = {_KEY_SET_PATH: json.dumps({"keys": [jwk]}).encode()} | {
         f"{LOOKS_PATH}{name}": data for name, data in looks.items()
     }

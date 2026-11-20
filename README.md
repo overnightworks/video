@@ -141,6 +141,13 @@ group of them runs as one service under `probe-run`, which the command calls its
 service starts under `setpriv --pdeathsig KILL` (the host needs `setpriv`, as `probe-run`
 does), so a kill of the group's process ends it.
 
+`--look-image PATH` serves that file, unchanged, as the look `alpha` in every group; `beta`
+stays a square, so the cells that use two looks run as before. The command checks the file
+before any service starts: it must be readable and a PNG, JPEG or WebP within the service's
+`VIDEO_LOOK_MAX_BYTES` and `VIDEO_LOOK_MAX_PIXELS` defaults, or it ends with one line naming
+the argument. The provider prepares a look without a face crop, so the image is a head and
+shoulders, centred and square.
+
 `--lag-ms` names one or more distinct whole numbers of at least 1, in ms, and defaults to the
 service's own default of `VIDEO_MAX_LAG_MS`; a value below 1, not a whole number or named
 twice ends the command with one line before any service starts. The `lag` cell sweeps them:
