@@ -3,6 +3,6 @@ agent = "Claude 76251661-cb30-4447-a3ad-32a83a396daa"
 role = "builder"
 base = "7ba8717bfb472a25d7aca0eacde5a5bbdd9394ca"
 branch = "claude/issue-62-p3d2c1-cold-warm-start"
-scope = ["README.md", "scripts/card_drive.py", "scripts/card_record.py", "scripts/prove_card.py", "tests/scripts/test_card_cells.py", "tests/scripts/test_card_drive.py", "tests/scripts/test_prove_card.py", "tests/scripts/test_prove_card_memory.py", "tests/support/prove_card_support.py"]
+scope = ["README.md", "scripts/card_drive.py", "scripts/card_record.py", "scripts/prove_card.py", "tests/scripts/test_card_cells.py", "tests/scripts/test_card_drive.py", "tests/scripts/test_prove_card.py", "tests/scripts/test_prove_card_kill.py", "tests/scripts/test_prove_card_memory.py", "tests/support/prove_card_support.py"]
 opened_commit = "d65f3b054f9dbb136211eae11d1acee9e7ac862a"
 whole_reason = "The compiler home and its label change one command's service environment, its record and their shared stand-in together."
