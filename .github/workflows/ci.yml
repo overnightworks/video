@@ -87,18 +87,27 @@ jobs:
         uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           enable-cache: true
-          cache-dependency-glob: providers/flashhead-lite/uv.lock
+          cache-dependency-glob: |
+            uv.lock
+            providers/flashhead-lite/uv.lock
           version: "0.10.9"
 
       - name: Verify the dependency lock
         run: uv lock --check --project providers/flashhead-lite
 
       - name: Install locked dependencies
-        run: uv sync --locked --all-groups --no-build --project providers/flashhead-lite
+        run: |
+          uv sync --locked --all-groups --no-build
+          uv sync --locked --all-groups --no-build --project providers/flashhead-lite
 
       - name: Test
         # pytest-workers: the suite runs in about 15 s, and xdist is not installed there
         run: uv run --locked --no-build --project providers/flashhead-lite pytest -q providers/flashhead-lite/tests --cov --cov-report=xml:coverage-flashhead-lite.xml
+
+      - name: Start the real worker from the service without a card
+        env:
+          CUDA_VISIBLE_DEVICES: ""
+        run: uv run --locked --no-build pytest -q -m flashhead_lite tests
 
       - name: Upload the coverage report
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
