@@ -7,12 +7,7 @@ import contextlib
 import json
 import os
 import signal
-import struct
 import subprocess
-import sys
-import time
-import uuid
-import wave
 from pathlib import Path
 from typing import TYPE_CHECKING, Final
 
@@ -23,159 +18,25 @@ from PIL import Image
 import card_drive
 import card_identity
 import prove_card
-from card_record import SERVICE_FIGURES, Reason, Verdict, completed_service, value_of
+from card_record import SERVICE_FIGURES, Reason, completed_service, value_of
+from support.prove_card_support import (
+    APPEARS_WITHIN_SECONDS,
+    AUDIO_SECONDS,
+    CELLS_BY_GROUP,
+    GONE_WITHIN_SECONDS,
+    RUN_WITHIN_SECONDS,
+    Run,
+    ended,
+    is_not_measured,
+    write_audio,
+)
 from video_service.provider_process import ProcessBounds
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
 
-REPOSITORY_ROOT: Final = Path(__file__).resolve().parents[2]
-SCRIPTS: Final = REPOSITORY_ROOT / "scripts"
-COMMAND: Final = SCRIPTS / "prove_card.py"
-RUN_WITHIN_SECONDS: Final = 300
-APPEARS_WITHIN_SECONDS: Final = 120
-GONE_WITHIN_SECONDS: Final = 15
-POLL_SECONDS: Final = 0.05
-AUDIO_RATE: Final = 16000
-AUDIO_SECONDS: Final = 2
-MARKER: Final = "PROVE_CARD_TEST_MARKER"
-CELLS_BY_GROUP: Final = {
-    "wire": ["sentences", "clear", "looks", "viewer", "viewers"],
-    "lag": ["lag"],
-}
 FIVE: Final = 5
 STOP_BOUND_SECONDS: Final = 1.0
-SERVICE_COMMAND: Final = "video_service"
-# A stand-in for the fleet's `probe-run`, which waits on the machine's load; like
-# its `timeout`, it kills the command at once on a signal.
-PROBE_RUN_STAND_IN: Final = """#!/usr/bin/env bash
-echo "$*" >> "$PROBE_RUN_LOG"
-[[ $1 == -k ]] && shift 3
-"$@" &
-trap 'kill -9 $!' INT TERM
-wait $!
-"""
-
-
-def write_audio(path: Path, *, seconds: float, channels: int = 1) -> None:
-    """A WAV of a square wave, which a viewer hears as loud."""
-    square = struct.pack("<8h", *([9000] * 4 + [-9000] * 4)) * channels
-    with wave.open(str(path), "wb") as sound:
-        sound.setnchannels(channels)
-        sound.setsampwidth(2)
-        sound.setframerate(AUDIO_RATE)
-        sound.writeframes(square * int(AUDIO_RATE * seconds // 8))
-
-
-class Run:
-    """The command's surroundings: a `probe-run` on its path and a process marker."""
-
-    def __init__(self, directory: Path) -> None:
-        """Prepare `directory` with the stand-in, the audio and a private scratch."""
-        self.directory = directory
-        self.record = directory / "record.json"
-        self.audio = directory / "speech.wav"
-        self.scratch = directory / "scratch"
-        self.probe_run_log = directory / "probe-run.log"
-        self.output = directory / "stdout.txt"
-        self.marker = uuid.uuid4().hex
-        binaries = directory / "bin"
-        for path in (binaries, self.scratch):
-            path.mkdir()
-        stand_in = binaries / "probe-run"
-        stand_in.write_text(PROBE_RUN_STAND_IN)
-        stand_in.chmod(0o755)
-        write_audio(self.audio, seconds=AUDIO_SECONDS)
-        self.environment = os.environ | {
-            "PATH": f"{binaries}{os.pathsep}{os.environ['PATH']}",
-            "TMPDIR": str(self.scratch),
-            MARKER: self.marker,
-            "PROBE_RUN_LOG": str(self.probe_run_log),
-        }
-
-    def arguments(self, *extra: str) -> list[str]:
-        """The command line with the record and the audio, then `extra`."""
-        return [
-            sys.executable,
-            str(COMMAND),
-            "--record",
-            str(self.record),
-            "--audio",
-            str(self.audio),
-            *extra,
-        ]
-
-    def start(self, *extra: str) -> subprocess.Popen[bytes]:
-        """Start the command in a process group of its own."""
-        with self.output.open("wb") as output:
-            return subprocess.Popen(  # noqa: S603 - this checkout's interpreter and script
-                self.arguments(*extra),
-                env=self.environment,
-                stdout=output,
-                stderr=subprocess.PIPE,
-                start_new_session=True,
-            )
-
-    def finish(self, command: subprocess.Popen[bytes]) -> tuple[int, str]:
-        """Wait for the command: its exit status and what it wrote to standard error."""
-        _, error = command.communicate(timeout=RUN_WITHIN_SECONDS)
-        return command.returncode, error.decode()
-
-    def alive(self) -> dict[int, str]:
-        """The processes of this run, still alive, with their command lines."""
-        found = {}
-        for entry in Path("/proc").iterdir():
-            if not entry.name.isdigit():
-                continue
-            try:
-                environment = (entry / "environ").read_bytes().split(b"\0")
-                if f"{MARKER}={self.marker}".encode() in environment:
-                    found[int(entry.name)] = (entry / "cmdline").read_bytes().decode()
-            except OSError:
-                continue
-        return {pid: line for pid, line in found.items() if line}
-
-    def processes(self) -> list[str]:
-        """The command lines of the processes of this run, still alive."""
-        return list(self.alive().values())
-
-    def service_pid(self) -> int:
-        """The process id of the service of this run."""
-        (pid,) = (pid for pid, line in self.alive().items() if SERVICE_COMMAND in line)
-        return pid
-
-    def group_pid(self) -> int:
-        """The process id of the group's process, as it names itself."""
-        (pid_file,) = self.scratch.glob("prove-card-record-*/*.pid")
-        return int(pid_file.read_text())
-
-    def logs(self) -> list[Path]:
-        """The service logs beside the record."""
-        return sorted(self.directory.glob(f"{self.record.stem}.*.log"))
-
-    def printed(self) -> str:
-        """What the command wrote to standard output."""
-        return self.output.read_text()
-
-    def has_spoken(self) -> bool:
-        """Whether a service of this run has ended a sentence, viewers attached."""
-        return any(
-            '"sentence.ended"' in log.read_text(errors="replace") for log in self.logs()
-        )
-
-    def wait_until(self, condition: Callable[[], bool], seconds: float) -> bool:
-        """Whether `condition` holds within `seconds`."""
-        deadline = time.monotonic() + seconds
-        while time.monotonic() < deadline:
-            if condition():
-                return True
-            time.sleep(POLL_SECONDS)
-        return condition()
-
-
-@pytest.fixture
-def run(tmp_path: Path) -> Run:
-    return Run(tmp_path)
 
 
 @pytest.fixture(scope="module")
@@ -251,6 +112,11 @@ def test_every_service_of_the_run_stops_and_none_is_left(
     assert all(set(service) == set(SERVICE_FIGURES) for service in services.values())
     assert all(
         service["stop_to_exit_ms"]["value"] >= 0 for service in services.values()
+    )
+    assert all(
+        service[count] == value_of(0)
+        for service in services.values()
+        for count in ("processes_left_after_stop", "processes_alive_after_kill")
     )
     assert dry_run[0].processes() == []
     assert list(dry_run[0].scratch.iterdir()) == []
@@ -494,14 +360,6 @@ def test_a_bad_input_ends_the_command_with_one_line_before_any_group_starts(
     assert run.processes() == []
 
 
-def _gone(pid: int) -> bool:
-    try:
-        state = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0]
-    except OSError:
-        return True
-    return state == "Z"
-
-
 def test_a_provider_that_cannot_answer_ends_the_session_as_unavailable_at_any_lag(
     tmp_path: Path,
 ) -> None:
@@ -541,8 +399,8 @@ def test_a_service_that_stops_in_time_takes_its_worker_with_it(tmp_path: Path) -
         workers = card_drive.worker_pids(service_pid)
         assert workers
 
-    assert _gone(service_pid)
-    assert all(_gone(worker) for worker in workers)
+    assert ended(service_pid)
+    assert all(ended(worker) for worker in workers)
     assert service.stop_to_exit_ms < card_drive.STOP_WITHIN_SECONDS * 1000
 
 
@@ -569,7 +427,7 @@ def test_a_service_that_outlives_its_stop_is_killed_with_its_workers(
         _stop_a_service_that_cannot_stop(tmp_path, pids)
 
     assert len(pids) > 1
-    assert all(_gone(pid) for pid in pids)
+    assert all(ended(pid) for pid in pids)
 
 
 def test_a_service_that_cannot_answer_its_stop_is_gone_within_the_stop_and_kill_bounds(
@@ -584,7 +442,7 @@ def test_a_service_that_cannot_answer_its_stop_is_gone_within_the_stop_and_kill_
     os.kill(command.pid, signal.SIGINT)
     bound = card_drive.STOP_WITHIN_SECONDS + card_drive.KILL_MARGIN_SECONDS
 
-    gone = run.wait_until(lambda: all(_gone(pid) for pid in group), bound)
+    gone = run.wait_until(lambda: all(ended(pid) for pid in group), bound)
     status, error = run.finish(command)
 
     assert serving
@@ -594,10 +452,6 @@ def test_a_service_that_cannot_answer_its_stop_is_gone_within_the_stop_and_kill_
     assert len(error.strip().splitlines()) == 1
     assert [log.name for log in run.logs()] == ["record.wire.log"]
     assert str(run.logs()[0]) in run.printed()
-
-
-def _not_measured(figure: dict, reason: Reason) -> bool:
-    return figure == {"verdict": Verdict.NOT_MEASURED, "reason": reason}
 
 
 def _fragment_cells(run: Run) -> list[str] | None:
@@ -619,12 +473,13 @@ def test_a_killed_group_process_takes_its_service_and_worker_with_it(run: Run) -
     assert serving
     assert len(group) > 1
     assert status != 0
-    # The stand-in for `probe-run` reports the kill of its command first.
-    assert error.strip().splitlines()[-1] == "the wire cells ended with status 137"
-    assert run.wait_until(lambda: all(_gone(pid) for pid in group), GONE_WITHIN_SECONDS)
+    # `timeout` reports the kill of its command in its own status.
+    assert error.strip().splitlines()[-1].startswith("the wire cells ended with status")
+    assert run.wait_until(lambda: all(ended(pid) for pid in group), GONE_WITHIN_SECONDS)
+    assert list(run.scratch.iterdir()) == []
 
 
-def test_a_group_process_killed_before_its_fragment_gives_every_figure_no_fragment(
+def test_a_group_process_killed_before_its_fragment_measures_what_the_top_ends(
     run: Run,
 ) -> None:
     command = run.start("--dry-run", "--cells", "viewer")
@@ -633,15 +488,20 @@ def test_a_group_process_killed_before_its_fragment_gives_every_figure_no_fragme
 
     status, _ = run.finish(command)
     record = json.loads(run.record.read_text())
+    service = record["services"]["wire"]
+    measured_by_the_top = {"processes_left_after_stop", "processes_alive_after_kill"}
 
     assert serving
     assert status != 0
     assert list(record["cells"]) == ["viewer"]
-    assert _not_measured(record["cells"]["viewer"], Reason.NO_FRAGMENT)
+    assert is_not_measured(record["cells"]["viewer"], Reason.NO_FRAGMENT)
     assert all(
-        _not_measured(figure, Reason.NO_FRAGMENT)
-        for figure in record["services"]["wire"].values()
+        is_not_measured(figure, Reason.NO_FRAGMENT)
+        for name, figure in service.items()
+        if name not in measured_by_the_top
     )
+    assert service["processes_left_after_stop"]["value"] >= 0
+    assert service["processes_alive_after_kill"] == value_of(0)
     assert [log.name for log in run.logs()] == ["record.wire.log"]
 
 
@@ -666,10 +526,10 @@ def test_a_group_process_killed_after_its_first_cell_keeps_that_cells_figures(
         "first",
         "second",
     ]
-    assert _not_measured(record["cells"]["viewers"], Reason.NO_FRAGMENT)
+    assert is_not_measured(record["cells"]["viewers"], Reason.NO_FRAGMENT)
     assert service["start_to_ready_ms"]["value"] > 0
     assert service["provider_load"]["outcome"]["value"] == "ok"
-    assert _not_measured(service["stop_to_exit_ms"], Reason.NO_FRAGMENT)
+    assert is_not_measured(service["stop_to_exit_ms"], Reason.NO_FRAGMENT)
 
 
 def _fail_the_cell_being_driven(run: Run) -> None:
@@ -689,11 +549,12 @@ def test_a_failed_cell_is_recorded_with_the_later_cells_of_its_group_ended(
 
     assert status != 0
     assert error.strip().splitlines()[-1] == "the wire cells ended with status 1"
-    assert _not_measured(record["cells"]["viewer"], Reason.CELL_FAILED)
-    assert _not_measured(record["cells"]["viewers"], Reason.GROUP_ENDED)
+    assert is_not_measured(record["cells"]["viewer"], Reason.CELL_FAILED)
+    assert is_not_measured(record["cells"]["viewers"], Reason.GROUP_ENDED)
     service = record["services"]["wire"]
     assert service["start_to_ready_ms"]["value"] > 0
-    assert service["stop_to_exit_ms"]["value"] >= 0
+    assert is_not_measured(service["stop_to_exit_ms"], Reason.EXITED_BEFORE_STOP)
+    assert service["processes_alive_after_kill"] == value_of(0)
     assert [log.name for log in run.logs()] == ["record.wire.log"]
     assert str(run.logs()[0]) in run.printed()
     assert str(run.record) in run.printed()
@@ -709,10 +570,10 @@ def test_a_failed_group_ends_the_command_and_no_later_group_starts(run: Run) -> 
 
     assert status != 0
     assert list(record["cells"]) == ["viewer", "lag"]
-    assert _not_measured(record["cells"]["viewer"], Reason.CELL_FAILED)
-    assert _not_measured(record["cells"]["lag"], Reason.EARLIER_GROUP_FAILED)
+    assert is_not_measured(record["cells"]["viewer"], Reason.CELL_FAILED)
+    assert is_not_measured(record["cells"]["lag"], Reason.EARLIER_GROUP_FAILED)
     assert all(
-        _not_measured(figure, Reason.EARLIER_GROUP_FAILED)
+        is_not_measured(figure, Reason.EARLIER_GROUP_FAILED)
         for figure in record["services"]["lag"].values()
     )
     assert len(run.probe_run_log.read_text().splitlines()) == 1
@@ -770,8 +631,8 @@ def test_a_failed_cells_reasons_are_in_the_fragment_before_the_service_stops(
         )
 
     assert held_at_the_stop["cells"]["sentences"] == {"done": True}
-    assert _not_measured(held_at_the_stop["cells"]["clear"], Reason.CELL_FAILED)
-    assert _not_measured(held_at_the_stop["cells"]["looks"], Reason.GROUP_ENDED)
+    assert is_not_measured(held_at_the_stop["cells"]["clear"], Reason.CELL_FAILED)
+    assert is_not_measured(held_at_the_stop["cells"]["looks"], Reason.GROUP_ENDED)
 
 
 def test_a_service_figure_the_fragment_holds_is_never_dropped_from_the_record() -> None:

@@ -3,12 +3,14 @@
 The service starts from this checkout in a process group of its own, under a
 parent-death signal; every exit stops it first and kills only a service that
 outlives its stop, its workers first. Its log lines are the figures' source; the
-session's events are the rest.
+session's events are the rest. The command that drives it is a child subreaper and
+ends, from outside, every process still below it once a group has ended.
 """
 
 from __future__ import annotations
 
 import asyncio
+import ctypes
 import json
 import os
 import signal
@@ -65,6 +67,8 @@ READY_SLACK_SECONDS: Final = 30.0
 STOP_WITHIN_SECONDS: Final = 20.0
 # What the unwinding of the drive may take after the kill of a service that stayed.
 KILL_MARGIN_SECONDS: Final = 10.0
+# How long the kill below the caller passes until nothing below it is alive.
+KILL_WITHIN_SECONDS: Final = 2.0
 EVENT_WITHIN_SECONDS: Final = 10.0
 LINE_WITHIN_SECONDS: Final = 10.0
 DRAIN_SECONDS: Final = 5
@@ -76,6 +80,13 @@ _SIGNAL_EXIT_BASE: Final = 128
 _HOST: Final = "127.0.0.1"
 _PARENT_DEATH_COMMAND: Final = ("setpriv", "--pdeathsig", "KILL")
 _ENVIRONMENT_PREFIX: Final = "VIDEO_"
+_SET_CHILD_SUBREAPER: Final = 36
+# The interpreter this repository runs on is a standalone build whose `os` has no
+# pidfd calls, so they are the kernel's system calls, numbered alike on every
+# architecture the proof runs on.
+_SYSCALL_PIDFD_SEND_SIGNAL: Final = 424
+_SYSCALL_PIDFD_OPEN: Final = 434
+_ZOMBIE: Final = "Z"
 _READY_EVENT: Final = "process.ready"
 _NO_ICE: Final = IceConfiguration(ice_servers=[], ice_transport_policy="all")
 
@@ -143,6 +154,7 @@ def _process_fields(pid: int) -> list[str]:
 
 _PARENT_FIELD: Final = 1
 _GROUP_FIELD: Final = 2
+_START_FIELD: Final = 19
 _USER_TICKS_FIELD: Final = 11
 _SYSTEM_TICKS_FIELD: Final = 12
 
@@ -162,6 +174,158 @@ def worker_pids(service_pid: int) -> list[int]:
     return found
 
 
+def _checked(result: int) -> int:
+    """`result` of a libc call, or the `OSError` its `errno` names."""
+    if result < 0:
+        number = ctypes.get_errno()
+        raise OSError(number, os.strerror(number))
+    return result
+
+
+def _libc() -> ctypes.CDLL:
+    libc = ctypes.CDLL(None, use_errno=True)
+    libc.syscall.restype = ctypes.c_long
+    return libc
+
+
+def become_subreaper() -> None:
+    """Make this process the parent of every orphan below it."""
+    _checked(_libc().prctl(_SET_CHILD_SUBREAPER, 1, 0, 0, 0))
+
+
+def _pidfd_open(pid: int) -> int:
+    return _checked(_libc().syscall(_SYSCALL_PIDFD_OPEN, pid, 0))
+
+
+def _pidfd_send_kill(pidfd: int) -> None:
+    _checked(
+        _libc().syscall(_SYSCALL_PIDFD_SEND_SIGNAL, pidfd, signal.SIGKILL, None, 0)
+    )
+
+
+@dataclass(frozen=True)
+class Process:
+    """A process as `/proc` showed it; its parent and start time tell a reused id."""
+
+    pid: int
+    parent: int
+    started: int
+    state: str
+
+    @property
+    def alive(self) -> bool:
+        """Whether it still runs; a zombie only waits to be reaped."""
+        return self.state != _ZOMBIE
+
+
+def read_process(pid: int) -> Process | None:
+    """The process `pid` as it is now, or none once it is gone."""
+    try:
+        fields = _process_fields(pid)
+    except OSError:
+        return None
+    return Process(
+        pid, int(fields[_PARENT_FIELD]), int(fields[_START_FIELD]), fields[0]
+    )
+
+
+def _all_processes() -> dict[int, Process]:
+    found = (
+        read_process(int(entry.name))
+        for entry in Path("/proc").iterdir()
+        if entry.name.isdigit()
+    )
+    return {process.pid: process for process in found if process is not None}
+
+
+def _depth(process: Process, processes: dict[int, Process], top: int) -> int | None:
+    """How many parents lead from `process` to `top`, or none when they do not."""
+    depth, ancestor = 1, process
+    while ancestor.parent != top:
+        found = processes.get(ancestor.parent)
+        if found is None or depth > len(processes):
+            return None
+        ancestor, depth = found, depth + 1
+    return depth
+
+
+def _below(top: int) -> list[Process]:
+    """The processes whose parents lead to `top`, the deepest first."""
+    processes = _all_processes()
+    depths = {pid: _depth(found, processes, top) for pid, found in processes.items()}
+    return sorted(
+        (processes[pid] for pid, depth in depths.items() if depth is not None),
+        key=lambda found: -(depths[found.pid] or 0),
+    )
+
+
+def end_if_unchanged(seen: Process) -> bool:
+    """Send SIGKILL to `seen` through a pidfd unless its id now names another process.
+
+    The pidfd is opened first and the parent and start time are read after, so an id
+    freed and reused in between is not signalled. Whether it went without an error: a
+    process already gone is no error.
+    """
+    try:
+        pidfd = _pidfd_open(seen.pid)
+    except ProcessLookupError:
+        return True
+    except OSError:
+        return False
+    try:
+        now = read_process(seen.pid)
+        if now is not None and (now.parent, now.started) == (seen.parent, seen.started):
+            _pidfd_send_kill(pidfd)
+    except ProcessLookupError:
+        pass
+    except OSError:
+        return False
+    finally:
+        os.close(pidfd)
+    return True
+
+
+@dataclass(frozen=True)
+class Kill:
+    """What the kill below its caller found and left."""
+
+    processes_left: int
+    processes_alive: int
+    failed: bool
+
+
+def _reap_children(zombies: list[Process]) -> None:
+    for zombie in zombies:
+        with suppress(ChildProcessError):
+            os.waitpid(zombie.pid, os.WNOHANG)
+
+
+def end_processes_below() -> Kill:
+    """End every process below this one by pidfd-checked SIGKILL passes, stopping none.
+
+    A pass signals every live descendant, the deepest first, and reaps the zombies
+    that are this process's children by their ids. It runs until none is alive or
+    `KILL_WITHIN_SECONDS` has passed. It must run in a child subreaper, so an orphan
+    of a descendant stays below.
+    """
+    top = os.getpid()
+    deadline = time.monotonic() + KILL_WITHIN_SECONDS
+    first: int | None = None
+    failed = False
+    while True:
+        below = _below(top)
+        _reap_children(
+            [found for found in below if found.parent == top and not found.alive]
+        )
+        alive = [found for found in below if found.alive]
+        first = len(alive) if first is None else first
+        if not alive or time.monotonic() >= deadline:
+            return Kill(first, len(alive), failed)
+        ended = [end_if_unchanged(found) for found in alive]
+        failed |= not all(ended)
+        time.sleep(POLL_SECONDS)
+
+
 def _free_port() -> int:
     with socket.socket() as bound:
         bound.bind((_HOST, 0))
@@ -177,7 +341,8 @@ class Service:
         self.port = port
         self.log = log
         self.start_to_ready_ms = 0
-        self.stop_to_exit_ms = 0
+        # None while the stop has not timed an exit: a service gone before its stop.
+        self.stop_to_exit_ms: int | None = None
 
     def lines(self, event: str) -> list[dict[str, object]]:
         """The JSON lines of `event` written so far."""
@@ -253,12 +418,14 @@ def _stop(service: Service) -> bool:
     """Stop the service and time its exit; whether it exited within the bound.
 
     The stop comes first and reaps the worker. A service that stays is killed
-    together with the worker groups that are its children at that moment.
+    together with the worker groups that are its children at that moment. One that
+    had exited before the stop has no exit to time.
     """
     process = service.process
+    if process.poll() is not None:
+        return True
     stopping = time.monotonic()
-    if process.poll() is None:
-        process.send_signal(signal.SIGTERM)
+    process.send_signal(signal.SIGTERM)
     in_time = True
     try:
         process.wait(STOP_WITHIN_SECONDS)

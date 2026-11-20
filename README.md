@@ -145,11 +145,23 @@ the service first, which reaps its provider worker. A service that has not exite
 the stop bound is killed, the groups of the workers that are its children at that moment
 first and its own group after, so the service and its workers are gone within the stop
 bound and a margin of the interrupt, also for a service that cannot answer its stop; the
-command itself ends after it has unwound its cells. An interrupt (INT or TERM) ends the
-command with one line. Each group's service log is written beside the record
+command itself ends after it has unwound its cells. The command marks itself a child
+subreaper, so an orphan of a group's process stays below it, and once a group's `probe-run`
+has ended, however the group ended, it sends SIGKILL to every process still below it (each
+checked by parent and start time through a pidfd, passes until none is alive or
+`KILL_WITHIN_SECONDS` has passed). The service's entry in the record holds
+`processes_left_after_stop`, how many it found (0 when the group stopped its service
+cleanly), and `processes_alive_after_kill`, how many were still alive past the bound; a kill
+that raised makes both `not_measured` with the reason `kill_failed`, and the command writes
+the record, starts no later group and exits non-zero. A service that had exited before its
+stop has `stop_to_exit_ms` `not_measured` with `exited_before_stop`. An interrupt (INT or
+TERM) ends the command with one line, after any kill that is running has ended. Each group's service log is written beside the record
 from the service's start, so it is there however the group ends (cells done, a failed
 cell, an interrupt, a kill), and the command prints its path. A kill of the command
-itself is not trapped: `probe-run`'s cap ends what it left. A service that dies by a
+itself is not trapped: `probe-run`'s parent-death signal stops the group's process, which
+stops its service, and the cap ends what stays. It writes no record and leaves the
+throwaway identity's keys in its `prove-card-record-*` directory under `TMPDIR`; any other
+end of the command removes them. A service that dies by a
 signal ends its worker, which reads its closed input on a thread of its own, also while
 the provider loads. That does not cover the time before the worker's `run_worker` runs
 (FlashHead lite imports torch first), a load step that holds the interpreter lock, a
