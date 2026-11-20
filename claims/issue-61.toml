@@ -1,8 +1,0 @@
-claim_id = "d939f1113ff84584bd58f290bea6f8b6"
-agent = "Claude 76251661-cb30-4447-a3ad-32a83a396daa"
-role = "builder"
-base = "5f5244d719f4a0b050cd978c8a78548c59615d59"
-branch = "claude/issue-61-p3d2c0-cells-module"
-scope = ["scripts/card_cells.py", "scripts/prove_card.py", "tests/scripts/test_card_cells.py", "tests/scripts/test_prove_card.py", "tests/support/prove_card_support.py"]
-opened_commit = "3c1541a58aabfe903c159184ad72881ba8ab4830"
-whole_reason = "The cells leave the command for their own module in one mechanical move, with the tests that read them."
