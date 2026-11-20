@@ -9,3 +9,6 @@ node_modules/
 packages/browser/dist/
 packages/browser/coverage/
 coverage-*.lcov
+# The FlashHead lite provider's fetched weights and the staging beside them
+providers/flashhead-lite/weights/
+providers/flashhead-lite/weights-staging/
