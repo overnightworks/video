@@ -221,8 +221,7 @@ the cap; the least free is judged against the line "free card memory at least 10
 the peak". The watchdog cannot stop an allocation faster than one interval (the provider's
 cap does), memory outside the cap (the CUDA context, compiler peaks), which it sees only
 afterwards, the voice's own growth, nor a driver or `nvidia-smi` that reports wrong figures;
-it reads GPU 0 only. A provider that failed to load, or a look that failed to prepare, ends
-its group: each cell is `not_measured` with the reason the service logged.
+it reads GPU 0 only.
 
 ## Install the client
 

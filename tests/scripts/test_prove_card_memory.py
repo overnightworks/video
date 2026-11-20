@@ -42,7 +42,6 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 FLOOR_ARGUMENT: Final = 3000
-LOGGED_FAILURE: Final = "provider_failed"
 KILL_BOUND_SECONDS: Final = card_drive.KILL_WITHIN_SECONDS + 1
 
 
@@ -330,44 +329,6 @@ def test_a_breach_while_the_group_stops_after_an_interrupt_kills_at_once(
     assert not run.record.exists()
     assert run.processes() == []
     assert list(run.scratch.iterdir()) == []
-
-
-def test_a_provider_that_fails_to_load_ends_its_group_with_the_logged_reason(
-    run: Run,
-) -> None:
-    run.in_card_mode()
-    run.environment["WORKER_FAILS_TO_LOAD"] = "1"
-
-    status, error = run.finish(run.start("--cells", "clear", "lag"))
-    record = _record(run)
-    entry = record["services"]["wire"]
-    logged = entry["provider_load"]["reason"]["value"]
-
-    assert status != 0
-    assert "wire" in _lines(error)[-1]
-    assert logged == LOGGED_FAILURE
-    assert is_not_measured(record["cells"]["clear"], logged)
-    assert is_not_measured(record["cells"]["lag"], Reason.EARLIER_GROUP_FAILED)
-    assert entry[MemoryFigure.USED_AFTER] == value_of(USED_MB)
-    assert [log.name for log in run.logs()] == ["record.wire.log"]
-
-
-def test_a_look_that_fails_to_prepare_ends_its_group_with_the_logged_reason(
-    run: Run,
-) -> None:
-    run.in_card_mode()
-    run.environment["WORKER_FAILS_TO_PREPARE"] = "1"
-
-    status, _ = run.finish(run.start("--cells", "clear"))
-    record = _record(run)
-    (failed, *_) = (
-        look
-        for look in record["services"]["wire"]["look_preparations"]
-        if look["outcome"]["value"] != "ok"
-    )
-
-    assert status != 0
-    assert is_not_measured(record["cells"]["clear"], failed["reason"]["value"])
 
 
 def test_a_dry_run_records_the_memory_figures_as_not_measured_and_samples_no_card(

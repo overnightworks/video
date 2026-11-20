@@ -60,7 +60,6 @@ import os
 import time
 from pathlib import Path
 
-from video_provider_contract import ProviderFailedError
 from video_provider_contract.worker import run_worker
 from video_provider_fake import FakeProvider
 
@@ -74,14 +73,7 @@ class Scripted(FakeProvider):
     def start(self):
         write_reading("WORKER_READING_AT_LOAD")
         time.sleep(float(os.environ.get("WORKER_LOAD_SECONDS", 0)))
-        if "WORKER_FAILS_TO_LOAD" in os.environ:
-            raise ProviderFailedError
         return super().start()
-
-    def prepare(self, look, image):
-        if "WORKER_FAILS_TO_PREPARE" in os.environ:
-            raise ProviderFailedError
-        super().prepare(look, image)
 
     def open_session(self, look):
         write_reading("WORKER_READING_AT_SESSION")

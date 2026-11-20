@@ -446,15 +446,6 @@ def _stop_figure(service: Service) -> dict[str, object]:
     return value_of(service.stop_to_exit_ms)
 
 
-def _failed_reason(figures: dict[str, object]) -> str | None:
-    """The logged reason of a failed provider load or look preparation, if one did."""
-    steps = [figures["provider_load"], *figures["look_preparations"]]
-    for step in steps:
-        if step["outcome"]["value"] != "ok":
-            return step["reason"]["value"]
-    return None
-
-
 def _chosen(group: str, arguments: argparse.Namespace) -> list[str]:
     """The cells of `group` the command was asked for, in the group's order."""
     return [name for name in GROUPS[group] if name in arguments.cells]
@@ -468,27 +459,6 @@ def _write_fragment(path: Path, fragment: dict[str, object]) -> None:
     temporary.replace(path)
 
 
-async def _run_cells(
-    drive: Drive,
-    group: str,
-    names: list[str],
-    cells: dict[str, object],
-    save: Callable[[GroupOutcome], None],
-) -> GroupOutcome:
-    """Drive `names` in turn, saving the fragment after each; a failed cell ends it."""
-    for position, name in enumerate(names):
-        try:
-            cells[name] = await GROUPS[group][name](drive)
-        except Exception:  # noqa: BLE001 - the failure is the cell's record entry
-            traceback.print_exc()
-            cells[name] = not_measured(Reason.CELL_FAILED)
-            cells.update(completed_cells(names[position + 1 :], {}, Reason.GROUP_ENDED))
-            save(GroupOutcome.RUNNING)
-            return GroupOutcome.FAILED
-        save(GroupOutcome.RUNNING)
-    return GroupOutcome.DONE
-
-
 def _run_group(
     group: str,
     arguments: argparse.Namespace,
@@ -497,9 +467,7 @@ def _run_group(
 ) -> GroupOutcome:
     """Drive the cells of `group` through one service, keeping its fragment current.
 
-    The fragment is rewritten after each cell and once more when the group ends. A
-    provider that failed to load or a look that failed to prepare ends the group before
-    its first cell: each cell is not measured, for the reason the service logged. A cell
+    The fragment is rewritten after each cell and once more when the group ends. A cell
     that raises an `Exception` ends the group: it is `cell_failed`, the cells after it
     `group_ended`, and the fragment holds both before the service stops. Anything
     else, an interrupt's `SystemExit` included, is not caught.
@@ -530,11 +498,22 @@ def _run_group(
                 },
             )
 
-        if (failed := _failed_reason(figures)) is None:
-            outcome = asyncio.run(_run_cells(drive, group, names, cells, save))
-        else:
-            cells.update(completed_cells(names, {}, failed))
-            outcome = GroupOutcome.FAILED
+        async def run_cells() -> GroupOutcome:
+            for position, name in enumerate(names):
+                try:
+                    cells[name] = await GROUPS[group][name](drive)
+                except Exception:  # noqa: BLE001 - the failure is the cell's record entry
+                    traceback.print_exc()
+                    cells[name] = not_measured(Reason.CELL_FAILED)
+                    cells.update(
+                        completed_cells(names[position + 1 :], {}, Reason.GROUP_ENDED)
+                    )
+                    save(GroupOutcome.RUNNING)
+                    return GroupOutcome.FAILED
+                save(GroupOutcome.RUNNING)
+            return GroupOutcome.DONE
+
+        outcome = asyncio.run(run_cells())
     figures["stop_to_exit_ms"] = _stop_figure(service)
     save(outcome)
     return outcome

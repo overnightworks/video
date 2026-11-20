@@ -147,7 +147,7 @@ def closed_record(
 
 
 def completed_cells(
-    names: Sequence[str], cells: dict[str, object], reason: str
+    names: Sequence[str], cells: dict[str, object], reason: Reason
 ) -> dict[str, object]:
     """Every cell of `names`: its figures in `cells`, or not measured for `reason`."""
     return {name: cells.get(name, not_measured(reason)) for name in names}
