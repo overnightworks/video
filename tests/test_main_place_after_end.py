@@ -22,6 +22,7 @@ from support.session_support import pcm, sentence_events, update_event
 from video_client.health import fetch_health
 from video_client.wire import Health
 from video_service.config import Settings
+from video_service.media import Media
 from video_service.providers import ProviderName
 
 if TYPE_CHECKING:
@@ -245,3 +246,28 @@ def test_the_place_counts_open_until_the_session_has_closed_its_socket() -> None
 
     assert seen == [socket.close_code]
     assert socket.close_code is not None
+
+
+def test_a_session_whose_client_left_counts_open_no_more_while_its_viewers_wind_down(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = FakeClock()
+    ended: list[bool] = []
+    winding_down: list[bool] = []
+    close_viewers = Media.close
+
+    async def close_after_noting(media: Media) -> None:
+        winding_down.append(bool(ended))
+        await close_viewers(media)
+
+    monkeypatch.setattr(Media, "close", close_after_noting)
+
+    play(
+        scripted([], sentences=0),
+        provider=FakeProvider(sleep=clock.advance),
+        pacing=clock.pacing,
+        max_lag_ms=_MAX_LAG_MS,
+        end=lambda: ended.append(True),
+    )
+
+    assert winding_down[0] is True

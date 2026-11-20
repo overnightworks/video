@@ -259,6 +259,10 @@ class Session:
                 ) as step,
             ):
                 end = await self._serve(trace)
+                if end.close_code is None:
+                    # The client has left, so the session has ended: it counts open
+                    # no more while its viewers wind down.
+                    self._place.end()
                 await self._media.close()
                 await self._finish(step, end)
             self._place.end()
