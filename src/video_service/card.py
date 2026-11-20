@@ -98,4 +98,7 @@ def _parsed(output: str) -> CardMemory:
     except (IndexError, ValueError) as error:
         message = "nvidia-smi printed no memory line"
         raise CardReadingError(message) from error
+    if min(used, free, total) < 0:
+        message = "nvidia-smi printed a negative memory figure"
+        raise CardReadingError(message)
     return CardMemory(used_mb=used, free_mb=free, total_mb=total)
