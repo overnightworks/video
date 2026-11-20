@@ -398,6 +398,44 @@ def test_a_killed_service_leaves_no_child(tmp_path: Path) -> None:
     assert exited
 
 
+@pytest.mark.usefixtures("stub_environment")
+def test_a_service_killed_during_the_load_takes_its_worker_with_it(
+    tmp_path: Path,
+) -> None:
+    worker = install_worker(
+        tmp_path / "root",
+        """
+        from video_provider_contract.worker import run_worker
+
+        class Loading:
+            def start(self):
+                held = hold()
+                tell()
+                time.sleep(3600)
+
+        run_worker(Loading())
+        """,
+    )
+    service = subprocess.Popen(  # noqa: S603 - this interpreter, a fixed program
+        [sys.executable, "-c", _SERVICE, str(worker)],
+        stdout=subprocess.PIPE,
+    )
+    with service:
+        try:
+            _wait_for_worker(tmp_path)
+            held = os.open(tmp_path / "worker.fifo", os.O_RDONLY | os.O_NONBLOCK)
+            service.kill()
+            service.wait()
+            try:
+                exited, _, _ = select.select([held], [], [], _WAIT_SECONDS)
+            finally:
+                os.close(held)
+        finally:
+            service.kill()
+
+    assert exited
+
+
 def test_a_session_ends_unavailable_when_its_child_dies(
     make_provider: MakeProvider,
 ) -> None:
