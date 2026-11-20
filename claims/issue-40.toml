@@ -1,0 +1,8 @@
+claim_id = "3fe931eaf5704a108e253eafc6dc27aa"
+agent = "Claude 8d6968f0-90db-42e6-8c2e-47e423be7ebd"
+role = "builder"
+base = "cdcaf5dd1390d5573003fb52e2124af6c8f1a865"
+branch = "claude/issue-40-p3d2a-card-proof-viewers"
+scope = ["README.md", "scripts", "tests/scripts"]
+opened_commit = "b382cd9e2c1c5cc81d6784ad0fa6a6c7038af226"
+whole_reason = "The proof's viewer module, the command and its two helpers that the viewer cells and the teardown change, their test and README's proofs prove one viewer drive together."
