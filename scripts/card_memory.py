@@ -143,18 +143,17 @@ class GroupWatch:
                 return self._status_within_the_kill_bound(child)
 
     def finish(self, end_of_group_kill: Callable[[], Kill]) -> Kill:
-        """Sample the card once the group has ended; the group's one kill.
+        """Sample the card once the group has ended normally; the group's one kill.
 
-        A stop has made the kill already, and the sample follows it. Otherwise the
-        sample comes first, since the end-of-group kill ends a reading it left behind.
-        A group that never started is not sampled.
+        A stop has made the kill already, and nothing follows it: the kill is the
+        group's only cleanup, and a reading begun after it would outlive it. Otherwise
+        the sample comes first, since the end-of-group kill ends a reading it left
+        behind. A group that never started is not sampled.
         """
         if self.kill is None:
             if self._started:
                 self._sample_after()
             self.kill = end_of_group_kill()
-        elif self._started:
-            self._sample_after()
         return self.kill
 
     def entry(self) -> dict[str, object]:
@@ -188,6 +187,11 @@ class GroupWatch:
         return figures
 
     def _after_figures(self, before: int | None) -> dict[str, object]:
+        if self.stop is not None:
+            names = [MemoryFigure.USED_AFTER]
+            if not self._before_failed:
+                names.append(MemoryFigure.USED_AFTER_MINUS_BEFORE)
+            return {name: not_measured(self.stop.cell_reason) for name in names}
         if not self._after_taken:
             return {}
         after = self._after

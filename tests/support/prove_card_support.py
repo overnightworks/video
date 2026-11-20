@@ -44,11 +44,13 @@ while [ -n "$PROBE_RUN_HOLD" ] && [ ! -e "$PROBE_RUN_HOLD" ]; do sleep 0.05; don
 exec setpriv --pdeathsig TERM timeout "$@"
 """
 # A stand-in for `nvidia-smi` that answers with what the test wrote to the reading file:
-# a line `used, free, total`, `fail` or `hang`, after the delay the test sets.
+# a line `used, free, total`, `fail` or `hang`, after the delay the test sets; every
+# answer it gives is logged, so a test can tell which starts came after a reading.
 NVIDIA_SMI_STAND_IN: Final = """#!/usr/bin/env bash
 echo "$*" >> "$NVIDIA_SMI_LOG"
 sleep "${NVIDIA_SMI_DELAY:-0}"
 reading=$(cat "$NVIDIA_SMI_READING") || exit 1
+echo "$reading" >> "$NVIDIA_SMI_ANSWERS"
 case "$reading" in
     fail) exit 1 ;;
     hang) exec sleep 600 ;;
@@ -187,6 +189,7 @@ class Run:
         self.reading = directory / "nvidia-smi.reading"
         self.reading.write_text(ROOMY)
         self.nvidia_smi_log = directory / "nvidia-smi.log"
+        self.nvidia_smi_answers = directory / "nvidia-smi.answers"
         self.provider_root = directory / "providers"
         worker = self.provider_root / "flashhead-lite" / ".venv" / "bin"
         worker.mkdir(parents=True)
@@ -201,6 +204,7 @@ class Run:
             "PROBE_RUN_LOG": str(self.probe_run_log),
             "NVIDIA_SMI_READING": str(self.reading),
             "NVIDIA_SMI_LOG": str(self.nvidia_smi_log),
+            "NVIDIA_SMI_ANSWERS": str(self.nvidia_smi_answers),
         }
 
     def breach_while_loading(self) -> None:
@@ -209,6 +213,12 @@ class Run:
             "WORKER_READING_AT_LOAD": BELOW_THE_FLOOR,
             "WORKER_LOAD_SECONDS": str(LOAD_SECONDS),
         }
+
+    def answers_given(self, reading: str) -> int:
+        """How many times the `nvidia-smi` stand-in answered with `reading`."""
+        if not self.nvidia_smi_answers.exists():
+            return 0
+        return self.nvidia_smi_answers.read_text().splitlines().count(reading)
 
     def in_card_mode(self, *, cap_mb: int = CAP_MB) -> None:
         """Set the operator's two provider settings, for a run without `--dry-run`."""

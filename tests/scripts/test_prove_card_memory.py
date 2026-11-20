@@ -213,6 +213,11 @@ def test_a_group_is_refused_when_the_memory_falls_before_its_service_exists(
     assert status != 0
     assert "refused" in error
     assert _record(run)["services"]["lag"][MEMORY_STOP]["refused"] is True
+    assert is_not_measured(
+        _record(run)["services"]["lag"][MemoryFigure.USED_AFTER],
+        Reason.MEMORY_REFUSED,
+    )
+    assert run.answers_given(NO_ROOM_FOR_THE_CAP) == 1
     assert run.logs() == []
     assert run.processes() == []
 
@@ -265,7 +270,11 @@ def test_a_breach_while_the_provider_loads_ends_the_tree_and_starts_no_second_gr
     assert entry["processes_left_after_stop"]["value"] > 0
     assert entry["processes_alive_after_kill"] == value_of(0)
     assert entry[MemoryFigure.FREE_LEAST]["verdict"] == Verdict.MISSED
-    assert entry[MemoryFigure.USED_AFTER] == value_of(USED_MB)
+    assert is_not_measured(entry[MemoryFigure.USED_AFTER], Reason.WATCHDOG_BREACH)
+    assert is_not_measured(
+        entry[MemoryFigure.USED_AFTER_MINUS_BEFORE], Reason.WATCHDOG_BREACH
+    )
+    assert run.answers_given(BELOW_THE_FLOOR) == 1
     assert len(run.probe_run_log.read_text().splitlines()) == 1
     assert [log.name for log in run.logs()] == ["record.wire.log"]
     assert str(run.logs()[0]) in run.printed()
@@ -308,11 +317,8 @@ def test_a_breach_while_sessions_run_keeps_the_cells_finished_before_it(
     assert entry[MEMORY_STOP]["reason"] == reason
     assert entry["start_to_ready_ms"]["value"] > 0
     assert entry["processes_alive_after_kill"] == value_of(0)
-    assert (reason is StopReason.BELOW_FLOOR) == (
-        MemoryFigure.USED_AFTER in entry and "value" in entry[MemoryFigure.USED_AFTER]
-    )
-    if reason is StopReason.SAMPLE_FAILED:
-        assert is_not_measured(entry[MemoryFigure.USED_AFTER], Reason.SAMPLE_FAILED)
+    assert is_not_measured(entry[MemoryFigure.USED_AFTER], Reason.WATCHDOG_BREACH)
+    assert run.answers_given(reading) == 1
     assert run.wait_until(lambda: run.processes() == [], GONE_WITHIN_SECONDS)
 
 

@@ -318,17 +318,35 @@ def test_a_probe_run_that_outlives_the_kill_gives_no_status_after_a_bounded_wait
     assert child.waited[-1] <= KILL_WITHIN_SECONDS
 
 
-def test_a_stopped_group_is_sampled_after_its_one_kill_and_killed_no_more() -> None:
-    watch = GroupWatch(
-        _sampler(_memory(used=100, free=FLOOR - 1), _memory(used=120, free=9000)),
-        CAP,
-        FLOOR,
-    )
+@pytest.mark.parametrize(
+    ("reading", "reason"),
+    [
+        (_memory(used=100, free=CAP + FLOOR - 1), Reason.MEMORY_REFUSED),
+        (_memory(used=100, free=FLOOR - 1), Reason.WATCHDOG_BREACH),
+    ],
+)
+def test_a_stopped_group_takes_no_sample_after_its_one_kill_and_kills_no_more(
+    reading: CardMemory, reason: Reason
+) -> None:
+    taken: list[CardMemory] = []
+
+    def read() -> CardMemory:
+        taken.append(reading)
+        return reading
+
+    watch = GroupWatch(read, CAP, FLOOR)
     kills: list[Kill] = []
-    _watched(watch, ticks=1)
+    if reason is Reason.MEMORY_REFUSED:
+        watch.refuse_first(lambda _stop: NOTHING_LEFT)
+    else:
+        _watched(watch, ticks=1)
+    sampled = len(taken)
 
     kill = watch.finish(lambda: kills.append(NOTHING_LEFT) or NOTHING_LEFT)
+    figures = watch.entry()
 
     assert kill is NOTHING_LEFT
     assert kills == []
-    assert watch.entry()[MemoryFigure.USED_AFTER] == value_of(120)
+    assert len(taken) == sampled
+    assert is_not_measured(figures[MemoryFigure.USED_AFTER], reason)
+    assert is_not_measured(figures[MemoryFigure.USED_AFTER_MINUS_BEFORE], reason)
