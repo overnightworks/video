@@ -59,7 +59,7 @@ esac
 """
 # The `flashhead-lite` worker of a provider root: the fake provider with the steps a
 # case scripts through the environment, each writing a reading for the stand-in. It
-# fails its load for the group whose lag the case names, and fails the preparation of
+# fails its load for the group the case names, and fails the preparation of
 # the looks the case lists. At its start it writes the `HOME` and `TMPDIR` it sees to
 # the file the case names and puts one entry into its `HOME`, as a compiler would.
 WORKER_STAND_IN: Final = f"""#!{sys.executable}
@@ -93,8 +93,8 @@ class Scripted(FakeProvider):
         compile_into_home()
         write_reading("WORKER_READING_AT_LOAD")
         time.sleep(float(os.environ.get("WORKER_LOAD_SECONDS", 0)))
-        failing_lag = os.environ.get("WORKER_FAILS_TO_START_AT_LAG")
-        if failing_lag == os.environ["VIDEO_MAX_LAG_MS"]:
+        failing_group = os.environ.get("WORKER_FAILS_TO_START_IN_GROUP")
+        if failing_group == os.environ["PROVE_CARD_GROUP"]:
             raise ProviderFailedError("the load was scripted to fail")
         return super().start()
 
@@ -239,10 +239,8 @@ class Run:
         }
 
     def fail_the_load_of(self, group: str) -> None:
-        """Have the provider's load fail in `group`, which the service's lag tells."""
-        self.environment = self.environment | {
-            "WORKER_FAILS_TO_START_AT_LAG": str(card_cells.LAGS[group])
-        }
+        """Have the provider's load fail in `group`, which the group's process names."""
+        self.environment = self.environment | {"WORKER_FAILS_TO_START_IN_GROUP": group}
 
     def fail_the_preparation_of(self, look: str) -> None:
         """Have the provider fail to prepare `look`."""

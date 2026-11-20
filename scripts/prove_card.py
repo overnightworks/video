@@ -100,6 +100,14 @@ class GroupOutcome(StrEnum):
     FAILED = "failed"
 
 
+class _Group(NamedTuple):
+    """One service of the run: its name, the cells it drives and its lag."""
+
+    name: str
+    kind: str
+    lag_ms: int
+
+
 def _group_log(record: Path, group: str) -> Path:
     """Where the service of `group` writes its log."""
     return beside(record, f"{group}.log")
@@ -216,9 +224,18 @@ def _stop_figure(service: Service) -> dict[str, object]:
     return value_of(service.stop_to_exit_ms)
 
 
-def _chosen(group: str, arguments: argparse.Namespace) -> list[str]:
+def _groups(arguments: argparse.Namespace) -> list[_Group]:
+    """The groups the command was asked for, in the order they run."""
+    return [
+        _Group(kind, kind, LAGS[kind])
+        for kind, members in GROUPS.items()
+        if set(members) & set(arguments.cells)
+    ]
+
+
+def _chosen(group: _Group, arguments: argparse.Namespace) -> list[str]:
     """The cells of `group` the command was asked for, in the group's order."""
-    return [name for name in GROUPS[group] if name in arguments.cells]
+    return [name for name in GROUPS[group.kind] if name in arguments.cells]
 
 
 def _write_fragment(path: Path, fragment: dict[str, object]) -> None:
@@ -230,7 +247,7 @@ def _write_fragment(path: Path, fragment: dict[str, object]) -> None:
 
 
 async def _drive_cells(
-    group: str,
+    group: _Group,
     names: list[str],
     drive: Drive,
     cells: dict[str, object],
@@ -239,7 +256,7 @@ async def _drive_cells(
     """Drive `names` in turn, saving after each; a cell that raises ends the group."""
     for position, name in enumerate(names):
         try:
-            cells[name] = await GROUPS[group][name](drive)
+            cells[name] = await GROUPS[group.kind][name](drive)
         except Exception:  # noqa: BLE001 - the failure is the cell's record entry
             traceback.print_exc()
             cells[name] = not_measured(Reason.CELL_FAILED)
@@ -251,7 +268,7 @@ async def _drive_cells(
 
 
 def _run_group(
-    group: str,
+    group: _Group,
     arguments: argparse.Namespace,
     scratch: Path,
     compiler_home: Path,
@@ -268,14 +285,14 @@ def _run_group(
     """
     audio = read_audio(arguments.audio)
     names = _chosen(group, arguments)
-    log = _group_log(arguments.record, group)
+    log = _group_log(arguments.record, group.name)
     cells: dict[str, object] = {}
     with (
         throwaway_identity(scratch) as identity,
         start_service(
             identity,
             log,
-            max_lag_ms=LAGS[group],
+            max_lag_ms=group.lag_ms,
             compiler_home=compiler_home,
             provider=_provider_of(arguments),
         ) as service,
@@ -291,7 +308,7 @@ def _run_group(
                 {
                     "outcome": outcome,
                     "cells": cells,
-                    "services": {group: figures},
+                    "services": {group.name: figures},
                     "files": [path.name for path in drive.written],
                 },
             )
@@ -302,7 +319,7 @@ def _run_group(
             reason, message = failure
             cells.update(completed_cells(names, {}, reason))
             figures["start_to_ready_ms"] |= not_measured(reason)
-            print(f"the {group} group: {message}", file=sys.stderr)
+            print(f"the {group.name} group: {message}", file=sys.stderr)
             save(GroupOutcome.RUNNING)
             outcome = GroupOutcome.FAILED
     figures["stop_to_exit_ms"] = _stop_figure(service)
@@ -321,7 +338,7 @@ def _compiler_home_at_start(run_directory: Path) -> CompilerHome:
     return CompilerHome.FILLED if held else CompilerHome.EMPTY
 
 
-def _child(group: str, arguments: argparse.Namespace) -> int:
+def _child(name: str, arguments: argparse.Namespace) -> int:
     """Run one group where `probe-run` started it; non-zero when a cell failed."""
     for stopping in STOP_SIGNALS:
         signal.signal(stopping, exit_on_stop)
@@ -330,6 +347,7 @@ def _child(group: str, arguments: argparse.Namespace) -> int:
     # also when it kills this process.
     identity_directory = arguments.fragment.with_suffix(".identity")
     identity_directory.mkdir()
+    (group,) = (group for group in _groups(arguments) if group.name == name)
     outcome = _run_group(
         group, arguments, identity_directory, _compiler_home(arguments.fragment.parent)
     )
@@ -344,7 +362,7 @@ class _Probed(NamedTuple):
 
 
 def _under_probe_run(
-    group: str,
+    group: _Group,
     arguments: argparse.Namespace,
     fragment: Path,
     supervision: Supervision,
@@ -386,15 +404,15 @@ def _under_probe_run(
     ]
     try:
         return _Probed(
-            started=True, status=run_child(command, group, fragment, supervision)
+            started=True, status=run_child(command, group.name, fragment, supervision)
         )
     finally:
-        if (log := _group_log(arguments.record, group)).exists():
+        if (log := _group_log(arguments.record, group.name)).exists():
             print(f"beside it: {log}")
 
 
 def _run_group_process(
-    group: str,
+    group: _Group,
     arguments: argparse.Namespace,
     fragment: Path,
     control: ProcessControl,
@@ -468,7 +486,7 @@ class CardLimits:
 
 
 def _gather(
-    group: str,
+    group: _Group,
     arguments: argparse.Namespace,
     scratch: Path,
     gathered: _Gathered,
@@ -486,7 +504,7 @@ def _gather(
     reason = gathered.later
     unfinished: tuple[Reason, ...] = ()
     if not gathered.ended:
-        fragment = scratch / f"{group}.json"
+        fragment = scratch / f"{group.name}.json"
         limits = arguments.limits
         watch = (
             None
@@ -513,17 +531,18 @@ def _gather(
             gathered.stopped = True
         if kill.failed:
             gathered.failure = (
-                f"the {group} group left a process below the top that was not ended"
+                f"the {group.name} group left a process below the top that was"
+                " not ended"
             )
         elif not gathered.stopped and (
             status or parts.get("outcome") != GroupOutcome.DONE
         ):
-            gathered.failure = f"the {group} cells ended with status {status}"
+            gathered.failure = f"the {group.name} cells ended with status {status}"
     gathered.cells |= completed_cells(
         _chosen(group, arguments), parts.get("cells", {}), reason, replacing=unfinished
     )
-    gathered.services[group] = completed_service(
-        parts.get("services", {}).get(group, {}) | top_figures, reason
+    gathered.services[group.name] = completed_service(
+        parts.get("services", {}).get(group.name, {}) | top_figures, reason
     )
     gathered.files += parts.get("files", [])
 
@@ -565,9 +584,8 @@ def main(argv: Sequence[str] | None = None, control: ProcessControl = KERNEL) ->
     gathered = _Gathered()
     with tempfile.TemporaryDirectory(prefix="prove-card-record-") as scratch:
         _compiler_home(Path(scratch)).mkdir()
-        for group, members in GROUPS.items():
-            if set(members) & set(arguments.cells):
-                _gather(group, arguments, Path(scratch), gathered, control)
+        for group in _groups(arguments):
+            _gather(group, arguments, Path(scratch), gathered, control)
     record = closed_record(
         dry_run=arguments.dry_run, cells=gathered.cells, services=gathered.services
     )

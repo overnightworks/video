@@ -643,9 +643,10 @@ def test_a_failed_cells_reasons_are_in_the_fragment_before_the_service_stops(
         {"sentences": finishes, "clear": raises, "looks": finishes},
     )
 
+    (wire,) = prove_card._groups(arguments)  # noqa: SLF001
     with pytest.raises(card_drive.DriveError):
         prove_card._run_group(  # noqa: SLF001
-            "wire", arguments, tmp_path, tmp_path, service_whose_stop_fails
+            wire, arguments, tmp_path, tmp_path, service_whose_stop_fails
         )
 
     assert held_at_the_stop["cells"]["sentences"] == {"done": True}
