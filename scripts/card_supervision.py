@@ -1,0 +1,182 @@
+"""The top command's side of one group: its process under `probe-run`, its stops.
+
+The group's process runs under `probe-run`, which the top starts; while it runs, the
+top records every stop and sends it on to the group, and in card mode it samples the
+card and ends the group when the card's memory calls for it.
+"""
+
+# ruff: noqa: T201 - the stop's line goes to standard error where it happens
+
+from __future__ import annotations
+
+import os
+import signal
+import subprocess
+import sys
+from contextlib import suppress
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Final
+
+from card_drive import (
+    STOP_SIGNALS,
+    end_processes_below,
+    has_child,
+    read_process,
+    signal_if_unchanged,
+)
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from card_drive import Kill, Process, ProcessControl
+    from card_memory import Ender, GroupWatch, Stop
+
+CHILD_MARKER: Final = "PROVE_CARD_GROUP"
+
+
+def pid_file(fragment: Path) -> Path:
+    """Where the group's process names itself to the command that started it."""
+    return fragment.with_suffix(".pid")
+
+
+@dataclass
+class Stops:
+    """The stops the command has recorded while a group runs.
+
+    From the mark `begin_ending` sets, the group is ending: its stop handler only
+    records, and a stop after the mark is not acted on.
+    """
+
+    recorded: list[int] = field(default_factory=list)
+    before_ending: int | None = None
+
+    def record(self, signum: int, _frame: object) -> None:
+        """Remember the stop; it never raises."""
+        self.recorded.append(signum)
+
+    def begin_ending(self) -> None:
+        """Mark the group as ending, with the stops recorded so far."""
+        self.before_ending = len(self.recorded)
+
+    @property
+    def ending(self) -> bool:
+        """Whether the command has begun to end the group for its memory."""
+        return self.before_ending is not None
+
+    @property
+    def to_act_on(self) -> int | None:
+        """The first stop that ends the command as an interrupt, if there is one."""
+        acted = self.recorded[: self.before_ending]
+        return acted[0] if acted else None
+
+
+@dataclass(frozen=True)
+class Supervision:
+    """How the top supervises one group: its stops, the kernel and the card watch."""
+
+    stops: Stops
+    control: ProcessControl
+    watch: GroupWatch | None
+
+
+def ending(stops: Stops, control: ProcessControl, spare: int | None) -> Ender:
+    """The stop's end of the group: the mark, one line on standard error, the kill.
+
+    `spare` is `probe-run`'s id while it is unreaped: the kill leaves its status to the
+    `Popen` that holds it.
+    """
+
+    def end(stop: Stop) -> Kill:
+        stops.begin_ending()
+        print(stop.line(), file=sys.stderr)
+        return end_processes_below(control, spare=spare)
+
+    return end
+
+
+def named_pid(fragment: Path) -> int | None:
+    """The id the group's process wrote, or none while it has written none."""
+    try:
+        return int(pid_file(fragment).read_text())
+    except OSError, ValueError:
+        return None
+
+
+def settled_at_group(
+    probe_run: Process | None,
+    fragment: Path,
+    signum: int,
+    control: ProcessControl,
+) -> bool:
+    """Whether the pid file names the group's process, which settles the stop there.
+
+    The stop is sent only to a process whose parent is `probe-run`, checked by
+    `signal_if_unchanged`; `timeout` may have reaped the group's process and the kernel
+    reused its id. An id that names no process or another's child, and a check that
+    cannot be made, send nothing: the stop stays recorded and the end-of-group kill
+    follows. Where the id is not yet written or holds no number, the stop is not
+    settled and goes to `probe-run`.
+    """
+    if (group_pid := named_pid(fragment)) is None:
+        return False
+    if probe_run is not None:
+        with suppress(OSError):
+            group = read_process(group_pid, control)
+            if group is not None and group.parent == probe_run.pid:
+                signal_if_unchanged((group, probe_run), signum, control)
+    return True
+
+
+def service_exists(fragment: Path, control: ProcessControl) -> bool:
+    """Whether the group's process has started a child, which is its service."""
+    group_pid = named_pid(fragment)
+    return group_pid is not None and has_child(group_pid, control)
+
+
+def run_child(
+    command: list[str],
+    group: str,
+    fragment: Path,
+    supervision: Supervision,
+) -> int:
+    """Run `command` as the group's process; a stop is recorded and, meanwhile, sent on.
+
+    Once the process is reaped, or the group is ending for its memory, a stop is only
+    recorded; the caller puts the handlers back. A card-mode run samples the card while
+    it waits.
+    """
+    stops, control, watch = (
+        supervision.stops,
+        supervision.control,
+        supervision.watch,
+    )
+    probe_run: Process | None = None
+
+    def forward(signum: int, frame: object) -> None:
+        stops.record(signum, frame)
+        # Once the process is reaped the group's process has ended and its id may name
+        # another process; once the group is ending the kill is about to free them.
+        if stops.ending or child.returncode is not None:
+            return
+        # `timeout` kills its command at once on a signal, so the stop goes to the
+        # group's process itself, which stops the service first and then exits.
+        if not settled_at_group(probe_run, fragment, signum, control):
+            child.send_signal(signum)
+
+    # The operator names the audio path that the command passes on.
+    with subprocess.Popen(  # NOSONAR(S8705)  # noqa: S603 - probe-run and this python
+        command, env={**os.environ, CHILD_MARKER: group}
+    ) as child:
+        # The start time that tells `probe-run` from a process that took its id.
+        with suppress(OSError):
+            probe_run = read_process(child.pid, control)
+        # The group's service is cleaned up by the child, so a stop reaches it first.
+        for stopping in STOP_SIGNALS:
+            signal.signal(stopping, forward)
+        if watch is None:
+            return child.wait()
+        return watch.until_ended(
+            child,
+            service_exists=lambda: service_exists(fragment, control),
+            end=ending(stops, control, child.pid),
+        )

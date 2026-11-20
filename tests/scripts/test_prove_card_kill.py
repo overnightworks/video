@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Final
 import pytest
 
 import card_drive
-from card_record import Reason, value_of
+from card_record import MEMORY_STOP, Reason, StopReason, value_of
 from support.prove_card_support import (
     APPEARS_WITHIN_SECONDS,
     CELLS_BY_GROUP,
@@ -69,6 +69,26 @@ def refuse_to_signal(_pidfd, _signum):
     raise PermissionError
 
 
+def open_during_a_stop_that_is_to_be_held(pid):
+    # The first pidfd the top opens is the kill's, once the breach has marked the group
+    # as ending.
+    if not opened:
+        opened.append(pid)
+        signal.raise_signal(signal.SIGTERM)
+    return kernel.open(pid)
+
+
+def record_every_forwarded_stop():
+    send_signal = subprocess.Popen.send_signal
+
+    def recorded(self, signum):
+        with Path(os.environ["SIGNALS_LOG"]).open("a") as log:
+            log.write(f"{signum}\\n")
+        send_signal(self, signum)
+
+    subprocess.Popen.send_signal = recorded
+
+
 def record_signal(pidfd, signum):
     with Path(os.environ["SIGNALS_LOG"]).open("a") as log:
         log.write(f"{signum}\\n")
@@ -98,10 +118,18 @@ controls = {
     ),
     "blind": dataclasses.replace(kernel, read_stat=read_stat_that_fails_at_first),
     "record": dataclasses.replace(kernel, send_signal=record_signal),
+    "refused": dataclasses.replace(kernel, send_signal=refuse_to_signal),
+    "breach-stop": dataclasses.replace(
+        kernel,
+        open=open_during_a_stop_that_is_to_be_held,
+        send_signal=record_signal,
+    ),
     "subreaper": dataclasses.replace(
         kernel, become_subreaper=subreaper_that_cannot_be_set
     ),
 }
+if mode == "breach-stop":
+    record_every_forwarded_stop()
 raise SystemExit(prove_card.main(sys.argv[2:], controls[mode]))
 """
 
@@ -281,10 +309,15 @@ def test_a_kill_that_raises_is_recorded_as_failed_and_no_later_group_starts(
     assert len(run.probe_run_log.read_text().splitlines()) == 1
 
 
+@pytest.mark.parametrize("mode", ["--dry-run", "card"])
 def test_an_interrupt_during_the_second_group_ends_the_command_with_nothing_left(
-    run: Run,
+    run: Run, mode: str
 ) -> None:
-    command = run.start("--dry-run", "--cells", "clear", "lag")
+    if mode == "card":
+        run.in_card_mode()
+    command = run.start(
+        *(["--dry-run"] if mode == "--dry-run" else []), "--cells", "clear", "lag"
+    )
     second_group_serves = run.wait_until(
         lambda: "process.ready" in _log_text(run, "lag"), APPEARS_WITHIN_SECONDS
     )
@@ -321,6 +354,55 @@ def test_a_top_killed_while_a_group_runs_has_its_service_and_worker_stopped(
     assert serving
     assert len(group) > 1
     assert gone
+
+
+def test_a_stop_during_the_breachs_kill_is_held_and_forwarded_to_no_process(
+    run: Run, harness: Path
+) -> None:
+    run.in_card_mode()
+    run.breach_while_loading()
+    signals = run.directory / "signals.log"
+    run.environment["SIGNALS_LOG"] = str(signals)
+
+    status, error = run.finish(
+        _start_with(run, harness, "breach-stop", "--cells", "lag")
+    )
+    record = json.loads(run.record.read_text())
+
+    assert status == 1
+    assert "watchdog breach" in error
+    assert "interrupted" not in error
+    assert is_not_measured(record["cells"]["lag"], Reason.WATCHDOG_BREACH)
+    assert record["services"]["lag"]["processes_alive_after_kill"] == value_of(0)
+    assert set(_signals_sent(signals)) <= {signal.SIGKILL.value}
+    assert run.processes() == []
+
+
+def test_a_kill_that_fails_on_the_breach_path_is_closed_and_the_record_is_written(
+    run: Run, harness: Path
+) -> None:
+    run.in_card_mode()
+    run.breach_while_loading()
+
+    status, error = run.finish(_start_with(run, harness, "refused", "--cells", "lag"))
+    record = json.loads(run.record.read_text())
+    entry = record["services"]["lag"]
+
+    assert status != 0
+    assert "watchdog breach" in error
+    assert _lines(error)[-1] == (
+        "the lag group left a process below the top that was not ended"
+    )
+    assert is_not_measured(entry["processes_left_after_stop"], Reason.KILL_FAILED)
+    assert is_not_measured(entry["processes_alive_after_kill"], Reason.KILL_FAILED)
+    assert is_not_measured(
+        entry[MEMORY_STOP]["seconds_to_no_process_left"], Reason.KILL_FAILED
+    )
+    assert entry[MEMORY_STOP]["reason"] == StopReason.BELOW_FLOOR
+
+
+def _lines(error: str) -> list[str]:
+    return error.strip().splitlines()
 
 
 def _signals_sent(log: Path) -> list[int]:

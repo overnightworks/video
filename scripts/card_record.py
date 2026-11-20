@@ -36,6 +36,19 @@ class Reason(StrEnum):
     NO_FRAGMENT = "no_fragment"
     EXITED_BEFORE_STOP = "exited_before_stop"
     KILL_FAILED = "kill_failed"
+    MEMORY_REFUSED = "memory_refused"
+    WATCHDOG_BREACH = "watchdog_breach"
+    SAMPLE_FAILED = "sample_failed"
+    NO_CARD = "no_card"
+
+
+class StopReason(StrEnum):
+    """Why the top ended a group for memory; a code set apart from `Reason`."""
+
+    SHORT_FOR_CAP = "short_for_cap"
+    BELOW_FLOOR = "below_floor"
+    SAMPLE_FAILED = "sample_failed"
+    WATCHDOG_FAILED = "watchdog_failed"
 
 
 @dataclass(frozen=True)
@@ -68,9 +81,30 @@ START_TO_READY_LINE: Final = Line(
 ENCODER_CORES_LINE: Final = Line(
     "the service's CPU at five viewers beyond none at most 2 cores", 2, operator.le
 )
+# In MiB, the unit `nvidia-smi` reports; the limit is also the floor's default.
+FREE_MEMORY_LINE: Final = Line(
+    "free card memory at least 1024 MiB at the peak", 1024, operator.ge
+)
 
 # What the top counts below itself at a group's end: before and after its kill.
 KILL_FIGURES: Final = ("processes_left_after_stop", "processes_alive_after_kill")
+
+
+class MemoryFigure(StrEnum):
+    """What the top's samples say of one group, in MiB."""
+
+    USED_BEFORE = "card_used_before_mb"
+    FREE_LEAST = "card_free_least_mb"
+    USED_MOST = "card_used_most_mb"
+    USED_AFTER = "card_used_after_mb"
+    USED_AFTER_MINUS_BEFORE = "card_used_after_minus_before_mb"
+    USED_BEYOND_CAP = "card_used_beyond_cap_mb"
+    FLOOR = "card_floor_mb"
+
+
+MEMORY_FIGURES: Final = tuple(MemoryFigure)
+# Only a group the top ended for memory has this entry.
+MEMORY_STOP: Final = "memory_stop"
 # What a service's entry in the record names, in its order.
 SERVICE_FIGURES: Final = (
     "start_to_ready_ms",
@@ -78,10 +112,9 @@ SERVICE_FIGURES: Final = (
     "look_preparations",
     "stop_to_exit_ms",
     *KILL_FIGURES,
+    *MEMORY_FIGURES,
     "log",
 )
-
-NO_CARD_REASON: Final = "no card is driven, so a timing here is the fake's"
 
 
 def value_of(value: object) -> Figure:
@@ -98,7 +131,7 @@ def not_measured(reason: str, line: Line | None = None) -> Figure:
 def judged(value: float, line: Line, *, dry_run: bool) -> Figure:
     """`value` against `line`; a run with no card gives the value, no verdict."""
     if dry_run:
-        return value_of(value) | not_measured(NO_CARD_REASON, line)
+        return value_of(value) | not_measured(Reason.NO_CARD, line)
     return value_of(value) | {"line": line.text, "verdict": line.verdict(value)}
 
 
@@ -114,7 +147,7 @@ def closed_record(
 
 
 def completed_cells(
-    names: Sequence[str], cells: dict[str, object], reason: Reason
+    names: Sequence[str], cells: dict[str, object], reason: str
 ) -> dict[str, object]:
     """Every cell of `names`: its figures in `cells`, or not measured for `reason`."""
     return {name: cells.get(name, not_measured(reason)) for name in names}
