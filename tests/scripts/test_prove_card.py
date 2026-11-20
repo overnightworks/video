@@ -28,8 +28,10 @@ POLL_SECONDS: Final = 0.05
 AUDIO_RATE: Final = 16000
 AUDIO_SECONDS: Final = 2
 MARKER: Final = "PROVE_CARD_TEST_MARKER"
+CELLS_BY_GROUP: Final = {"wire": ["sentences", "clear", "looks"], "lag": ["lag"]}
 # A stand-in for the fleet's `probe-run`, which waits on the machine's load.
 PROBE_RUN_STAND_IN: Final = """#!/usr/bin/env bash
+echo "$*" >> "$PROBE_RUN_LOG"
 [[ $1 == -k ]] && shift 3
 exec "$@"
 """
@@ -44,6 +46,7 @@ class Run:
         self.record = directory / "record.json"
         self.audio = directory / "speech.wav"
         self.scratch = directory / "scratch"
+        self.probe_run_log = directory / "probe-run.log"
         self.marker = uuid.uuid4().hex
         binaries = directory / "bin"
         for path in (binaries, self.scratch):
@@ -60,6 +63,7 @@ class Run:
             "PATH": f"{binaries}{os.pathsep}{os.environ['PATH']}",
             "TMPDIR": str(self.scratch),
             MARKER: self.marker,
+            "PROBE_RUN_LOG": str(self.probe_run_log),
         }
 
     def arguments(self, *extra: str) -> list[str]:
@@ -192,11 +196,40 @@ def test_every_service_of_the_run_stops_and_none_is_left(
     assert list(dry_run[0].scratch.iterdir()) == []
 
 
-def test_only_the_named_cells_run(run: Run) -> None:
-    status, error = run.finish(run.start("--dry-run", "--cells", "lag"))
+@pytest.mark.parametrize("named", ["lag", "clear"])
+def test_only_the_named_cells_run(run: Run, named: str) -> None:
+    status, error = run.finish(run.start("--dry-run", "--cells", named))
 
     assert status == 0, error
-    assert list(json.loads(run.record.read_text())["cells"]) == ["lag"]
+    assert list(json.loads(run.record.read_text())["cells"]) == [named]
+
+
+def test_each_group_runs_under_probe_run_with_its_kill_grace_and_cap(
+    dry_run: tuple[Run, dict],
+) -> None:
+    calls = dry_run[0].probe_run_log.read_text().splitlines()
+
+    assert len(calls) == len(CELLS_BY_GROUP)
+    for call, cells in zip(calls, CELLS_BY_GROUP.values(), strict=True):
+        arguments = call.split()
+        assert arguments[0] == "-k"
+        assert arguments[1].isdigit()
+        assert arguments[2].isdigit()
+        assert arguments[arguments.index("--cells") + 1 :][: len(cells)] == cells
+
+
+def test_without_probe_run_on_the_path_the_command_refuses_and_names_it(
+    run: Run, tmp_path: Path
+) -> None:
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    run.environment = run.environment | {"PATH": str(empty)}
+
+    status, error = run.finish(run.start("--dry-run"))
+
+    assert status != 0
+    assert "probe-run is not on PATH" in error
+    assert not run.record.exists()
 
 
 def test_without_dry_run_the_command_refuses_and_names_what_is_missing(
