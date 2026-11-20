@@ -58,6 +58,7 @@ import os
 import resource
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -161,6 +162,25 @@ elif mode == "unlistable":
     finally:
         resource.setrlimit(resource.RLIMIT_NOFILE, (soft, hard))
     report(result)
+elif mode == "unlistable-briefly":
+    sleeping = sleeper()
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    resource.setrlimit(resource.RLIMIT_NOFILE, (3, hard))
+    threading.Timer(
+        0.3, resource.setrlimit, (resource.RLIMIT_NOFILE, (soft, hard))
+    ).start()
+    report(killed() | {"sleeper": sleeping.pid})
+elif mode == "unreadable-briefly":
+    sleeping = sleeper()
+    readable_from = time.monotonic() + 0.3
+
+    def refused(pid):
+        if pid == sleeping.pid and time.monotonic() < readable_from:
+            raise PermissionError
+        return card_drive.KERNEL.read_stat(pid)
+
+    control = dataclasses.replace(card_drive.KERNEL, read_stat=refused)
+    report(killed(control) | {"sleeper": sleeping.pid})
 elif mode == "split-name":
     # The kernel cuts a name at 15 bytes, here inside the two bytes of a letter.
     named = subprocess.Popen(
@@ -343,6 +363,18 @@ def test_a_kill_that_cannot_list_the_processes_fails_instead_of_raising(
     top.start("unlistable")
 
     assert top.result()["failed"] is True
+
+
+@pytest.mark.parametrize("mode", ["unlistable-briefly", "unreadable-briefly"])
+def test_a_kill_that_cannot_see_the_processes_at_first_retries_until_it_ends_them(
+    top: StandInTop, mode: str
+) -> None:
+    top.start(mode)
+
+    result = top.result()
+
+    assert result["failed"] is True
+    assert wait_until(lambda: ended(result["sleeper"]), GONE_WITHIN_SECONDS)
 
 
 def test_a_process_whose_name_the_kernel_cut_inside_a_letter_is_ended(

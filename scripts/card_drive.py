@@ -364,14 +364,16 @@ def end_processes_below(control: ProcessControl = KERNEL) -> Kill:
     A pass signals every live descendant, the deepest first, and reaps the zombies
     that are this process's children by their ids. It runs until none is alive or
     `KILL_WITHIN_SECONDS` has passed. It must run in a child subreaper, so an orphan
-    of a descendant stays below. A process that cannot be read or signalled fails the
-    kill, which goes on with the others; a pass that cannot list or reap ends it.
+    of a descendant stays below. A process that cannot be read or signalled, and a pass
+    that cannot list or reap, fail the kill, which goes on with the others and tries
+    again until the bound, since an unread process is not known to be gone.
     """
     top = os.getpid()
     deadline = time.monotonic() + KILL_WITHIN_SECONDS
     first: int | None = None
     failed = False
     while True:
+        below = Below([], unreadable=True)
         try:
             below = _below(top, control)
             _reap_children(
@@ -382,11 +384,11 @@ def end_processes_below(control: ProcessControl = KERNEL) -> Kill:
                 ]
             )
         except OSError:
-            return Kill(first or 0, 0, failed=True)
+            below = Below(below.lineages, unreadable=True)
         failed |= below.unreadable
         alive = [lineage for lineage in below.lineages if lineage[0].alive]
         first = len(alive) if first is None else first
-        if not alive or time.monotonic() >= deadline:
+        if not (alive or below.unreadable) or time.monotonic() >= deadline:
             return Kill(first, len(alive), failed)
         ended = [end_if_unchanged(lineage, control) for lineage in alive]
         failed |= not all(ended)
