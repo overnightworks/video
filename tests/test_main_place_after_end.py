@@ -164,6 +164,7 @@ def test_only_one_of_two_waiting_upgrades_takes_the_freed_place(
     async def scenario(service: _Service) -> None:
         await service.leave_holding_a_call()
         upgrades = [service.upgrade(), service.upgrade()]
+        outcome.extend([await _still_waiting(upgrade) for upgrade in upgrades])
         service.gate.set()
         async with asyncio.timeout(READY_WITHIN_SECONDS):
             results = await asyncio.gather(*upgrades, return_exceptions=True)
@@ -175,7 +176,7 @@ def test_only_one_of_two_waiting_upgrades_takes_the_freed_place(
 
     run_on_service(scenario)
 
-    assert outcome == [1, [HTTPStatus.TOO_MANY_REQUESTS]]
+    assert outcome == [True, True, 1, [HTTPStatus.TOO_MANY_REQUESTS]]
 
 
 def test_an_upgrade_while_a_live_session_holds_the_place_is_busy(
