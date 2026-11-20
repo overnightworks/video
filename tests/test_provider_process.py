@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import select
@@ -15,6 +16,7 @@ from typing import TYPE_CHECKING
 import pytest
 from video_provider_contract import DecodedImage, ProviderFailedError
 from video_provider_contract.protocol import MAX_PCM_BYTES
+from video_provider_contract.worker import CARD_MEMORY_MB_ENV, MAX_IMAGE_PIXELS_ENV
 
 from support.scripted_session import played
 from support.session_support import pcm, sentence_events
@@ -58,7 +60,7 @@ from video_service.provider_process import (
 )
 
 provider = ProcessProvider(
-    ProviderLaunch(Path(sys.argv[1]), 1), ProcessBounds(), 5.0
+    ProviderLaunch(Path(sys.argv[1]), 1, None), ProcessBounds(), 5.0
 )
 provider.start()
 print("started", flush=True)
@@ -72,10 +74,73 @@ def _wait_for_worker(tmp_path: Path) -> None:
         fifo.read(1)
 
 
+_RECORD_ENVIRONMENT = """
+import json
+with open(os.environ["STUB_PIDFILE"] + ".env", "w") as record:
+    json.dump(dict(os.environ), record)
+ready()
+serve()
+"""
+
+
+def _child_environment(
+    make_provider: MakeProvider, stub_environment: Path, **launch: object
+) -> dict[str, str]:
+    provider = make_provider(_RECORD_ENVIRONMENT, **launch)
+    provider.start()
+    record = stub_environment.with_name(stub_environment.name + ".env")
+    return json.loads(record.read_text(encoding="utf-8"))
+
+
+@pytest.mark.parametrize("ambient", [None, "77"])
+def test_a_child_without_a_cap_gets_none(
+    ambient: str | None,
+    make_provider: MakeProvider,
+    stub_environment: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    if ambient is None:
+        monkeypatch.delenv(CARD_MEMORY_MB_ENV, raising=False)
+    else:
+        monkeypatch.setenv(CARD_MEMORY_MB_ENV, ambient)
+
+    received = _child_environment(make_provider, stub_environment)
+
+    assert CARD_MEMORY_MB_ENV not in received
+
+
+def test_the_cap_and_the_image_bound_of_the_launch_replace_inherited_values(
+    make_provider: MakeProvider,
+    stub_environment: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(CARD_MEMORY_MB_ENV, "77")
+    monkeypatch.setenv(MAX_IMAGE_PIXELS_ENV, "88")
+
+    received = _child_environment(
+        make_provider, stub_environment, card_memory_mb=1024, max_image_pixels=4096
+    )
+
+    assert received[CARD_MEMORY_MB_ENV] == "1024"
+    assert received[MAX_IMAGE_PIXELS_ENV] == "4096"
+
+
+def test_a_child_inherits_the_rest_of_the_service_environment(
+    make_provider: MakeProvider,
+    stub_environment: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "1")
+
+    received = _child_environment(make_provider, stub_environment)
+
+    assert received["CUDA_VISIBLE_DEVICES"] == "1"
+
+
 def test_the_fake_child_serves_a_session_from_start_to_close(
     make_provider: MakeProvider,
 ) -> None:
-    provider = make_provider(bounds=ProcessBounds())
+    provider = make_provider()
 
     info = provider.start()
     provider.prepare(_MOZART, _IMAGE)
@@ -95,7 +160,7 @@ def test_the_fake_child_serves_a_session_from_start_to_close(
 def test_two_sessions_share_one_child_without_mixing_their_frames(
     make_provider: MakeProvider,
 ) -> None:
-    provider = make_provider(bounds=ProcessBounds())
+    provider = make_provider()
     provider.start()
     provider.prepare(_MOZART, _IMAGE)
     loud = provider.open_session(_MOZART)
@@ -265,7 +330,7 @@ def test_a_worker_that_cannot_run_fails_the_start(
     if executable == "not-executable":
         path.write_text("#!/bin/sh\n", encoding="utf-8")
     provider = ProcessProvider(
-        ProviderLaunch(executable=path, max_image_pixels=1),
+        ProviderLaunch(executable=path, max_image_pixels=1, card_memory_mb=None),
         ProcessBounds(),
         CALL_SECONDS,
     )
@@ -355,7 +420,7 @@ def test_a_session_ends_unavailable_when_its_child_dies(
 def test_a_request_the_protocol_cannot_hold_fails_that_call_not_the_provider(
     make_provider: MakeProvider, payload: bytes, rate: int
 ) -> None:
-    provider = make_provider(bounds=ProcessBounds())
+    provider = make_provider()
     provider.start()
     session = provider.open_session(_MOZART)
 
@@ -369,7 +434,7 @@ def test_a_request_the_protocol_cannot_hold_fails_that_call_not_the_provider(
 def test_a_sentence_in_one_binary_message_of_any_length_plays_to_its_end(
     make_provider: MakeProvider,
 ) -> None:
-    provider = make_provider(bounds=ProcessBounds())
+    provider = make_provider()
     provider.start()
     provider.prepare(_MOZART, _IMAGE)
     start, end = sentence_events("s1")
@@ -388,7 +453,7 @@ def test_a_sentence_in_one_binary_message_of_any_length_plays_to_its_end(
 
 
 def test_a_closed_session_serves_no_frame(make_provider: MakeProvider) -> None:
-    provider = make_provider(bounds=ProcessBounds())
+    provider = make_provider()
     provider.start()
     session = provider.open_session(_MOZART)
 
@@ -398,22 +463,13 @@ def test_a_closed_session_serves_no_frame(make_provider: MakeProvider) -> None:
         session.idle_frame()
 
 
-def test_a_closed_provider_that_never_started_does_not_start(
-    make_provider: MakeProvider,
+@pytest.mark.parametrize("phase", ["never_started", "started"])
+def test_a_closed_provider_does_not_start(
+    phase: str, make_provider: MakeProvider
 ) -> None:
-    provider = make_provider(bounds=ProcessBounds())
-
-    provider.close()
-
-    with pytest.raises(ProviderFailedError):
+    provider = make_provider()
+    if phase == "started":
         provider.start()
-
-
-def test_a_closed_provider_that_started_does_not_start_again(
-    make_provider: MakeProvider,
-) -> None:
-    provider = make_provider(bounds=ProcessBounds())
-    provider.start()
 
     provider.close()
 
@@ -424,7 +480,7 @@ def test_a_closed_provider_that_started_does_not_start_again(
 def test_a_second_close_kills_no_process_group(
     make_provider: MakeProvider, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    provider = make_provider(bounds=ProcessBounds())
+    provider = make_provider()
     provider.start()
     provider.close()
     killed: list[int] = []

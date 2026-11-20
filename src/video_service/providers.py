@@ -21,6 +21,12 @@ class ProviderName(StrEnum):
     """The providers this service can run."""
 
     FAKE = "fake"
+    FLASHHEAD_LITE = "flashhead-lite"
+
+    @property
+    def needs_card_memory(self) -> bool:
+        """Whether the provider cannot start without `VIDEO_CARD_MEMORY_MB`."""
+        return self is ProviderName.FLASHHEAD_LITE
 
 
 def worker_executable(name: ProviderName, provider_root: Path | None) -> Path:
@@ -41,6 +47,7 @@ def provider_for(settings: Settings) -> ProcessProvider:
         ProviderLaunch(
             executable=worker_executable(settings.provider, settings.provider_root),
             max_image_pixels=settings.look_max_pixels,
+            card_memory_mb=settings.card_memory_mb,
         ),
         ProcessBounds(),
         call_seconds=settings.max_lag_ms / 1000,

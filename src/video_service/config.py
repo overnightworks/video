@@ -12,6 +12,7 @@ from pydantic import (
     Field,
     TypeAdapter,
     ValidationError,
+    ValidationInfo,
     field_validator,
     model_validator,
 )
@@ -32,6 +33,7 @@ _SERVICE_GROUP_ERROR: Final = (
 )
 _APP_NAME_ERROR: Final = "an app name must be one group path segment"
 _SHARED_CLIENT_ERROR: Final = "workload_client must belong to one app"
+_CARD_MEMORY_ERROR: Final = "is required by the provider"
 _ENV_PREFIX: Final = "VIDEO_"
 _DEFAULT_LOOK_MAX_BYTES: Final = 8 * 1024 * 1024
 _DEFAULT_LOOK_MAX_PIXELS: Final = 4096 * 4096
@@ -53,6 +55,7 @@ class Settings(BaseSettings):
     max_sessions: int = Field(default=1, ge=1)
     max_viewers: int = Field(default=5, ge=1)
     max_queued_audio_seconds: float = Field(default=30.0, gt=0, allow_inf_nan=False)
+    card_memory_mb: int | None = Field(default=None, ge=1, validate_default=True)
     max_lag_ms: int = Field(default=500, ge=1)
     drain_seconds: float = Field(default=30.0, gt=0, allow_inf_nan=False)
     config_file: Path | None = None
@@ -80,6 +83,16 @@ class Settings(BaseSettings):
         if path is not None and not path.is_absolute():
             raise ValueError(_PROVIDER_ROOT_ERROR)
         return path
+
+    @field_validator("card_memory_mb")
+    @classmethod
+    def _card_memory_is_set_where_the_provider_needs_it(
+        cls, mebibytes: int | None, info: ValidationInfo
+    ) -> int | None:
+        provider = info.data.get("provider")
+        if mebibytes is None and provider is not None and provider.needs_card_memory:
+            raise ValueError(_CARD_MEMORY_ERROR)
+        return mebibytes
 
     @field_validator("config_file")
     @classmethod
