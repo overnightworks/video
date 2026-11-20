@@ -241,11 +241,11 @@ def test_a_first_sample_that_fails_leaves_the_figures_taken_from_it_unmeasured()
 
     assert all(
         is_not_measured(figures[name], Reason.SAMPLE_FAILED)
-        for name in (
-            MemoryFigure.USED_BEFORE,
-            MemoryFigure.USED_AFTER_MINUS_BEFORE,
-            MemoryFigure.USED_BEYOND_CAP,
-        )
+        for name in (MemoryFigure.USED_BEFORE, MemoryFigure.USED_BEYOND_CAP)
+    )
+    assert all(
+        is_not_measured(figures[name], Reason.MEMORY_REFUSED)
+        for name in (MemoryFigure.USED_AFTER, MemoryFigure.USED_AFTER_MINUS_BEFORE)
     )
     assert figures[MemoryFigure.FLOOR] == value_of(FLOOR)
 

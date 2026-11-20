@@ -188,10 +188,13 @@ class GroupWatch:
 
     def _after_figures(self, before: int | None) -> dict[str, object]:
         if self.stop is not None:
-            names = [MemoryFigure.USED_AFTER]
-            if not self._before_failed:
-                names.append(MemoryFigure.USED_AFTER_MINUS_BEFORE)
-            return {name: not_measured(self.stop.cell_reason) for name in names}
+            return {
+                name: not_measured(self.stop.cell_reason)
+                for name in (
+                    MemoryFigure.USED_AFTER,
+                    MemoryFigure.USED_AFTER_MINUS_BEFORE,
+                )
+            }
         if not self._after_taken:
             return {}
         after = self._after
