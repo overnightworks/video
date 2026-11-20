@@ -24,7 +24,7 @@ import sys
 import tempfile
 import time
 import traceback
-from contextlib import AsyncExitStack
+from contextlib import AsyncExitStack, suppress
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
@@ -43,7 +43,9 @@ from card_drive import (
     hold_workers,
     opened_session,
     read_audio,
+    read_process,
     running_service,
+    signal_if_unchanged,
     timed,
 )
 from card_identity import LOOK_NAMES, throwaway_identity
@@ -72,7 +74,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
     from contextlib import AbstractAsyncContextManager, AbstractContextManager
 
-    from card_drive import Service, Session
+    from card_drive import Process, Service, Session
     from card_identity import Identity
 
 IDLE_SECONDS: Final = 0.5
@@ -460,7 +462,11 @@ def _child(group: str, arguments: argparse.Namespace) -> int:
 
 
 def _under_probe_run(
-    group: str, arguments: argparse.Namespace, fragment: Path, stops: list[int]
+    group: str,
+    arguments: argparse.Namespace,
+    fragment: Path,
+    stops: list[int],
+    control: ProcessControl,
 ) -> int:
     """Run `group` as its own process under `probe-run`; its exit status."""
     for tool in (PROBE_RUN, "setpriv"):
@@ -485,18 +491,51 @@ def _under_probe_run(
         *(["--dry-run"] if arguments.dry_run else []),
     ]
     try:
-        return _run_child(command, group, fragment, stops)
+        return _run_child(command, group, fragment, stops, control)
     finally:
         if (log := _group_log(arguments.record, group)).exists():
             print(f"beside it: {log}")
 
 
-def _run_child(command: list[str], group: str, fragment: Path, stops: list[int]) -> int:
+def _settled_at_group(
+    probe_run: Process | None,
+    fragment: Path,
+    signum: int,
+    control: ProcessControl,
+) -> bool:
+    """Whether a stop was settled at the group's process: sent, or deliberately not.
+
+    The stop is sent only to a process whose parent is `probe-run`, checked by
+    `signal_if_unchanged`; `timeout` may have reaped the group's process and the kernel
+    reused its id. An id that names no process or another's child is sent nothing.
+    Where the id is not yet written or the check cannot be made, the stop is not
+    settled and goes to the unreaped `probe-run`, which `timeout` passes it on from.
+    """
+    try:
+        group_pid = int(_pid_file(fragment).read_text())
+        if probe_run is None:
+            return False
+        group = read_process(group_pid, control)
+        if group is None or group.parent != probe_run.pid:
+            return True
+        return signal_if_unchanged((group, probe_run), signum, control)
+    except OSError, ValueError:
+        return False
+
+
+def _run_child(
+    command: list[str],
+    group: str,
+    fragment: Path,
+    stops: list[int],
+    control: ProcessControl,
+) -> int:
     """Run `command` as the group's process; a stop is recorded and, meanwhile, sent on.
 
     Once the process is reaped a stop is only recorded; the caller puts the handlers
     back.
     """
+    probe_run: Process | None = None
 
     def forward(signum: int, _frame: object) -> None:
         stops.append(signum)
@@ -506,15 +545,16 @@ def _run_child(command: list[str], group: str, fragment: Path, stops: list[int])
             return
         # `timeout` kills its command at once on a signal, so the stop goes to the
         # group's process itself, which stops the service first and then exits.
-        try:
-            os.kill(int(_pid_file(fragment).read_text()), signum)
-        except OSError, ValueError:
+        if not _settled_at_group(probe_run, fragment, signum, control):
             child.send_signal(signum)
 
     # The operator names the audio path that the command passes on.
     with subprocess.Popen(  # NOSONAR(S8705)  # noqa: S603 - probe-run and this python
         command, env={**os.environ, _CHILD_MARKER: group}
     ) as child:
+        # The start time that tells `probe-run` from a process that took its id.
+        with suppress(OSError):
+            probe_run = read_process(child.pid, control)
         # The group's service is cleaned up by the child, so a stop reaches it first.
         for stopping in STOP_SIGNALS:
             signal.signal(stopping, forward)
@@ -535,7 +575,7 @@ def _run_group_process(
     """
     before = [signal.getsignal(stopping) for stopping in STOP_SIGNALS]
     stops: list[int] = []
-    status = _under_probe_run(group, arguments, fragment, stops)
+    status = _under_probe_run(group, arguments, fragment, stops, control)
     kill = end_processes_below(control)
     # A stop after the handlers are back reaches the top's own handler; one before is
     # in `stops`, which is read after.
