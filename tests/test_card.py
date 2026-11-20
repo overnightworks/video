@@ -106,8 +106,6 @@ def stand_in_directory(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> Iterator[Path]:
     """The only directory on `PATH`; a child its stand-in leaves is ended after."""
-    monkeypatch.setattr(card, "QUERY_SECONDS", 1.0)
-    monkeypatch.setattr(card, "REAP_SECONDS", 0.5)
     monkeypatch.setenv("PATH", str(tmp_path))
     yield tmp_path
     left = tmp_path / "child.pid"
