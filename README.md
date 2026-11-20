@@ -189,7 +189,8 @@ from its own process's accounting, at no, one and five viewers, and the encoders
 five; each session's opening time; each service's start, the provider's load and each look's
 preparation as the service logged them (outcome, the reason when one is logged,
 duration), and its stop's time to exit; and that a lag far too small ends the session as
-`unavailable`. Beside the record the command writes one viewer's audio and video as `<record>.viewer.mp4`, contact sheets of it as
+`unavailable`. Beside the record the command writes one viewer's audio and video as
+`<record>.viewer.mp4`, contact sheets of it as
 `<record>.viewer-sheet-<n>.png` for the judge of the picture, and each group's service log as
 `<record>.<group>.log`; the record names them and the command prints their paths. A dry run
 shows that the drive works, and its figures are the fake's (a 256x256 picture on whatever

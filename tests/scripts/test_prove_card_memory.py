@@ -79,6 +79,7 @@ def test_a_card_run_with_room_records_the_cards_memory_and_judges_its_lines(
     assert entry[MemoryFigure.FREE_LEAST]["verdict"] == Verdict.MET
     assert entry[MemoryFigure.FREE_LEAST]["line"] == FREE_MEMORY_LINE.text
     assert entry["start_to_ready_ms"]["verdict"] in {Verdict.MET, Verdict.MISSED}
+    assert entry["processes_left_after_stop"] == value_of(0)
     assert entry["processes_alive_after_kill"] == value_of(0)
     assert MEMORY_STOP not in entry
     assert run.processes() == []
@@ -237,7 +238,7 @@ def test_a_stop_during_the_first_sample_ends_the_command_before_probe_run_starts
     assert run.processes() == []
 
 
-def test_a_breach_while_the_provider_loads_ends_the_tree_at_once_and_records_it(
+def test_a_breach_while_the_provider_loads_ends_the_tree_and_starts_no_second_group(
     run: Run,
 ) -> None:
     run.in_card_mode()
@@ -250,10 +251,12 @@ def test_a_breach_while_the_provider_loads_ends_the_tree_at_once_and_records_it(
 
     assert status != 0
     assert "watchdog breach (below_floor)" in lines(error)[0]
+    assert list(record["cells"]) == ["clear", "lag"]
     assert _cells_are(record, Reason.WATCHDOG_BREACH)
     assert is_not_measured(entry["start_to_ready_ms"], Reason.WATCHDOG_BREACH)
-    assert is_not_measured(
-        record["services"]["lag"]["card_floor_mb"], Reason.WATCHDOG_BREACH
+    assert all(
+        is_not_measured(figure, Reason.WATCHDOG_BREACH)
+        for figure in record["services"]["lag"].values()
     )
     assert stop["reason"] == StopReason.BELOW_FLOOR
     assert stop["refused"] is False
@@ -307,23 +310,6 @@ def test_a_breach_while_sessions_run_keeps_the_cells_finished_before_it(
     assert entry["processes_alive_after_kill"] == value_of(0)
     assert is_not_measured(entry[MemoryFigure.USED_AFTER], Reason.WATCHDOG_BREACH)
     assert run.wait_until(lambda: run.processes() == [], GONE_WITHIN_SECONDS)
-
-
-def test_a_breach_in_the_first_of_two_groups_starts_no_second_group(run: Run) -> None:
-    run.in_card_mode()
-    run.breach_while_loading()
-
-    status, _ = run.finish(run.start("--cells", "clear", "lag"))
-    record = _record(run)
-
-    assert status != 0
-    assert list(record["cells"]) == ["clear", "lag"]
-    assert _cells_are(record, Reason.WATCHDOG_BREACH)
-    assert all(
-        is_not_measured(figure, Reason.WATCHDOG_BREACH)
-        for figure in record["services"]["lag"].values()
-    )
-    assert len(run.probe_run_log.read_text().splitlines()) == 1
 
 
 def test_a_breach_while_the_group_stops_after_an_interrupt_kills_at_once(
