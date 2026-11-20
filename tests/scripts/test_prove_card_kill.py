@@ -78,17 +78,6 @@ def open_during_a_stop_that_is_to_be_held(pid):
     return kernel.open(pid)
 
 
-def record_every_forwarded_stop():
-    send_signal = subprocess.Popen.send_signal
-
-    def recorded(self, signum):
-        with Path(os.environ["SIGNALS_LOG"]).open("a") as log:
-            log.write(f"{signum}\\n")
-        send_signal(self, signum)
-
-    subprocess.Popen.send_signal = recorded
-
-
 def record_signal(pidfd, signum):
     with Path(os.environ["SIGNALS_LOG"]).open("a") as log:
         log.write(f"{signum}\\n")
@@ -128,8 +117,6 @@ controls = {
         kernel, become_subreaper=subreaper_that_cannot_be_set
     ),
 }
-if mode == "breach-stop":
-    record_every_forwarded_stop()
 raise SystemExit(prove_card.main(sys.argv[2:], controls[mode]))
 """
 
