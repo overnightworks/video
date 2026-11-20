@@ -22,6 +22,7 @@ from PIL import Image
 import card_drive
 import card_identity
 import prove_card
+from card_record import Reason, Verdict
 from video_service.provider_process import ProcessBounds
 
 if TYPE_CHECKING:
@@ -593,6 +594,17 @@ def test_a_service_that_cannot_answer_its_stop_is_gone_within_the_stop_and_kill_
     assert str(run.logs()[0]) in run.printed()
 
 
+def _not_measured(figure: dict, reason: Reason) -> bool:
+    return figure == {"verdict": Verdict.NOT_MEASURED, "reason": reason}
+
+
+def _fragment_cells(run: Run) -> list[str] | None:
+    """The cells the wire group's fragment holds, once it is written."""
+    for fragment in run.scratch.glob("prove-card-record-*/wire.json"):
+        return list(json.loads(fragment.read_text())["cells"])
+    return None
+
+
 def test_a_killed_group_process_takes_its_service_and_worker_with_it(run: Run) -> None:
     command = run.start("--dry-run", "--cells", "viewers")
     serving = run.wait_until(run.has_spoken, APPEARS_WITHIN_SECONDS)
@@ -608,20 +620,114 @@ def test_a_killed_group_process_takes_its_service_and_worker_with_it(run: Run) -
     # The stand-in for `probe-run` reports the kill of its command first.
     assert error.strip().splitlines()[-1] == "the wire cells ended with status 137"
     assert run.wait_until(lambda: all(_gone(pid) for pid in group), GONE_WITHIN_SECONDS)
-    assert not run.record.exists()
 
 
-def test_a_failed_cell_leaves_the_log_beside_the_record_and_prints_its_path(
+def test_a_group_process_killed_before_its_fragment_gives_every_figure_no_fragment(
     run: Run,
 ) -> None:
     command = run.start("--dry-run", "--cells", "viewer")
     serving = run.wait_until(run.has_spoken, APPEARS_WITHIN_SECONDS)
-    os.kill(run.service_pid(), signal.SIGKILL)
+    os.kill(run.group_pid(), signal.SIGKILL)
 
     status, _ = run.finish(command)
+    record = json.loads(run.record.read_text())
 
     assert serving
     assert status != 0
-    assert not run.record.exists()
+    assert list(record["cells"]) == ["viewer"]
+    assert _not_measured(record["cells"]["viewer"], Reason.NO_FRAGMENT)
+    assert all(
+        _not_measured(figure, Reason.NO_FRAGMENT)
+        for figure in record["services"]["wire"].values()
+    )
+    assert [log.name for log in run.logs()] == ["record.wire.log"]
+
+
+def test_a_group_process_killed_after_its_first_cell_keeps_that_cells_figures(
+    run: Run,
+) -> None:
+    command = run.start("--dry-run", "--cells", "sentences", "viewers")
+    first = run.wait_until(
+        lambda: _fragment_cells(run) == ["sentences"], APPEARS_WITHIN_SECONDS
+    )
+    os.kill(run.group_pid(), signal.SIGKILL)
+
+    status, _ = run.finish(command)
+    record = json.loads(run.record.read_text())
+    service = record["services"]["wire"]
+
+    assert first
+    assert status != 0
+    assert [
+        sentence["sentence"] for sentence in record["cells"]["sentences"]["sentences"]
+    ] == [
+        "first",
+        "second",
+    ]
+    assert _not_measured(record["cells"]["viewers"], Reason.NO_FRAGMENT)
+    assert service["start_to_ready_ms"]["value"] > 0
+    assert service["provider_load"]["outcome"]["value"] == "ok"
+    assert _not_measured(service["stop_to_exit_ms"], Reason.NO_FRAGMENT)
+
+
+def _fail_the_cell_being_driven(run: Run) -> None:
+    serving = run.wait_until(run.has_spoken, APPEARS_WITHIN_SECONDS)
+    assert serving
+    os.kill(run.service_pid(), signal.SIGKILL)
+
+
+def test_a_failed_cell_is_recorded_with_the_later_cells_of_its_group_ended(
+    run: Run,
+) -> None:
+    command = run.start("--dry-run", "--cells", "viewer", "viewers")
+    _fail_the_cell_being_driven(run)
+
+    status, error = run.finish(command)
+    record = json.loads(run.record.read_text())
+
+    assert status != 0
+    assert error.strip().splitlines()[-1] == "the wire cells ended with status 1"
+    assert _not_measured(record["cells"]["viewer"], Reason.CELL_FAILED)
+    assert _not_measured(record["cells"]["viewers"], Reason.GROUP_ENDED)
+    service = record["services"]["wire"]
+    assert service["start_to_ready_ms"]["value"] > 0
+    assert service["stop_to_exit_ms"]["value"] >= 0
     assert [log.name for log in run.logs()] == ["record.wire.log"]
     assert str(run.logs()[0]) in run.printed()
+    assert str(run.record) in run.printed()
+    assert run.processes() == []
+
+
+def test_a_failed_group_ends_the_command_and_no_later_group_starts(run: Run) -> None:
+    command = run.start("--dry-run", "--cells", "viewer", "lag")
+    _fail_the_cell_being_driven(run)
+
+    status, _ = run.finish(command)
+    record = json.loads(run.record.read_text())
+
+    assert status != 0
+    assert list(record["cells"]) == ["viewer", "lag"]
+    assert _not_measured(record["cells"]["viewer"], Reason.CELL_FAILED)
+    assert _not_measured(record["cells"]["lag"], Reason.EARLIER_GROUP_FAILED)
+    assert all(
+        _not_measured(figure, Reason.EARLIER_GROUP_FAILED)
+        for figure in record["services"]["lag"].values()
+    )
+    assert len(run.probe_run_log.read_text().splitlines()) == 1
+    assert [log.name for log in run.logs()] == ["record.wire.log"]
+
+
+def test_a_fragment_is_whole_or_absent_when_its_rename_is_interrupted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fragment = tmp_path / "wire.json"
+    prove_card._write_fragment(fragment, {"cells": {"first": 1}})  # noqa: SLF001 - the write is the unit
+
+    def interrupted(*_arguments: object) -> None:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(Path, "replace", interrupted)
+    with pytest.raises(KeyboardInterrupt):
+        prove_card._write_fragment(fragment, {"cells": {"first": 1, "second": 2}})  # noqa: SLF001
+
+    assert json.loads(fragment.read_text()) == {"cells": {"first": 1}}

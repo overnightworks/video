@@ -44,7 +44,7 @@ flowchart LR
   the closed catalogue `VIDEO_PROVIDER` picks from, where its worker is and which provider needs the card memory cap;
   `provider_process.py` is the one `Provider` the service builds: it runs the
   worker as a child process and speaks the frame protocol; `config.py` reads the
-  settings, the card memory cap among them, and the caller file; `card.py` reads the card's memory in use.
+  settings, the card memory cap among them, and the caller file; `card.py` reads GPU 0's memory (used, free and total MiB) in one reading bounded in time, which raises when the card cannot be read; health's view of it is the used figure, or 0 when it raises.
 - `packages/client` (`overnightworks-video-client`): the one owner of the wire's
   types (health, refusals, the session's events) and the bounded health fetch. The
   service and its callers import them.

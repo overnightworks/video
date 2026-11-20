@@ -154,8 +154,17 @@ signal ends its worker, which reads its closed input on a thread of its own, als
 the provider loads. That does not cover the time before the worker's `run_worker` runs
 (FlashHead lite imports torch first), a load step that holds the interpreter lock, a
 worker not built on `run_worker`, nor the compiler's helper processes, which no input
-thread ends; after a kill of the group's process, the record it would have written is
-not written either.
+thread ends.
+
+The record is written however a group ends, from the fragment each group's process
+rewrites after every cell and once more when the group ends (whole or absent, never half
+written). A cell that raises ends its group: it is `not_measured` with the reason
+`cell_failed`, each later cell of the group `group_ended`, and the command exits non-zero
+after it writes the record. A failed group ends the command: each cell of a group not
+started is `earlier_group_failed`. A group whose process ended without a fragment, or with
+one it did not end (the cap, a kill), keeps the cells its fragment holds, and every cell
+and every figure of its service that the fragment lacks is `no_fragment`. An interrupt
+(INT or TERM) writes no record.
 
 The record is JSON. Its figures come from the service's own log lines, the session's events
 and what the viewers receive: per sentence the first output, the frames against the audio's
