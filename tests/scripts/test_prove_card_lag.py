@@ -188,10 +188,10 @@ _AUDIO: Final = Audio(rate=16000, pcm=bytes(64))
 
 
 def test_a_sentence_sent_after_the_service_ended_the_session_raises_its_error() -> None:
-    session = _session_over([_unavailable()])
+    speaking = _session_over([_unavailable()]).speak("second", _AUDIO)
 
     with pytest.raises(SessionEndedError) as ended:
-        asyncio.run(session.speak("second", _AUDIO))
+        asyncio.run(speaking)
 
     assert ended.value.code == RefusalCode.UNAVAILABLE
 
@@ -199,7 +199,7 @@ def test_a_sentence_sent_after_the_service_ended_the_session_raises_its_error() 
 def test_a_sentence_sent_to_a_closed_connection_without_an_error_raises_the_close() -> (
     None
 ):
-    session = _session_over([])
+    speaking = _session_over([]).speak("second", _AUDIO)
 
     with pytest.raises(ConnectionClosedOK):
-        asyncio.run(session.speak("second", _AUDIO))
+        asyncio.run(speaking)
