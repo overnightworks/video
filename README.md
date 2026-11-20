@@ -216,8 +216,9 @@ service entry (its reason, the sample, the floor, the cap and the seconds to no 
 left): the group's unfinished cells and every later group are `not_measured` with the reason
 `watchdog_breach`, no later group starts and the command exits non-zero. A group's entry
 holds the card's used memory before, the most used and the least free while the service
-existed, the used memory after, their difference and what the run added at its peak beyond
-the cap; the least free is judged against the line "free card memory at least 1024 MiB at
+existed, the used memory after a group that ended on its own (no reading follows an ended
+group, which could leave a process behind), their difference and what the run added at its
+peak beyond the cap; the least free is judged against the line "free card memory at least 1024 MiB at
 the peak". The watchdog cannot stop an allocation faster than one interval (the provider's
 cap does), memory outside the cap (the CUDA context, compiler peaks), which it sees only
 afterwards, the voice's own growth, nor a driver or `nvidia-smi` that reports wrong figures;
