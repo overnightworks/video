@@ -1,8 +1,0 @@
-claim_id = "c4ae9a68ebc34d068509dea0cb77eb94"
-agent = "Claude 76251661-cb30-4447-a3ad-32a83a396daa"
-role = "builder"
-base = "a6fde861f2daa33a65ab7aad3cd6450711398410"
-branch = "claude/issue-59-p3d2b5-record-never-lies"
-scope = ["README.md", "scripts/card_drive.py", "scripts/card_memory.py", "scripts/prove_card.py", "tests/scripts/test_card_memory.py", "tests/scripts/test_prove_card_memory.py", "tests/support/prove_card_support.py"]
-opened_commit = "acaa4f07dccd098ea685ebd30c393dee17b77bed"
-whole_reason = "The failed group's unmeasured figures, the environment names and the stand-in's temporary name change one command's record and its README together."
