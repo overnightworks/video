@@ -32,6 +32,7 @@ from card_drive import (
     SessionEndedError,
     Window,
     exit_on_stop,
+    hold_workers,
     opened_session,
     read_audio,
     running_service,
@@ -259,10 +260,15 @@ async def _looks(drive: Drive) -> object:
 
 
 async def _lag(drive: Drive) -> object:
-    """A lag far too small ends the session as unavailable."""
+    """A provider that cannot answer within a lag far too small ends the session.
+
+    The worker is held once the session is open, so the outcome does not wait for the
+    provider to be slower than the lag by chance.
+    """
     code = None
     try:
         async with drive.session(LOOK_NAMES[0]) as session:
+            hold_workers(drive.service.process.pid)
             await session.until(OutputAudioBufferStarted)
     except SessionEndedError as ended:
         code = ended.code

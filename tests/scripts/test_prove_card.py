@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import signal
@@ -496,6 +497,34 @@ def _gone(pid: int) -> bool:
     except OSError:
         return True
     return state == "Z"
+
+
+def test_a_provider_that_cannot_answer_ends_the_session_as_unavailable_at_any_lag(
+    tmp_path: Path,
+) -> None:
+    audio = tmp_path / "speech.wav"
+    write_audio(audio, seconds=AUDIO_SECONDS)
+
+    async def drive_the_lag_cell() -> object:
+        # No jitter exceeds this lag, so only the held worker ends the session.
+        with (
+            card_identity.throwaway_identity(tmp_path) as identity,
+            card_drive.running_service(
+                identity, tmp_path / "service.log", max_lag_ms=500
+            ) as service,
+        ):
+            drive = prove_card.Drive(
+                service,
+                identity,
+                card_drive.read_audio(audio),
+                dry_run=True,
+                record=tmp_path / "record.json",
+            )
+            return await prove_card._lag(drive)  # noqa: SLF001 - the cell is the unit
+
+    cell = asyncio.run(drive_the_lag_cell())
+
+    assert cell["ended_unavailable"]["value"] is True
 
 
 def test_a_service_that_stops_in_time_takes_its_worker_with_it(tmp_path: Path) -> None:
