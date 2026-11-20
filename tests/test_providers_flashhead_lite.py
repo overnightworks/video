@@ -39,4 +39,9 @@ def test_without_a_card_the_real_worker_refuses_and_the_provider_is_failed(
         "before_ready",
     )
     assert record.getMessage() == "provider.failed"
-    assert set(vars(record)) & {"stderr", "worker_message"} == set()
+    stock = vars(logging.makeLogRecord({}))
+    assert set(vars(record)) - set(stock) - {"message"} == {
+        "reason",
+        "phase",
+        "exit_status",
+    }
