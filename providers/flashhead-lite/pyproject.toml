@@ -35,7 +35,7 @@ dependencies = [
     "transformers==5.15.1",
     # 0.4.3, upstream's floor, calls torch.cuda.get_device_name at import and fails
     # without a card; 0.4.5 returns early and offers the same imports.
-    "xfuser==0.4.5",
+    "xfuser==0.8.0",
 ]
 
 [project.scripts]
