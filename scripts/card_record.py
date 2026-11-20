@@ -46,7 +46,7 @@ FIRST_OUTPUT_LINE: Final = Line(
     "first PCM byte to first frame out at most 1000 ms", 1000, operator.le
 )
 CLEAR_TO_SILENCE_LINE: Final = Line(
-    "clear to silence and idle at most 500 ms", 500, operator.le
+    "clear to the last loud audio frame at the peer at most 500 ms", 500, operator.le
 )
 FRAMES_PER_SECOND_LINE: Final = Line(
     "steady state at least 25 frames per second, no starved session", 25, operator.ge
@@ -54,9 +54,11 @@ FRAMES_PER_SECOND_LINE: Final = Line(
 START_TO_READY_LINE: Final = Line(
     "start to ready, every look prepared, at most 300000 ms", 300_000, operator.le
 )
+ENCODER_CORES_LINE: Final = Line(
+    "the service's CPU at five viewers beyond none at most 2 cores", 2, operator.le
+)
 
 NO_CARD_REASON: Final = "no card is driven, so a timing here is the fake's"
-NO_VIEWER_REASON: Final = "frames per second at the peer needs a viewer"
 
 
 def value_of(value: object) -> Figure:
@@ -80,12 +82,9 @@ def judged(value: float, line: Line, *, dry_run: bool) -> Figure:
 def closed_record(
     *, dry_run: bool, cells: dict[str, object], services: dict[str, object]
 ) -> dict[str, object]:
-    """The whole record: the cells run, each service's start and stop, what is open."""
+    """The whole record: the cells run and each service's start and stop."""
     return {
         "mode": "dry-run" if dry_run else "card",
         "cells": cells,
         "services": services,
-        "viewers": {
-            "frames_per_second": not_measured(NO_VIEWER_REASON, FRAMES_PER_SECOND_LINE)
-        },
     }

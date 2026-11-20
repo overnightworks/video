@@ -131,22 +131,36 @@ child's pipe, and the child ends.
 is the card proof's drive. It starts the service from the checkout with the `fake` provider,
 under a throwaway issuer and look server it serves over HTTPS beneath a certificate authority
 of its own, and drives sessions through the wire as an app does: sentences with idle between
-them, a clear inside a sentence, one session on each of two looks, and a lag far too small.
-`--audio` is a mono 16-bit WAV of at least a second, at a rate the wire carries. `--cells`
-names the cells to run (`sentences`, `clear`, `looks`, `lag`); each group of them runs as one
-service under `probe-run`, which the command calls itself, and the service's process group
-ends however the run ends.
+them, a clear inside a sentence, one session on each of two looks, a lag far too small, and
+viewers, which are receive-only aiortc peers attached through the viewer route with the
+session's tokens. `--audio` is a mono 16-bit WAV of at least a second, at a rate the wire
+carries; the command checks it, and that `--record` names a file in an existing writable
+directory, before any service starts, and ends with one line when either fails. `--cells`
+names the cells to run (`sentences`, `clear`, `looks`, `viewer`, `viewers`, `lag`); each
+group of them runs as one service under `probe-run`, which the command calls itself. Every
+exit stops the service first, which reaps its provider worker; only a service that outlives
+its stop is killed, with the worker groups it started. An interrupt (INT or TERM) ends the
+command with one line. A kill of the command itself is not trapped: `probe-run`'s cap ends
+what it left.
 
-The record is JSON. Its figures come from the service's own log lines and the session's
-events: per sentence the first output, the frames against the audio's length and the late
-frames, then the time from a clear to its confirmation, each session's opening time, each
-service's start and its stop's time to exit, and that a lag far too small ends the session
-as `unavailable`. A dry run shows that the drive works, and its figures are the fake's, so
-a figure judged against a line of the program plan (first output, clear, start, frames per
-second) holds its value and the verdict `not_measured` with the reason. It cannot show a
-card's timing or memory, nor the picture, nor frames per second at a viewer: those wait for
-viewers and the card's cells, and without `--dry-run` the command refuses and names what is
-missing.
+The record is JSON. Its figures come from the service's own log lines, the session's events
+and what the viewers receive: per sentence the first output, the frames against the audio's
+length and the late frames; the time from a clear to its confirmation and to the last loud
+audio frame a viewer receives; per viewer (one, and each of five) the frames per second at
+the peer in a sentence and between sentences, the loud audio frames between sentences, the
+gaps in the video timestamps and the frame size the provider drew; the service's CPU, read
+from its own process's accounting, at no, one and five viewers, and the encoders' share at
+five; each session's opening time; each service's start and its stop's time to exit; and that
+a lag far too small ends the session as `unavailable`. Beside the record the command writes
+one viewer's audio and video as `<record>.viewer.mp4`, contact sheets of it as
+`<record>.viewer-sheet-<n>.png` for the judge of the picture, and each group's service log as
+`<record>.<group>.log`; the record names them and the command prints their paths. A dry run
+shows that the drive works, and its figures are the fake's (a 256x256 picture on whatever
+host runs it), so a figure judged against a line of the program plan (first output, clear to
+silence, start, frames per second, the encoders' two cores) holds its value and the verdict
+`not_measured` with the reason. It cannot show a card's timing or memory, nor the picture's
+likeness to the idle look: the video is judged by eye. Without `--dry-run` the command
+refuses and names what is missing.
 
 ## Install the client
 
