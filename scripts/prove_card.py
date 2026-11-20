@@ -183,7 +183,8 @@ def _checked_look_image(path: Path) -> bytes:
     """The file's bytes once the service's own limits accept them as a look's image."""
     limits = _GivenSettings(provider=ProviderName.FAKE)
     try:
-        data = path.read_bytes()
+        # The operator names the image on the command line.
+        data = path.read_bytes()  # NOSONAR(S8707)
     except OSError as error:
         message = f"--look-image {path}: it cannot be read ({error.strerror})"
         raise SystemExit(message) from None
