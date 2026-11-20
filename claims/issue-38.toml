@@ -1,8 +1,0 @@
-claim_id = "c7c8231db1a34e27b84de889b521c25e"
-agent = "Claude 8d6968f0-90db-42e6-8c2e-47e423be7ebd"
-role = "builder"
-base = "103c5e9e67dd01c016fb12b216b7d6cec7b4184c"
-branch = "claude/issue-38-p3d1-card-proof-drive"
-scope = ["README.md", "pyproject.toml", "scripts", "tests/scripts", "uv.lock"]
-opened_commit = "157d9ec7d343fcb7fd1ca72c8e3566d25b483db8"
-whole_reason = "The command, its three helpers and their test prove one proof drive together."
