@@ -41,10 +41,10 @@ flowchart LR
   `callers.py` proves the two tokens; `runtime.py` holds the provider, the looks,
   the one readiness they share and the places of the open sessions; `looks.py`
   reads the look file and fetches, checks and decodes an image; `providers.py` is
-  the closed catalogue `VIDEO_PROVIDER` picks from and where its worker is;
+  the closed catalogue `VIDEO_PROVIDER` picks from, where its worker is and which provider needs the card memory cap;
   `provider_process.py` is the one `Provider` the service builds: it runs the
   worker as a child process and speaks the frame protocol; `config.py` reads the
-  settings and the caller file; `card.py` reads the card's memory in use.
+  settings, the card memory cap among them, and the caller file; `card.py` reads the card's memory in use.
 - `packages/client` (`overnightworks-video-client`): the one owner of the wire's
   types (health, refusals, the session's events) and the bounded health fetch. The
   service and its callers import them.
@@ -76,8 +76,10 @@ flowchart LR
   through that import and keeps each look's and each session's state apart, setting
   upstream's three per-look and per-session attributes before every render; every
   number of the picture and the audio comes from upstream's parameters. The worker
-  `video-flashhead-lite-worker` serves the driver over that renderer. It reads the
-  card memory cap, `VIDEO_CARD_MEMORY_MB` in mebibytes, before it builds anything,
+  `video-flashhead-lite-worker` serves the driver over that renderer. The service
+  validates the card memory cap (`VIDEO_CARD_MEMORY_MB`, an integer of at least 1,
+  required for this provider) and hands the child its canonical form; the worker reads
+  it, in mebibytes, before it builds anything,
   and start refuses when no card is visible or the cap exceeds the card's total or
   free memory; otherwise it caps torch's allocator at the cap's share of the card
   before anything loads. The cap binds torch's allocator, not the card context or
@@ -89,14 +91,18 @@ flowchart LR
   a card or weights, that the import succeeds, that upstream's audio encoder returns
   its hidden states, that the real worker refuses cleanly, and that the renderer's
   state handling is right against upstream's own pipeline with tiny stand-in
-  networks.
+  networks. The same job starts the real worker through the service's own provider
+  construction and proves the provider is failed with reason `reported` before it
+  is ready.
 
 ## Provider process
 
 A provider is a child process started from its own executable, `<provider
 root>/<provider>/.venv/bin/video-<provider>-worker`, or beside the service's
 interpreter when no root is set; no other location is searched. The child leads a
-process group of its own and inherits the service's environment. The service and the
+process group of its own and inherits the service's environment, with the image bound
+and, when set, the card memory cap replacing any inherited value; an inherited cap the
+service did not read never reaches it. The service and the
 child speak the frame protocol on the child's stdin and stdout, which the child moves
 off fd 1 so a library's `print` cannot corrupt it:
 
@@ -224,8 +230,14 @@ that session `unavailable` and no other.
   an issuer that cannot be reached refuses every session `unavailable`.
 - The provider's code, and so any third party's, runs only in the child process, which
   holds no token and receives only decoded images and sentence audio over its pipes.
-  The child inherits the service's environment; what confines it further is judged
-  with each real provider.
+  The child inherits the service's environment, so the operator's CUDA and torch
+  settings reach it. That environment carries no secret: its settings are paths, URLs
+  and numbers, the issuer's keys are public and tokens arrive per session. The child
+  runs as the same user and could read its parent's environment anyway, so filtering
+  would confine nothing; the process boundary confines it (pipes only, no token,
+  decoded images only, Hugging Face offline) and, from the image on, a non-root user
+  and a read-only root. A change that adds a secret setting keeps it from the child
+  in that same change.
 - `GET /health` needs no token and reveals the offered look names, the provider's
   name and the card's memory in use.
 - Bounded input from a caller: event JSON (closed types, bounded strings, at most
@@ -260,7 +272,7 @@ Behaviour tests drive the HTTP and WebSocket boundary of the real app over a
 runtime composed with the fake provider, a real look source on a loopback port and
 a throwaway issuer that signs real tokens; the process tests start `main` and stop
 it with a signal, and `serve` under a real server with a WebSocket client for the
-drain; the viewer tests start `serve` on a loopback port and receive the stream with
+drain; the child's environment is read back from a scripted worker; the viewer tests start `serve` on a loopback port and receive the stream with
 aiortc recvonly peers, deterministic by frame timestamps. The client's tests drive `fetch_health` against a raw listener and parse the
 session's events.
 
