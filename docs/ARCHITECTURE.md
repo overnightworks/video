@@ -84,8 +84,17 @@ flowchart LR
   free memory; otherwise it caps torch's allocator at the cap's share of the card
   before anything loads. The cap binds torch's allocator, not the card context or
   library memory. The worker goes offline for Hugging Face before importing it and
-  loads weights only from `weights` beside the provider's `.venv`, which a fetch
-  fills; recreating the environment keeps it. The calls that need a card live in one
+  loads weights only from `weights` beside the provider's `.venv`; recreating the
+  environment keeps it. The command `video-flashhead-lite-fetch-weights` fills it
+  from pins that sit beside the directory names in the import module: each file's
+  repository, commit, path and sha256. A file is downloaded as a real file into a
+  staging directory beside `weights`, hashed there and renamed in only when its
+  digest equals its pin, so `weights` never holds a partial or unchecked file, and the
+  hub's caches and metadata stay out of it. A pin is a configuration, a safetensors
+  file or a licence notice, never code or a pickle, so upstream's `torch.load` path is
+  never reached from a directory the fetch filled; the provider's CI job fails when
+  the provider's source or upstream's `flash_head` tree turns `trust_remote_code` on
+  or names a `custom_pipeline`. The calls that need a card live in one
   module, excluded from coverage and driven by the card proof. Its CI job checks the
   submodule out, installs the lock without building and proves, on a runner without
   a card or weights, that the import succeeds, that upstream's audio encoder returns

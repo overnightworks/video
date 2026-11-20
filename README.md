@@ -107,8 +107,15 @@ it, and its `video-fake-worker` runs beside the interpreter) that no image insta
 
 To run `flashhead-lite` from source, check out the submodule, create the provider's own environment
 (`git submodule update --init`, then `uv sync --locked --all-groups --project providers/flashhead-lite`),
-and set `VIDEO_PROVIDER_ROOT` to the repository's `providers` directory, `VIDEO_CARD_MEMORY_MB` and
-the weights beside that environment. On a host without a card the worker refuses: the provider is
+fetch the weights with `uv run --locked --project providers/flashhead-lite video-flashhead-lite-fetch-weights`,
+and set `VIDEO_PROVIDER_ROOT` to the repository's `providers` directory and `VIDEO_CARD_MEMORY_MB`.
+The fetch downloads about 8.2 GB into `providers/flashhead-lite/weights`: the FlashHead lite
+transformer and VAE, and the wav2vec2 audio encoder, each from its Hugging Face repository at a
+pinned commit and kept only when its sha256 matches the pin. A file already there with its digest
+is not downloaded again, and a failure ends the command non-zero naming the file. The licence
+notices of the components (FlashHead's model card, LTX-Video's licence text for the VAE and
+wav2vec2's model card) land in `weights/notices`; keep them with the files if you pass them on.
+On a host without a card the worker refuses: the provider is
 failed, health shows it not ready and the service keeps running.
 
 A provider runs as a child process of the service, with its own interpreter and
