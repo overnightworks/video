@@ -65,8 +65,24 @@ def open_during_a_stop_that_names_a_bystander(pid):
     return kernel.open(pid)
 
 
-def refuse_to_signal(_pidfd):
+def refuse_to_signal(_pidfd, _signum):
     raise PermissionError
+
+
+def record_signal(pidfd, signum):
+    with Path(os.environ["SIGNALS_LOG"]).open("a") as log:
+        log.write(f"{signum}\\n")
+    kernel.send_signal(pidfd, signum)
+
+
+reads = []
+
+
+def read_stat_that_fails_at_first(pid):
+    reads.append(pid)
+    if len(reads) == 1:
+        raise PermissionError
+    return kernel.read_stat(pid)
 
 
 controls = {
@@ -78,8 +94,10 @@ controls = {
     "raise": dataclasses.replace(
         kernel,
         become_subreaper=subreaper_that_leaves_a_process_below,
-        send_kill=refuse_to_signal,
+        send_signal=refuse_to_signal,
     ),
+    "blind": dataclasses.replace(kernel, read_stat=read_stat_that_fails_at_first),
+    "record": dataclasses.replace(kernel, send_signal=record_signal),
     "subreaper": dataclasses.replace(
         kernel, become_subreaper=subreaper_that_cannot_be_set
     ),
@@ -165,6 +183,85 @@ def test_a_stop_during_the_end_of_group_kill_is_held_and_sent_to_no_process(
         bystander.wait()
 
 
+def test_a_stop_is_not_forwarded_to_a_process_that_is_no_child_of_probe_run(
+    run: Run, harness: Path
+) -> None:
+    bystander = subprocess.Popen(["sleep", "60"])  # noqa: S607 - the test's own bystander
+    signals = run.directory / "signals.log"
+    run.environment["SIGNALS_LOG"] = str(signals)
+    try:
+        command = _start_with(
+            run, harness, "record", "--dry-run", "--cells", "clear", "lag"
+        )
+        serving = run.wait_until(
+            lambda: "process.ready" in _log_text(run, "wire"), APPEARS_WITHIN_SECONDS
+        )
+        # The id the group's process wrote now names a process probe-run did not start.
+        (pid_file,) = run.scratch.glob("prove-card-record-*/*.pid")
+        pid_file.write_text(str(bystander.pid))
+        os.kill(command.pid, signal.SIGTERM)
+
+        status, error = run.finish(command)
+
+        assert serving
+        assert status != 0
+        assert error.strip() == "interrupted by SIGTERM"
+        assert not run.record.exists()
+        assert len(run.probe_run_log.read_text().splitlines()) == 1
+        assert run.has_spoken()
+        assert signal.SIGTERM.value not in _signals_sent(signals)
+        assert run.processes() == []
+        assert bystander.poll() is None
+    finally:
+        bystander.kill()
+        bystander.wait()
+
+
+def test_a_stop_is_forwarded_through_the_checked_send_to_the_child_of_probe_run(
+    run: Run, harness: Path
+) -> None:
+    signals = run.directory / "signals.log"
+    run.environment["SIGNALS_LOG"] = str(signals)
+    command = _start_with(
+        run, harness, "record", "--dry-run", "--cells", "clear", "lag"
+    )
+    serving = run.wait_until(
+        lambda: "process.ready" in _log_text(run, "wire"), APPEARS_WITHIN_SECONDS
+    )
+    os.kill(command.pid, signal.SIGTERM)
+
+    status, error = run.finish(command)
+
+    assert serving
+    assert status != 0
+    assert error.strip() == "interrupted by SIGTERM"
+    assert not run.record.exists()
+    assert len(run.probe_run_log.read_text().splitlines()) == 1
+    assert signal.SIGTERM.value in _signals_sent(signals)
+    assert not run.has_spoken()
+    assert run.processes() == []
+
+
+def test_a_stop_is_sent_to_no_process_when_the_check_of_its_child_cannot_be_made(
+    run: Run, harness: Path
+) -> None:
+    command = _start_with(run, harness, "blind", "--dry-run", "--cells", "clear", "lag")
+    serving = run.wait_until(
+        lambda: "process.ready" in _log_text(run, "wire"), APPEARS_WITHIN_SECONDS
+    )
+    os.kill(command.pid, signal.SIGTERM)
+
+    status, error = run.finish(command)
+
+    assert serving
+    assert status != 0
+    assert error.strip() == "interrupted by SIGTERM"
+    assert not run.record.exists()
+    assert len(run.probe_run_log.read_text().splitlines()) == 1
+    assert run.has_spoken()
+    assert run.processes() == []
+
+
 def test_a_kill_that_raises_is_recorded_as_failed_and_no_later_group_starts(
     run: Run, harness: Path
 ) -> None:
@@ -224,6 +321,11 @@ def test_a_top_killed_while_a_group_runs_has_its_service_and_worker_stopped(
     assert serving
     assert len(group) > 1
     assert gone
+
+
+def _signals_sent(log: Path) -> list[int]:
+    """The signal numbers the top sent through a pidfd, once it sent any."""
+    return [int(line) for line in log.read_text().split()] if log.exists() else []
 
 
 def _log_text(run: Run, group: str) -> str:

@@ -208,20 +208,18 @@ def _pidfd_open(pid: int) -> int:
     return _checked(_libc().syscall(_SYSCALL_PIDFD_OPEN, pid, 0))
 
 
-def _pidfd_send_kill(pidfd: int) -> None:
-    _checked(
-        _libc().syscall(_SYSCALL_PIDFD_SEND_SIGNAL, pidfd, signal.SIGKILL, None, 0)
-    )
+def _pidfd_send_signal(pidfd: int, signum: int) -> None:
+    _checked(_libc().syscall(_SYSCALL_PIDFD_SEND_SIGNAL, pidfd, signum, None, 0))
 
 
 @dataclass(frozen=True)
 class ProcessControl:
-    """What the kill asks of the kernel; a test hands it a variant."""
+    """What the kill and a forwarded stop ask of the kernel; a test swaps it."""
 
     become_subreaper: Callable[[], None]
     list_processes: Callable[[], list[int]]
     open: Callable[[int], int]
-    send_kill: Callable[[int], None]
+    send_signal: Callable[[int, int], None]
     read_stat: Callable[[int], bytes]
 
 
@@ -233,7 +231,7 @@ KERNEL: Final = ProcessControl(
     become_subreaper=become_subreaper,
     list_processes=_list_processes,
     open=_pidfd_open,
-    send_kill=_pidfd_send_kill,
+    send_signal=_pidfd_send_signal,
     read_stat=_read_stat,
 )
 
@@ -320,8 +318,10 @@ def _unchanged(link: Process, control: ProcessControl) -> bool:
     return now is not None and (now.parent, now.started) == (link.parent, link.started)
 
 
-def end_if_unchanged(lineage: Lineage, control: ProcessControl = KERNEL) -> bool:
-    """Send SIGKILL to the first process of `lineage` through a pidfd unless it moved.
+def signal_if_unchanged(
+    lineage: Lineage, signum: int, control: ProcessControl = KERNEL
+) -> bool:
+    """Send `signum` to the first process of `lineage` through a pidfd unless it moved.
 
     The pidfd is opened first and the process and each parent of it are read after, so
     an id freed and reused in between, the process's or a parent's, is not signalled:
@@ -337,7 +337,7 @@ def end_if_unchanged(lineage: Lineage, control: ProcessControl = KERNEL) -> bool
         return False
     try:
         if all(_unchanged(link, control) for link in lineage):
-            control.send_kill(pidfd)
+            control.send_signal(pidfd, signum)
     except ProcessLookupError:
         pass
     except OSError:
@@ -395,7 +395,7 @@ def end_processes_below(control: ProcessControl = KERNEL) -> Kill:
         if not (alive or below.unreadable) or time.monotonic() >= deadline:
             return Kill(first, len(alive), failed)
         for lineage in alive:
-            failed |= not end_if_unchanged(lineage, control)
+            failed |= not signal_if_unchanged(lineage, signal.SIGKILL, control)
         time.sleep(POLL_SECONDS)
 
 

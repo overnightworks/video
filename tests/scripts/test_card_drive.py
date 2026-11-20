@@ -55,6 +55,7 @@ STAND_IN_TOP: Final = """
 import dataclasses
 import json
 import os
+import signal
 import subprocess
 import sys
 import time
@@ -114,11 +115,11 @@ elif mode == "guard":
     seen = [card_drive.read_process(c.pid) for c in (reused, reparented, unchanged)]
     other_start = dataclasses.replace(seen[0], started=seen[0].started + 1)
     other_parent = dataclasses.replace(seen[1], parent=seen[1].parent + 1)
-    card_drive.end_if_unchanged((other_start,))
-    card_drive.end_if_unchanged((other_parent,))
-    card_drive.end_if_unchanged((seen[2],))
+    card_drive.signal_if_unchanged((other_start,), signal.SIGKILL)
+    card_drive.signal_if_unchanged((other_parent,), signal.SIGKILL)
+    card_drive.signal_if_unchanged((seen[2],), signal.SIGKILL)
     report({"reused": seen[0].pid, "reparented": seen[1].pid, "unchanged": seen[2].pid})
-elif mode in ("ancestry-stale", "ancestry-intact"):
+elif mode in ("ancestry-stale", "ancestry-intact", "ancestry-term"):
     parent = subprocess.Popen(
         [sys.executable, "-c", PARENT_OF_A_SLEEPER], stdout=subprocess.PIPE, text=True
     )
@@ -130,13 +131,14 @@ elif mode in ("ancestry-stale", "ancestry-intact"):
         lineage = (lineage[0], replaced)
     signals = []
 
-    def recorded(pidfd):
-        signals.append(pidfd)
-        card_drive.KERNEL.send_kill(pidfd)
+    def recorded(pidfd, signum):
+        signals.append(signum)
+        card_drive.KERNEL.send_signal(pidfd, signum)
 
-    control = dataclasses.replace(card_drive.KERNEL, send_kill=recorded)
-    card_drive.end_if_unchanged(lineage, control)
-    report({"grandchild": grandchild, "signalled": bool(signals)})
+    control = dataclasses.replace(card_drive.KERNEL, send_signal=recorded)
+    wanted = signal.SIGTERM if mode == "ancestry-term" else signal.SIGKILL
+    card_drive.signal_if_unchanged(lineage, wanted, control)
+    report({"grandchild": grandchild, "signals": signals})
 elif mode == "raising":
     unkillable, killable = sleeper(), sleeper()
 
@@ -331,7 +333,7 @@ def test_a_process_is_signalled_only_while_its_parents_are_still_those_that_were
 
     result = top.result()
 
-    assert result["signalled"] == ended_by_kill
+    assert bool(result["signals"]) == ended_by_kill
     assert wait_until(
         lambda: ended(result["grandchild"]) == ended_by_kill, GONE_WITHIN_SECONDS
     )
@@ -417,3 +419,14 @@ def test_the_service_and_its_worker_end_with_the_process_that_started_them(
 
     assert len(pids) > 1
     assert gone
+
+
+def test_a_process_is_sent_the_signal_asked_for_through_the_same_check(
+    top: StandInTop,
+) -> None:
+    top.start("ancestry-term")
+
+    result = top.result()
+
+    assert result["signals"] == [signal.SIGTERM]
+    assert wait_until(lambda: ended(result["grandchild"]), GONE_WITHIN_SECONDS)
