@@ -64,8 +64,8 @@ from video_client.session_wire import (
 from video_client.wire import RefusalCode
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
-    from contextlib import AbstractAsyncContextManager
+    from collections.abc import Callable, Sequence
+    from contextlib import AbstractAsyncContextManager, AbstractContextManager
 
     from card_drive import Service, Session
     from card_identity import Identity
@@ -372,7 +372,10 @@ def _write_fragment(path: Path, fragment: dict[str, object]) -> None:
 
 
 def _run_group(
-    group: str, arguments: argparse.Namespace, scratch: Path
+    group: str,
+    arguments: argparse.Namespace,
+    scratch: Path,
+    start_service: Callable[..., AbstractContextManager[Service]] = running_service,
 ) -> GroupOutcome:
     """Drive the cells of `group` through one service, keeping its fragment current.
 
@@ -387,7 +390,7 @@ def _run_group(
     cells: dict[str, object] = {}
     with (
         throwaway_identity(scratch) as identity,
-        running_service(identity, log, max_lag_ms=LAGS[group]) as service,
+        start_service(identity, log, max_lag_ms=LAGS[group]) as service,
     ):
         drive = Drive(
             service, identity, audio, dry_run=arguments.dry_run, record=arguments.record

@@ -758,7 +758,6 @@ def test_a_failed_cells_reasons_are_in_the_fragment_before_the_service_stops(
         held_at_the_stop.update(json.loads(arguments.fragment.read_text()))
         raise card_drive.DriveError
 
-    monkeypatch.setattr(prove_card, "running_service", service_whose_stop_fails)
     monkeypatch.setitem(
         prove_card.GROUPS,
         "wire",
@@ -766,7 +765,9 @@ def test_a_failed_cells_reasons_are_in_the_fragment_before_the_service_stops(
     )
 
     with pytest.raises(card_drive.DriveError):
-        prove_card._run_group("wire", arguments, tmp_path)  # noqa: SLF001
+        prove_card._run_group(  # noqa: SLF001
+            "wire", arguments, tmp_path, service_whose_stop_fails
+        )
 
     assert held_at_the_stop["cells"]["sentences"] == {"done": True}
     assert _not_measured(held_at_the_stop["cells"]["clear"], Reason.CELL_FAILED)
