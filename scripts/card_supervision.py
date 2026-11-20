@@ -153,8 +153,7 @@ def run_child(
     )
     probe_run: Process | None = None
 
-    def forward(signum: int, frame: object) -> None:
-        stops.record(signum, frame)
+    def send_on(signum: int) -> None:
         # Once the process is reaped the group's process has ended and its id may name
         # another process; once the group is ending the kill is about to free them.
         if stops.ending or child.returncode is not None:
@@ -163,6 +162,10 @@ def run_child(
         # group's process itself, which stops the service first and then exits.
         if not settled_at_group(probe_run, fragment, signum, control):
             child.send_signal(signum)
+
+    def forward(signum: int, frame: object) -> None:
+        stops.record(signum, frame)
+        send_on(signum)
 
     # No `with`: its exit waits for `probe-run` without a bound, and a kill that failed
     # leaves it alive. The command's own exit then takes the parent-death chain to it.
@@ -176,6 +179,9 @@ def run_child(
     # The group's service is cleaned up by the child, so a stop reaches it first.
     for stopping in STOP_SIGNALS:
         signal.signal(stopping, forward)
+    # A stop recorded since the caller last looked, before `forward` was installed.
+    if stops.recorded:
+        send_on(stops.recorded[0])
     if watch is None:
         return child.wait()
     return watch.until_ended(
