@@ -3,12 +3,14 @@
 The service starts from this checkout in a process group of its own, under a
 parent-death signal; every exit stops it first and kills only a service that
 outlives its stop, its workers first. Its log lines are the figures' source; the
-session's events are the rest.
+session's events are the rest. The command that drives it is a child subreaper and
+ends, from outside, every process still below it once a group has ended.
 """
 
 from __future__ import annotations
 
 import asyncio
+import ctypes
 import json
 import os
 import signal
@@ -65,6 +67,8 @@ READY_SLACK_SECONDS: Final = 30.0
 STOP_WITHIN_SECONDS: Final = 20.0
 # What the unwinding of the drive may take after the kill of a service that stayed.
 KILL_MARGIN_SECONDS: Final = 10.0
+# How long the kill below the caller passes until nothing below it is alive.
+KILL_WITHIN_SECONDS: Final = 2.0
 EVENT_WITHIN_SECONDS: Final = 10.0
 LINE_WITHIN_SECONDS: Final = 10.0
 DRAIN_SECONDS: Final = 5
@@ -76,6 +80,13 @@ _SIGNAL_EXIT_BASE: Final = 128
 _HOST: Final = "127.0.0.1"
 _PARENT_DEATH_COMMAND: Final = ("setpriv", "--pdeathsig", "KILL")
 _ENVIRONMENT_PREFIX: Final = "VIDEO_"
+_SET_CHILD_SUBREAPER: Final = 36
+# The interpreter this repository runs on is a standalone build whose `os` has no
+# pidfd calls, so they are the kernel's system calls, numbered alike on every
+# architecture the proof runs on.
+_SYSCALL_PIDFD_SEND_SIGNAL: Final = 424
+_SYSCALL_PIDFD_OPEN: Final = 434
+_ZOMBIE: Final = "Z"
 _READY_EVENT: Final = "process.ready"
 _NO_ICE: Final = IceConfiguration(ice_servers=[], ice_transport_policy="all")
 
@@ -135,14 +146,26 @@ def read_audio(path: Path) -> Audio:
     return audio
 
 
+def _read_stat(pid: int) -> bytes:
+    return Path(f"/proc/{pid}/stat").read_bytes()
+
+
+def _stat_fields(stat: bytes) -> list[str]:
+    """The fields of a `stat` after the command name: state first.
+
+    The kernel cuts the name at a byte, which may split a character, so only the
+    fields after its closing bracket are decoded.
+    """
+    return stat.rsplit(b")", 1)[1].decode("ascii").split()
+
+
 def _process_fields(pid: int) -> list[str]:
-    """The fields of `/proc/<pid>/stat` after the command name: state first."""
-    text = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
-    return text.rsplit(")", 1)[1].split()
+    return _stat_fields(_read_stat(pid))
 
 
 _PARENT_FIELD: Final = 1
 _GROUP_FIELD: Final = 2
+_START_FIELD: Final = 19
 _USER_TICKS_FIELD: Final = 11
 _SYSTEM_TICKS_FIELD: Final = 12
 
@@ -162,6 +185,220 @@ def worker_pids(service_pid: int) -> list[int]:
     return found
 
 
+def _checked(result: int) -> int:
+    """`result` of a libc call, or the `OSError` its `errno` names."""
+    if result < 0:
+        number = ctypes.get_errno()
+        raise OSError(number, os.strerror(number))
+    return result
+
+
+def _libc() -> ctypes.CDLL:
+    libc = ctypes.CDLL(None, use_errno=True)
+    libc.syscall.restype = ctypes.c_long
+    return libc
+
+
+def become_subreaper() -> None:
+    """Make this process the parent of every orphan below it."""
+    _checked(_libc().prctl(_SET_CHILD_SUBREAPER, 1, 0, 0, 0))
+
+
+def _pidfd_open(pid: int) -> int:
+    return _checked(_libc().syscall(_SYSCALL_PIDFD_OPEN, pid, 0))
+
+
+def _pidfd_send_kill(pidfd: int) -> None:
+    _checked(
+        _libc().syscall(_SYSCALL_PIDFD_SEND_SIGNAL, pidfd, signal.SIGKILL, None, 0)
+    )
+
+
+@dataclass(frozen=True)
+class ProcessControl:
+    """What the kill asks of the kernel; a test hands it a variant."""
+
+    become_subreaper: Callable[[], None]
+    list_processes: Callable[[], list[int]]
+    open: Callable[[int], int]
+    send_kill: Callable[[int], None]
+    read_stat: Callable[[int], bytes]
+
+
+def _list_processes() -> list[int]:
+    return [int(e.name) for e in Path("/proc").iterdir() if e.name.isdigit()]
+
+
+KERNEL: Final = ProcessControl(
+    become_subreaper=become_subreaper,
+    list_processes=_list_processes,
+    open=_pidfd_open,
+    send_kill=_pidfd_send_kill,
+    read_stat=_read_stat,
+)
+
+
+@dataclass(frozen=True)
+class Process:
+    """A process as `/proc` showed it; its parent and start time tell a reused id."""
+
+    pid: int
+    parent: int
+    started: int
+    state: str
+
+    @property
+    def alive(self) -> bool:
+        """Whether it still runs; a zombie only waits to be reaped."""
+        return self.state != _ZOMBIE
+
+
+# A process first, then each parent of it up to the child of the top.
+Lineage = tuple[Process, ...]
+
+
+def read_process(pid: int, control: ProcessControl = KERNEL) -> Process | None:
+    """The process `pid` as it is now, or none once it is gone; other errors raise."""
+    try:
+        fields = _stat_fields(control.read_stat(pid))
+    except FileNotFoundError, ProcessLookupError:
+        return None
+    return Process(
+        pid, int(fields[_PARENT_FIELD]), int(fields[_START_FIELD]), fields[0]
+    )
+
+
+def _all_processes(control: ProcessControl) -> tuple[dict[int, Process], bool]:
+    """Every process `/proc` shows, and whether one of them could not be read."""
+    found: dict[int, Process] = {}
+    unreadable = False
+    for pid in control.list_processes():
+        try:
+            process = read_process(pid, control)
+        except OSError:
+            unreadable = True
+            continue
+        if process is not None:
+            found[process.pid] = process
+    return found, unreadable
+
+
+def _lineage(
+    process: Process, processes: dict[int, Process], top: int
+) -> Lineage | None:
+    """`process` and its parents up to the child of `top`, or none if cut short."""
+    chain = [process]
+    while chain[-1].parent != top:
+        found = processes.get(chain[-1].parent)
+        if found is None or len(chain) > len(processes):
+            return None
+        chain.append(found)
+    return tuple(chain)
+
+
+@dataclass(frozen=True)
+class Below:
+    """The lineages of the processes below the top, deepest first, from one read."""
+
+    lineages: list[Lineage]
+    unreadable: bool
+
+
+def _below(top: int, control: ProcessControl) -> Below:
+    processes, unreadable = _all_processes(control)
+    lineages = [
+        lineage
+        for found in processes.values()
+        if (lineage := _lineage(found, processes, top)) is not None
+    ]
+    return Below(sorted(lineages, key=len, reverse=True), unreadable)
+
+
+def _unchanged(link: Process, control: ProcessControl) -> bool:
+    """Whether `link` is still the process it was, under the parent it had."""
+    now = read_process(link.pid, control)
+    return now is not None and (now.parent, now.started) == (link.parent, link.started)
+
+
+def end_if_unchanged(lineage: Lineage, control: ProcessControl = KERNEL) -> bool:
+    """Send SIGKILL to the first process of `lineage` through a pidfd unless it moved.
+
+    The pidfd is opened first and the process and each parent of it are read after, so
+    an id freed and reused in between, the process's or a parent's, is not signalled:
+    one read of every process is not atomic, and a parent that was reaped and replaced
+    would else lead a stranger into the top's tree. Whether it went without an error: a
+    process already gone is no error.
+    """
+    try:
+        pidfd = control.open(lineage[0].pid)
+    except ProcessLookupError:
+        return True
+    except OSError:
+        return False
+    try:
+        if all(_unchanged(link, control) for link in lineage):
+            control.send_kill(pidfd)
+    except ProcessLookupError:
+        pass
+    except OSError:
+        return False
+    finally:
+        os.close(pidfd)
+    return True
+
+
+@dataclass(frozen=True)
+class Kill:
+    """What the kill below its caller found and left."""
+
+    processes_left: int
+    processes_alive: int
+    failed: bool
+
+
+def _reap_children(zombies: list[Process]) -> None:
+    for zombie in zombies:
+        with suppress(ChildProcessError):
+            os.waitpid(zombie.pid, os.WNOHANG)
+
+
+def end_processes_below(control: ProcessControl = KERNEL) -> Kill:
+    """End every process below this one by pidfd-checked SIGKILL passes, stopping none.
+
+    A pass signals every live descendant, the deepest first, and reaps the zombies
+    that are this process's children by their ids. It runs until none is alive or
+    `KILL_WITHIN_SECONDS` has passed. It must run in a child subreaper, so an orphan
+    of a descendant stays below. A process that cannot be read or signalled, and a pass
+    that cannot list or reap, fail the kill, which goes on with the others and tries
+    again until the bound, since an unread process is not known to be gone.
+    """
+    top = os.getpid()
+    deadline = time.monotonic() + KILL_WITHIN_SECONDS
+    first: int | None = None
+    failed = False
+    while True:
+        below = Below([], unreadable=True)
+        try:
+            below = _below(top, control)
+            _reap_children(
+                [
+                    lineage[0]
+                    for lineage in below.lineages
+                    if lineage[0].parent == top and not lineage[0].alive
+                ]
+            )
+        except OSError:
+            below = Below(below.lineages, unreadable=True)
+        failed |= below.unreadable
+        alive = [lineage for lineage in below.lineages if lineage[0].alive]
+        first = len(alive) if first is None else first
+        if not (alive or below.unreadable) or time.monotonic() >= deadline:
+            return Kill(first, len(alive), failed)
+        for lineage in alive:
+            failed |= not end_if_unchanged(lineage, control)
+        time.sleep(POLL_SECONDS)
+
+
 def _free_port() -> int:
     with socket.socket() as bound:
         bound.bind((_HOST, 0))
@@ -177,7 +414,8 @@ class Service:
         self.port = port
         self.log = log
         self.start_to_ready_ms = 0
-        self.stop_to_exit_ms = 0
+        # None while the stop has not timed an exit: a service gone before its stop.
+        self.stop_to_exit_ms: int | None = None
 
     def lines(self, event: str) -> list[dict[str, object]]:
         """The JSON lines of `event` written so far."""
@@ -253,12 +491,14 @@ def _stop(service: Service) -> bool:
     """Stop the service and time its exit; whether it exited within the bound.
 
     The stop comes first and reaps the worker. A service that stays is killed
-    together with the worker groups that are its children at that moment.
+    together with the worker groups that are its children at that moment. One that
+    had exited before the stop has no exit to time.
     """
     process = service.process
+    if process.poll() is not None:
+        return True
     stopping = time.monotonic()
-    if process.poll() is None:
-        process.send_signal(signal.SIGTERM)
+    process.send_signal(signal.SIGTERM)
     in_time = True
     try:
         process.wait(STOP_WITHIN_SECONDS)

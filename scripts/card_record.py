@@ -28,12 +28,14 @@ class Verdict(StrEnum):
 
 
 class Reason(StrEnum):
-    """Why a figure was not measured when the proof itself ended before it."""
+    """Why a figure was not measured: the proof ended before it or it had no subject."""
 
     CELL_FAILED = "cell_failed"
     GROUP_ENDED = "group_ended"
     EARLIER_GROUP_FAILED = "earlier_group_failed"
     NO_FRAGMENT = "no_fragment"
+    EXITED_BEFORE_STOP = "exited_before_stop"
+    KILL_FAILED = "kill_failed"
 
 
 @dataclass(frozen=True)
@@ -67,12 +69,15 @@ ENCODER_CORES_LINE: Final = Line(
     "the service's CPU at five viewers beyond none at most 2 cores", 2, operator.le
 )
 
+# What the top counts below itself at a group's end: before and after its kill.
+KILL_FIGURES: Final = ("processes_left_after_stop", "processes_alive_after_kill")
 # What a service's entry in the record names, in its order.
 SERVICE_FIGURES: Final = (
     "start_to_ready_ms",
     "provider_load",
     "look_preparations",
     "stop_to_exit_ms",
+    *KILL_FIGURES,
     "log",
 )
 

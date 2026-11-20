@@ -31,10 +31,14 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Final
 
 from card_drive import (
+    KERNEL,
     STOP_SIGNALS,
     Audio,
+    Kill,
+    ProcessControl,
     SessionEndedError,
     Window,
+    end_processes_below,
     exit_on_stop,
     hold_workers,
     opened_session,
@@ -46,6 +50,7 @@ from card_identity import LOOK_NAMES, throwaway_identity
 from card_record import (
     ENCODER_CORES_LINE,
     FIRST_OUTPUT_LINE,
+    KILL_FIGURES,
     START_TO_READY_LINE,
     Reason,
     closed_record,
@@ -358,6 +363,13 @@ def _service_figures(
     }
 
 
+def _stop_figure(service: Service) -> dict[str, object]:
+    """How long the service took to exit after its stop, if it was still running."""
+    if service.stop_to_exit_ms is None:
+        return not_measured(Reason.EXITED_BEFORE_STOP)
+    return value_of(service.stop_to_exit_ms)
+
+
 def _chosen(group: str, arguments: argparse.Namespace) -> list[str]:
     """The cells of `group` the command was asked for, in the group's order."""
     return [name for name in GROUPS[group] if name in arguments.cells]
@@ -424,7 +436,7 @@ def _run_group(
             return GroupOutcome.DONE
 
         outcome = asyncio.run(run_cells())
-    figures["stop_to_exit_ms"] = value_of(service.stop_to_exit_ms)
+    figures["stop_to_exit_ms"] = _stop_figure(service)
     save(outcome)
     return outcome
 
@@ -439,12 +451,17 @@ def _child(group: str, arguments: argparse.Namespace) -> int:
     for stopping in STOP_SIGNALS:
         signal.signal(stopping, exit_on_stop)
     _pid_file(arguments.fragment).write_text(str(os.getpid()))  # NOSONAR(S8707)
-    with tempfile.TemporaryDirectory(prefix="prove-card-") as scratch:
-        outcome = _run_group(group, arguments, Path(scratch))
+    # The identity's keys live in the top's temporary directory, which the top removes
+    # also when it kills this process.
+    identity_directory = arguments.fragment.with_suffix(".identity")
+    identity_directory.mkdir()
+    outcome = _run_group(group, arguments, identity_directory)
     return 0 if outcome is GroupOutcome.DONE else 1
 
 
-def _under_probe_run(group: str, arguments: argparse.Namespace, fragment: Path) -> int:
+def _under_probe_run(
+    group: str, arguments: argparse.Namespace, fragment: Path, stops: list[int]
+) -> int:
     """Run `group` as its own process under `probe-run`; its exit status."""
     for tool in (PROBE_RUN, "setpriv"):
         if shutil.which(tool) is None:
@@ -468,20 +485,27 @@ def _under_probe_run(group: str, arguments: argparse.Namespace, fragment: Path) 
         *(["--dry-run"] if arguments.dry_run else []),
     ]
     try:
-        return _run_child(command, group, fragment)
+        return _run_child(command, group, fragment, stops)
     finally:
         if (log := _group_log(arguments.record, group)).exists():
             print(f"beside it: {log}")
 
 
-def _run_child(command: list[str], group: str, fragment: Path) -> int:
-    """Run `command` as the group's process; a stop is forwarded and ends the proof."""
-    interrupts: list[int] = []
+def _run_child(command: list[str], group: str, fragment: Path, stops: list[int]) -> int:
+    """Run `command` as the group's process; a stop is recorded and, meanwhile, sent on.
+
+    Once the process is reaped a stop is only recorded; the caller puts the handlers
+    back.
+    """
 
     def forward(signum: int, _frame: object) -> None:
+        stops.append(signum)
+        # Once the process is reaped the group's process has ended and its id may name
+        # another process.
+        if child.returncode is not None:
+            return
         # `timeout` kills its command at once on a signal, so the stop goes to the
         # group's process itself, which stops the service first and then exits.
-        interrupts.append(signum)
         try:
             os.kill(int(_pid_file(fragment).read_text()), signum)
         except OSError, ValueError:
@@ -492,14 +516,34 @@ def _run_child(command: list[str], group: str, fragment: Path) -> int:
         command, env={**os.environ, _CHILD_MARKER: group}
     ) as child:
         # The group's service is cleaned up by the child, so a stop reaches it first.
-        previous = [signal.signal(stopping, forward) for stopping in STOP_SIGNALS]
-        status = child.wait()
-        for stopping, handler in zip(STOP_SIGNALS, previous, strict=True):
-            signal.signal(stopping, handler)
-    if interrupts:
-        message = f"interrupted by {signal.Signals(interrupts[0]).name}"
-        raise SystemExit(message)
-    return status
+        for stopping in STOP_SIGNALS:
+            signal.signal(stopping, forward)
+        return child.wait()
+
+
+def _run_group_process(
+    group: str,
+    arguments: argparse.Namespace,
+    fragment: Path,
+    control: ProcessControl,
+) -> tuple[int, Kill]:
+    """Run `group`, then end whatever is left below the top: its status and the kill.
+
+    A stop that arrives while the group runs or the kill runs ends the command as an
+    interrupt does once the kill has ended; otherwise the handlers the top had come
+    back for the next group.
+    """
+    before = [signal.getsignal(stopping) for stopping in STOP_SIGNALS]
+    stops: list[int] = []
+    status = _under_probe_run(group, arguments, fragment, stops)
+    kill = end_processes_below(control)
+    # A stop after the handlers are back reaches the top's own handler; one before is
+    # in `stops`, which is read after.
+    for stopping, handler in zip(STOP_SIGNALS, before, strict=True):
+        signal.signal(stopping, handler)
+    if stops:
+        _interrupted(stops[0], None)
+    return status, kill
 
 
 @dataclass
@@ -517,8 +561,22 @@ def _read_fragment(path: Path) -> dict[str, object]:
     return json.loads(path.read_text()) if path.exists() else {}
 
 
+def _kill_figures(kill: Kill) -> dict[str, object]:
+    """The kill's two counts, or both not measured when a kill raised."""
+    if kill.failed:
+        return {name: not_measured(Reason.KILL_FAILED) for name in KILL_FIGURES}
+    counts = (kill.processes_left, kill.processes_alive)
+    return {
+        name: value_of(count) for name, count in zip(KILL_FIGURES, counts, strict=True)
+    }
+
+
 def _gather(
-    group: str, arguments: argparse.Namespace, scratch: Path, gathered: _Gathered
+    group: str,
+    arguments: argparse.Namespace,
+    scratch: Path,
+    gathered: _Gathered,
+    control: ProcessControl,
 ) -> None:
     """Run `group` unless a group failed before it, and add its fragment's figures.
 
@@ -526,19 +584,25 @@ def _gather(
     fragment lacks is `no_fragment`; a group never started is `earlier_group_failed`.
     """
     parts: dict[str, object] = {}
+    kill_figures: dict[str, object] = {}
     reason = Reason.EARLIER_GROUP_FAILED
     if gathered.failure is None:
         fragment = scratch / f"{group}.json"
-        status = _under_probe_run(group, arguments, fragment)
+        status, kill = _run_group_process(group, arguments, fragment, control)
         parts = _read_fragment(fragment)
         reason = Reason.NO_FRAGMENT
-        if status or parts.get("outcome") != GroupOutcome.DONE:
+        kill_figures = _kill_figures(kill)
+        if kill.failed:
+            gathered.failure = (
+                f"the {group} group left a process below the top that was not ended"
+            )
+        elif status or parts.get("outcome") != GroupOutcome.DONE:
             gathered.failure = f"the {group} cells ended with status {status}"
     gathered.cells |= completed_cells(
         _chosen(group, arguments), parts.get("cells", {}), reason
     )
     gathered.services[group] = completed_service(
-        parts.get("services", {}).get(group, {}), reason
+        parts.get("services", {}).get(group, {}) | kill_figures, reason
     )
     gathered.files += parts.get("files", [])
 
@@ -551,8 +615,11 @@ def _interrupted(signum: int, _frame: object) -> None:
     raise SystemExit(message)
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    """Run the chosen cells and write the record; refuse without `--dry-run`."""
+def main(argv: Sequence[str] | None = None, control: ProcessControl = KERNEL) -> int:
+    """Run the chosen cells and write the record; refuse without `--dry-run`.
+
+    `control` is what the end-of-group kill asks of the kernel.
+    """
     arguments = _arguments(sys.argv[1:] if argv is None else argv)
     if group := os.environ.get(_CHILD_MARKER):
         return _child(group, arguments)
@@ -560,13 +627,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     read_audio(arguments.audio)
     if not arguments.dry_run:
         raise SystemExit(_REFUSAL)
+    try:
+        control.become_subreaper()
+    except OSError as error:
+        message = f"the command cannot become a child subreaper ({error.strerror})"
+        raise SystemExit(message) from None
     for stopping in STOP_SIGNALS:
         signal.signal(stopping, _interrupted)
     gathered = _Gathered()
     with tempfile.TemporaryDirectory(prefix="prove-card-record-") as scratch:
         for group, members in GROUPS.items():
             if set(members) & set(arguments.cells):
-                _gather(group, arguments, Path(scratch), gathered)
+                _gather(group, arguments, Path(scratch), gathered, control)
     record = closed_record(
         dry_run=arguments.dry_run, cells=gathered.cells, services=gathered.services
     )
