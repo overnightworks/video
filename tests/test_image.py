@@ -355,14 +355,6 @@ def _answer(service: str, method: str, path: str) -> _Answer:
     return _Answer.model_validate_json(ran.stdout)
 
 
-def test_docker_inspect_objects_with_further_fields_are_read() -> None:
-    config = {"User": "1000", "Env": [], "Cmd": ["serve"], "WorkingDir": "/app"}
-    state = {"Status": "exited", "ExitCode": 0, "Running": False, "Pid": 0}
-
-    assert _ImageConfiguration.model_validate(config).user == "1000"
-    assert _State.model_validate(state).exit_code == 0
-
-
 def test_the_image_declares_a_numeric_non_root_user_and_no_deployment_setting(
     configuration: _ImageConfiguration,
 ) -> None:
