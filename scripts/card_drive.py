@@ -394,8 +394,8 @@ def end_processes_below(control: ProcessControl = KERNEL) -> Kill:
         first = len(alive) if first is None else first
         if not (alive or below.unreadable) or time.monotonic() >= deadline:
             return Kill(first, len(alive), failed)
-        ended = [end_if_unchanged(lineage, control) for lineage in alive]
-        failed |= not all(ended)
+        for lineage in alive:
+            failed |= not end_if_unchanged(lineage, control)
         time.sleep(POLL_SECONDS)
 
 
