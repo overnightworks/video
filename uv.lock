@@ -575,7 +575,7 @@ requires-dist = [
     { name = "overnightworks-logline", git = "https://github.com/overnightworks/logline?rev=v0.8.0" },
     { name = "overnightworks-video-client", editable = "packages/client" },
     { name = "overnightworks-video-provider-contract", editable = "providers/provider-contract" },
-    { name = "overnightworks-webauth", git = "https://github.com/overnightworks/webauth?rev=v0.40.1" },
+    { name = "overnightworks-webauth", git = "https://github.com/overnightworks/webauth?rev=v0.42.0" },
     { name = "pillow", specifier = "==13.0.0" },
     { name = "pydantic-settings", specifier = "==2.16.3" },
     { name = "uvicorn", specifier = "==0.54.0" },
@@ -597,12 +597,13 @@ dev = [
 
 [[package]]
 name = "overnightworks-webauth"
-version = "0.40.1"
-source = { git = "https://github.com/overnightworks/webauth?rev=v0.40.1#afdd45531ee0bd1b23724a3daef86bb4f9dc42eb" }
+version = "0.42.0"
+source = { git = "https://github.com/overnightworks/webauth?rev=v0.42.0#50a2d2db64d95abf6106cd792dedc27dd227b884" }
 dependencies = [
     { name = "anyio" },
     { name = "cryptography" },
     { name = "fastapi" },
+    { name = "overnightworks-logline" },
     { name = "pydantic" },
     { name = "pyjwt", extra = ["crypto"] },
     { name = "starlette" },
