@@ -48,7 +48,7 @@ from support.prove_card_support import (
     write_audio,
 )
 from video_service.config import Settings
-from video_service.looks import read_look_file
+from video_service.looks import LookFailure, read_look_file
 from video_service.provider_process import ProcessBounds
 
 if TYPE_CHECKING:
@@ -497,17 +497,31 @@ def _more_pixels_than_the_service_takes(run: Run) -> Path:
     return path
 
 
+def _more_bytes_than_the_service_takes(run: Run) -> Path:
+    path = run.directory / "heavy.png"
+    limit = Settings.model_fields["look_max_bytes"].default
+    path.write_bytes(picture(8, 8).data + bytes(limit))
+    return path
+
+
 @pytest.mark.parametrize(
-    "make", [_no_such_image, _a_text_file, _more_pixels_than_the_service_takes]
+    ("make", "reason"),
+    [
+        (_no_such_image, "cannot be read"),
+        (_a_text_file, LookFailure.NOT_AN_IMAGE.value),
+        (_more_pixels_than_the_service_takes, LookFailure.TOO_MANY_PIXELS.value),
+        (_more_bytes_than_the_service_takes, LookFailure.TOO_LARGE.value),
+    ],
 )
 def test_a_look_image_the_service_would_refuse_ends_the_command_with_one_line_first(
-    run: Run, make: Callable[[Run], Path]
+    run: Run, make: Callable[[Run], Path], reason: str
 ) -> None:
     status, error = run.finish(run.start("--dry-run", "--look-image", str(make(run))))
 
     assert status != 0
     assert len(error.strip().splitlines()) == 1
     assert "--look-image" in error
+    assert reason in error
     assert not run.probe_run_log.exists()
     assert run.processes() == []
 
