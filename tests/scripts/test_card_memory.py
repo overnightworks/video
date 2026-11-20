@@ -231,6 +231,36 @@ def test_a_free_peak_below_the_line_is_judged_missed_when_the_floor_is_set_lower
     assert watch.entry()[MemoryFigure.FREE_LEAST]["verdict"] == Verdict.MISSED
 
 
+@pytest.mark.parametrize(
+    ("blind", "reason"),
+    [
+        (CardReadingError, Reason.SAMPLE_FAILED),
+        (RuntimeError, Reason.WATCHDOG_BREACH),
+    ],
+)
+def test_a_breach_that_leaves_the_guard_blind_leaves_the_peak_figures_unmeasured(
+    blind: type[Exception], reason: Reason
+) -> None:
+    watch = GroupWatch(
+        _sampler(_memory(used=100, free=9000), _memory(used=300, free=5000), blind),
+        CAP,
+        FLOOR,
+    )
+    watch.refuse_first(lambda _stop: NOTHING_LEFT)
+
+    _watched(watch, ticks=2)
+    figures = watch.entry()
+
+    assert watch.stop is not None
+    assert figures[MemoryFigure.USED_BEFORE] == value_of(100)
+    for name in (
+        MemoryFigure.FREE_LEAST,
+        MemoryFigure.USED_MOST,
+        MemoryFigure.USED_BEYOND_CAP,
+    ):
+        assert is_not_measured(figures[name], reason)
+
+
 def test_a_first_sample_that_fails_leaves_the_figures_taken_from_it_unmeasured() -> (
     None
 ):

@@ -306,15 +306,18 @@ def test_a_breach_while_the_provider_loads_ends_the_tree_and_starts_no_second_gr
 
 
 @pytest.mark.parametrize(
-    ("reading", "reason"),
+    ("reading", "reason", "peaks_unmeasured_for"),
     [
-        (BELOW_THE_FLOOR, StopReason.BELOW_FLOOR),
-        ("fail", StopReason.SAMPLE_FAILED),
-        ("hang", StopReason.SAMPLE_FAILED),
+        (BELOW_THE_FLOOR, StopReason.BELOW_FLOOR, None),
+        ("fail", StopReason.SAMPLE_FAILED, Reason.SAMPLE_FAILED),
+        ("hang", StopReason.SAMPLE_FAILED, Reason.SAMPLE_FAILED),
     ],
 )
 def test_a_breach_while_sessions_run_keeps_the_cells_finished_before_it(
-    run: Run, reading: str, reason: StopReason
+    run: Run,
+    reading: str,
+    reason: StopReason,
+    peaks_unmeasured_for: Reason | None,
 ) -> None:
     run.in_card_mode()
     command = run.start("--cells", "sentences", "viewers")
@@ -341,6 +344,15 @@ def test_a_breach_while_sessions_run_keeps_the_cells_finished_before_it(
     assert entry["start_to_ready_ms"]["value"] > 0
     assert entry["processes_alive_after_kill"] == value_of(0)
     assert is_not_measured(entry[MemoryFigure.USED_AFTER], Reason.WATCHDOG_BREACH)
+    peaks = (
+        MemoryFigure.FREE_LEAST,
+        MemoryFigure.USED_MOST,
+        MemoryFigure.USED_BEYOND_CAP,
+    )
+    if peaks_unmeasured_for is None:
+        assert entry[MemoryFigure.FREE_LEAST]["verdict"] == Verdict.MISSED
+    else:
+        assert all(is_not_measured(entry[name], peaks_unmeasured_for) for name in peaks)
     assert run.answers_given(reading) == 1
     assert run.wait_until(lambda: run.processes() == [], GONE_WITHIN_SECONDS)
 

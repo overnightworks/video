@@ -34,6 +34,18 @@ if TYPE_CHECKING:
 
 SAMPLE_INTERVAL_SECONDS: Final = 0.5
 
+# A stop that is the guard's own failure leaves a blind moment: the samples before it
+# cannot say what the card did in it.
+_BLIND_REASONS: Final = {
+    StopReason.SAMPLE_FAILED: Reason.SAMPLE_FAILED,
+    StopReason.WATCHDOG_FAILED: Reason.WATCHDOG_BREACH,
+}
+_PEAK_FIGURES: Final = (
+    MemoryFigure.FREE_LEAST,
+    MemoryFigure.USED_MOST,
+    MemoryFigure.USED_BEYOND_CAP,
+)
+
 type Sampler = Callable[[], CardMemory]
 # Ends every process below the command for a stop, and says what was left.
 type Ender = Callable[[Stop], Kill]
@@ -53,6 +65,13 @@ class Stop:
     def cell_reason(self) -> Reason:
         """Why the cells and figures the group did not reach are not measured."""
         return Reason.MEMORY_REFUSED if self.refused else Reason.WATCHDOG_BREACH
+
+    @property
+    def blind_reason(self) -> Reason | None:
+        """Why the samples cannot say the peak, when the guard failed while serving."""
+        if self.refused:
+            return None
+        return _BLIND_REASONS.get(self.reason)
 
     def line(self) -> str:
         """The one plain line the command prints for the stop."""
@@ -181,6 +200,8 @@ class GroupWatch:
                 figures[MemoryFigure.USED_BEYOND_CAP] = value_of(
                     most - before - self.cap_mb
                 )
+        if self.stop is not None and (blind := self.stop.blind_reason) is not None:
+            figures |= {name: not_measured(blind) for name in _PEAK_FIGURES}
         figures |= self._after_figures(before)
         if self.stop is not None and self.kill is not None:
             figures[MEMORY_STOP] = self.stop.record(self.kill, self._seconds)
