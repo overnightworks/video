@@ -125,6 +125,29 @@ failed until the service restarts: health shows `provider.ready` false, every lo
 not ready, and every open session ends `unavailable`. A killed service closes the
 child's pipe, and the child ends.
 
+## Proofs
+
+`uv run --locked python scripts/prove_card.py --dry-run --audio speech.wav --record record.json`
+is the card proof's drive. It starts the service from the checkout with the `fake` provider,
+under a throwaway issuer and look server it serves over HTTPS beneath a certificate authority
+of its own, and drives sessions through the wire as an app does: sentences with idle between
+them, a clear inside a sentence, one session on each of two looks, and a lag far too small.
+`--audio` is a mono 16-bit WAV of at least a second, at a rate the wire carries. `--cells`
+names the cells to run (`sentences`, `clear`, `looks`, `lag`); each group of them runs as one
+service under `probe-run`, which the command calls itself, and the service's process group
+ends however the run ends.
+
+The record is JSON. Its figures come from the service's own log lines and the session's
+events: per sentence the first output, the frames against the audio's length and the late
+frames, then the time from a clear to its confirmation, each session's opening time, each
+service's start and its stop's time to exit, and that a lag far too small ends the session
+as `unavailable`. A dry run shows that the drive works, and its figures are the fake's, so
+a figure judged against a line of the program plan (first output, clear, start, frames per
+second) holds its value and the verdict `not_measured` with the reason. It cannot show a
+card's timing or memory, nor the picture, nor frames per second at a viewer: those wait for
+viewers and the card's cells, and without `--dry-run` the command refuses and names what is
+missing.
+
 ## Install the client
 
 An app depends on the client distribution by the Git pin the release notes give,
