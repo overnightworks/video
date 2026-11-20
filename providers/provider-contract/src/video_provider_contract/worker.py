@@ -51,6 +51,7 @@ if TYPE_CHECKING:
     )
 
 MAX_IMAGE_PIXELS_ENV = "VIDEO_PROVIDER_MAX_IMAGE_PIXELS"
+CARD_MEMORY_MB_ENV = "VIDEO_CARD_MEMORY_MB"
 _PROTOCOL_FAILED = 1
 _STDIN = 0
 _STDOUT = 1
@@ -63,7 +64,10 @@ def run_worker(provider: Provider) -> NoReturn:
     The service names the most pixels an image may have in
     `VIDEO_PROVIDER_MAX_IMAGE_PIXELS`.
     """
-    limits = FrameLimits(image_bytes=_max_image_pixels() * BYTES_PER_PIXEL)
+    limits = FrameLimits(
+        image_bytes=read_required_positive_integer(MAX_IMAGE_PIXELS_ENV)
+        * BYTES_PER_PIXEL
+    )
     output = os.fdopen(os.dup(_STDOUT), "wb")
     _silence(_STDOUT)
     requests: queue.SimpleQueue[ProtocolFrame | ProtocolError] = queue.SimpleQueue()
@@ -76,15 +80,20 @@ def run_worker(provider: Provider) -> NoReturn:
     os._exit(_serve(provider, limits, output, requests))
 
 
-def _max_image_pixels() -> int:
+def read_required_positive_integer(name: str) -> int:
+    """The positive integer in the environment variable `name`.
+
+    A missing, empty, non-integer or non-positive value ends the process non-zero
+    with a line on stderr that names the variable and never its value.
+    """
     try:
-        pixels = int(os.environ[MAX_IMAGE_PIXELS_ENV])
+        value = int(os.environ[name])
     except (KeyError, ValueError):
-        pixels = 0
-    if pixels <= 0:
-        sys.stderr.write(f"{MAX_IMAGE_PIXELS_ENV} must be a positive integer\n")
+        value = 0
+    if value <= 0:
+        sys.stderr.write(f"{name} must be a positive integer\n")
         os._exit(_PROTOCOL_FAILED)
-    return pixels
+    return value
 
 
 def _silence(descriptor: int) -> None:

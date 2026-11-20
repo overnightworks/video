@@ -72,10 +72,24 @@ flowchart LR
   licence beside the provider's modules, and the provider's lock pins the stack on
   Python 3.14, apart from the workspace's. One module imports upstream's inference
   module from the directory that holds the installed package, because upstream reads
-  its configuration by a relative path at import. Its CI job checks the submodule
-  out, installs the lock without building and proves, on a runner without a card or
-  weights, that the import succeeds and upstream's audio encoder returns its hidden
-  states.
+  its configuration by a relative path at import. The renderer calls upstream
+  through that import and keeps each look's and each session's state apart, setting
+  upstream's three per-look and per-session attributes before every render; every
+  number of the picture and the audio comes from upstream's parameters. The worker
+  `video-flashhead-lite-worker` serves the driver over that renderer. It reads the
+  card memory cap, `VIDEO_CARD_MEMORY_MB` in mebibytes, before it builds anything,
+  and start refuses when no card is visible or the cap exceeds the card's total or
+  free memory; otherwise it caps torch's allocator at the cap's share of the card
+  before anything loads. The cap binds torch's allocator, not the card context or
+  library memory. The worker goes offline for Hugging Face before importing it and
+  loads weights only from `weights` beside the provider's `.venv`, which a fetch
+  fills; recreating the environment keeps it. The calls that need a card live in one
+  module, excluded from coverage and driven by the card proof. Its CI job checks the
+  submodule out, installs the lock without building and proves, on a runner without
+  a card or weights, that the import succeeds, that upstream's audio encoder returns
+  its hidden states, that the real worker refuses cleanly, and that the renderer's
+  state handling is right against upstream's own pipeline with tiny stand-in
+  networks.
 
 ## Provider process
 

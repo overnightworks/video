@@ -79,6 +79,8 @@ testpaths = [
 branch = true
 patch = ["subprocess", "_exit"]
 include = ["src/*", "packages/*/src/*", "providers/*/src/*", "scripts/*"]
+# The calls that need a card cannot run on a CI runner; the card proof drives them.
+omit = ["providers/flashhead-lite/src/video_provider_flashhead_lite/card.py"]
 
 [tool.ruff]
 target-version = "py314"
