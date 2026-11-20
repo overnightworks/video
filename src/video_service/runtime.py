@@ -364,7 +364,7 @@ class Runtime:
                 self._idle.set()
 
     async def wait_idle(self) -> None:
-        """Return once the drain has begun and no session is open."""
+        """Return once the drain has begun and no place is held."""
         await self._idle.wait()
 
     def _admit(self, look: str) -> VideoFormat | RefusalCode | None:
