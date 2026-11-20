@@ -1,0 +1,8 @@
+claim_id = "a4afa37810ae40288a0bcebb57985d52"
+agent = "Claude 76251661-cb30-4447-a3ad-32a83a396daa"
+role = "builder"
+base = "9a5290ecf8bb178b1b64b9cebbebf0d401ab651d"
+branch = "claude/issue-65-p3d2c2-lag-sweep"
+scope = ["README.md", "scripts/card_cells.py", "scripts/card_drive.py", "scripts/card_record.py", "scripts/prove_card.py", "tests/scripts/test_card_cells.py", "tests/scripts/test_prove_card.py", "tests/scripts/test_prove_card_kill.py", "tests/scripts/test_prove_card_memory.py", "tests/support/prove_card_support.py"]
+opened_commit = "1d217865da5c84785f52cbf5407612bb64c5be46"
+whole_reason = "The lag sweep changes one command's groups, its record and their shared stand-ins together; the split line is named under Size if the build passes the limit."
