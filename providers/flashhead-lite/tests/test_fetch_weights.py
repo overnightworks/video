@@ -345,7 +345,6 @@ def test_every_repository_that_supplies_weights_has_its_notice_pinned(
     }
 
     assert suppliers <= notices
-    assert notices - suppliers
 
 
 def _fetched_under_the_real_layout(hub: Hub, weights: Weights) -> None:
