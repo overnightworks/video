@@ -116,5 +116,9 @@ def completed_cells(
 
 
 def completed_service(figures: dict[str, object], reason: Reason) -> dict[str, object]:
-    """A service's every figure: the one in `figures`, or not measured for `reason`."""
-    return {name: figures.get(name, not_measured(reason)) for name in SERVICE_FIGURES}
+    """A service's every figure: those in `figures`, the rest not measured for `reason`.
+
+    No figure in `figures` is dropped, so one the proof adds without naming it in
+    `SERVICE_FIGURES` shows in the record, where a finished group's keys are checked.
+    """
+    return {name: not_measured(reason) for name in SERVICE_FIGURES} | figures

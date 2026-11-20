@@ -23,7 +23,7 @@ from PIL import Image
 import card_drive
 import card_identity
 import prove_card
-from card_record import Reason, Verdict
+from card_record import SERVICE_FIGURES, Reason, Verdict, completed_service, value_of
 from video_service.provider_process import ProcessBounds
 
 if TYPE_CHECKING:
@@ -248,6 +248,7 @@ def test_every_service_of_the_run_stops_and_none_is_left(
     services = dry_run[1]["services"]
 
     assert set(services) == {"wire", "lag"}
+    assert all(set(service) == set(SERVICE_FIGURES) for service in services.values())
     assert all(
         service["stop_to_exit_ms"]["value"] >= 0 for service in services.values()
     )
@@ -770,6 +771,13 @@ def test_a_failed_cells_reasons_are_in_the_fragment_before_the_service_stops(
     assert held_at_the_stop["cells"]["sentences"] == {"done": True}
     assert _not_measured(held_at_the_stop["cells"]["clear"], Reason.CELL_FAILED)
     assert _not_measured(held_at_the_stop["cells"]["looks"], Reason.GROUP_ENDED)
+
+
+def test_a_service_figure_the_fragment_holds_is_never_dropped_from_the_record() -> None:
+    entry = completed_service({"added": value_of(1)}, Reason.NO_FRAGMENT)
+
+    assert entry["added"] == value_of(1)
+    assert set(SERVICE_FIGURES) <= set(entry)
 
 
 def test_a_fragment_is_whole_or_absent_when_its_rename_is_interrupted(
