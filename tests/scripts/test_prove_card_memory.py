@@ -43,6 +43,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 FLOOR_ARGUMENT: Final = 3000
+FIRST_SAMPLE_SECONDS: Final = 1
 KILL_BOUND_SECONDS: Final = card_drive.KILL_WITHIN_SECONDS + 1
 
 
@@ -212,6 +213,27 @@ def test_a_group_is_refused_when_the_memory_falls_before_its_service_exists(
     assert "refused" in error
     assert _record(run)["services"]["lag"][MEMORY_STOP]["refused"] is True
     assert run.logs() == []
+    assert run.processes() == []
+
+
+@pytest.mark.parametrize("stop", [signal.SIGINT, signal.SIGTERM])
+def test_a_stop_during_the_first_sample_ends_the_command_before_probe_run_starts(
+    run: Run, stop: signal.Signals
+) -> None:
+    run.in_card_mode()
+    run.environment["NVIDIA_SMI_DELAY"] = str(FIRST_SAMPLE_SECONDS)
+    command = run.start("--cells", "lag")
+    sampling = run.wait_until(run.nvidia_smi_log.exists, APPEARS_WITHIN_SECONDS)
+    os.kill(command.pid, stop)
+
+    status, error = run.finish(command)
+
+    assert sampling
+    assert status != 0
+    assert error.strip() == f"interrupted by {stop.name}"
+    assert not run.probe_run_log.exists()
+    assert not run.record.exists()
+    assert len(run.nvidia_smi_log.read_text().splitlines()) == 1
     assert run.processes() == []
 
 

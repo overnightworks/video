@@ -44,9 +44,10 @@ while [ -n "$PROBE_RUN_HOLD" ] && [ ! -e "$PROBE_RUN_HOLD" ]; do sleep 0.05; don
 exec setpriv --pdeathsig TERM timeout "$@"
 """
 # A stand-in for `nvidia-smi` that answers with what the test wrote to the reading file:
-# a line `used, free, total`, `fail` or `hang`.
+# a line `used, free, total`, `fail` or `hang`, after the delay the test sets.
 NVIDIA_SMI_STAND_IN: Final = """#!/usr/bin/env bash
 echo "$*" >> "$NVIDIA_SMI_LOG"
+sleep "${NVIDIA_SMI_DELAY:-0}"
 reading=$(cat "$NVIDIA_SMI_READING") || exit 1
 case "$reading" in
     fail) exit 1 ;;

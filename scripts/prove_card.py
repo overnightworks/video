@@ -540,8 +540,9 @@ def _under_probe_run(
 ) -> int | None:
     """Run `group` as its own process under `probe-run`; its exit status.
 
-    A card-mode group the card has no room for is refused before `probe-run` starts,
-    and then it has no status.
+    A card-mode group the card has no room for is refused before `probe-run` starts, and
+    so is a group after a stop that arrived before it: nothing would forward that stop,
+    and the group would run through. Neither has a status.
     """
     for tool in (PROBE_RUN, "setpriv"):
         if shutil.which(tool) is None:
@@ -551,6 +552,8 @@ def _under_probe_run(
     if watch is not None and watch.refuse_first(
         ending(supervision.stops, supervision.control, None)
     ):
+        return None
+    if supervision.stops.recorded:
         return None
     command = [
         PROBE_RUN,
