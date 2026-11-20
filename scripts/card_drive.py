@@ -252,16 +252,16 @@ def _stop(service: Service) -> bool:
     stopping = time.monotonic()
     if process.poll() is None:
         process.send_signal(signal.SIGTERM)
+    in_time = True
     try:
         process.wait(STOP_WITHIN_SECONDS)
-        in_time = True
     except subprocess.TimeoutExpired:
         in_time = False
-        service.stop_to_exit_ms = round((time.monotonic() - stopping) * 1000)
+    elapsed_seconds = time.monotonic() - stopping
+    service.stop_to_exit_ms = round(elapsed_seconds * 1000)
+    if not in_time:
         _kill(process.pid)
         process.wait()
-    else:
-        service.stop_to_exit_ms = round((time.monotonic() - stopping) * 1000)
     return in_time
 
 
