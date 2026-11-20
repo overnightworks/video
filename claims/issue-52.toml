@@ -1,0 +1,8 @@
+claim_id = "390d1d04e0424887b000c9353b5e7fde"
+agent = "Claude 76251661-cb30-4447-a3ad-32a83a396daa"
+role = "builder"
+base = "fcff5792c3021a665504c920f583e790edca5ebf"
+branch = "claude/issue-52-forward-the-card-proof-s-stop-only-to-pr"
+scope = ["scripts/card_drive.py", "scripts/prove_card.py", "tests/scripts/test_card_drive.py", "tests/scripts/test_prove_card_kill.py"]
+opened_commit = "6250e4ff300394fbc80e318f4ecee665d8914ad6"
+whole_reason = "The kill's checked pidfd send gains a signal parameter and the top's stop forwarding uses it; both production files and the two test files pinning its names change together."
