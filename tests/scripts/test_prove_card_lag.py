@@ -2,13 +2,23 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
-from typing import Final
+from collections import deque
+from typing import TYPE_CHECKING, Final, cast
 
 import pytest
+from websockets.exceptions import ConnectionClosedOK
+from websockets.frames import Close
 
+from card_drive import Audio, Session, SessionEndedError
 from card_record import Reason, lag_cell, not_measured, value_of
 from support.prove_card_support import Run, is_not_measured
+from video_client.session_wire import ErrorEvent, SessionCreated, SessionFailure
+from video_client.wire import RefusalCode
+
+if TYPE_CHECKING:
+    from websockets.asyncio.client import ClientConnection
 
 # A chunk of frames takes one render, shorter than the chunk plays. A value below the
 # render starves a session; one beyond two renders and a frame period does not.
@@ -138,3 +148,58 @@ def test_a_value_without_an_outcome_leaves_the_summary_unmeasured_for_it() -> No
         assert cell[figure] == not_measured(Reason.PROVIDER_NOT_LOADED)
     assert cell["values"][1]["max_lag_ms"] == value_of(200)
     assert cell["values"][1]["starved"] == not_measured(Reason.PROVIDER_NOT_LOADED)
+
+
+class _ClosedConnection:
+    """A connection the service has closed after the `received` messages it sent."""
+
+    def __init__(self, received: list[str]) -> None:
+        self._received = deque(received)
+
+    async def recv(self) -> str:
+        if self._received:
+            return self._received.popleft()
+        raise _closed()
+
+    async def send(self, _message: str | bytes) -> None:
+        raise _closed()
+
+
+def _closed() -> ConnectionClosedOK:
+    return ConnectionClosedOK(Close(1000, ""), Close(1000, ""), rcvd_then_sent=True)
+
+
+def _session_over(received: list[str]) -> Session:
+    connection = cast("ClientConnection", _ClosedConnection(received))
+    return Session(connection, cast("SessionCreated", None))
+
+
+def _unavailable() -> str:
+    failure = SessionFailure(
+        message="the provider failed",
+        type="server_error",
+        code=RefusalCode.UNAVAILABLE,
+        param=None,
+    )
+    return ErrorEvent(error=failure).model_dump_json()
+
+
+_AUDIO: Final = Audio(rate=16000, pcm=bytes(64))
+
+
+def test_a_sentence_sent_after_the_service_ended_the_session_raises_its_error() -> None:
+    session = _session_over([_unavailable()])
+
+    with pytest.raises(SessionEndedError) as ended:
+        asyncio.run(session.speak("second", _AUDIO))
+
+    assert ended.value.code == RefusalCode.UNAVAILABLE
+
+
+def test_a_sentence_sent_to_a_closed_connection_without_an_error_raises_the_close() -> (
+    None
+):
+    session = _session_over([])
+
+    with pytest.raises(ConnectionClosedOK):
+        asyncio.run(session.speak("second", _AUDIO))
