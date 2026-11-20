@@ -1,0 +1,8 @@
+claim_id = "9de5024467d94cc6ba8c816991883eff"
+agent = "Claude 76251661-cb30-4447-a3ad-32a83a396daa"
+role = "builder"
+base = "91ba9656024a0fcfcbdfda9a7dcb470019406e6f"
+branch = "claude/issue-57-p3d2b4-failed-load-ends-group"
+scope = ["README.md", "scripts/card_drive.py", "scripts/card_memory.py", "scripts/card_record.py", "scripts/card_viewer.py", "scripts/prove_card.py", "tests/scripts/test_card_memory.py", "tests/scripts/test_prove_card.py", "tests/scripts/test_prove_card_kill.py", "tests/scripts/test_prove_card_memory.py", "tests/support/prove_card_support.py"]
+opened_commit = "c3adc19f5200d6c6a17a07bb886cc43c8234e359"
+whole_reason = "The card proof's record of a failed load, the clear and audio checks and the memory figures' follow-ups change one command, its record and their shared stand-ins together."
