@@ -1,8 +1,0 @@
-claim_id = "f2865e9d5805462fb167a86c6b2b69df"
-agent = "Claude 8d6968f0-90db-42e6-8c2e-47e423be7ebd"
-role = "builder"
-base = "73808a9db45334a2e2355fd19f3e840771fc3a88"
-branch = "claude/issue-33-p3b2d-the-service-starts-the-flashhead-l"
-scope = [".aco/ahead-of-caller.toml", ".github/workflows/ci.yml", "AGENTS.md", "README.md", "docs/ARCHITECTURE.md", "pyproject.toml", "src/video_service", "tests"]
-opened_commit = "6e65fb0847859f822f556cc4994149225f22287b"
-whole_reason = "The setting, the launch, the job that starts the real worker and the documents prove one service change together."
