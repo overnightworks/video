@@ -40,7 +40,7 @@ _BLIND_REASONS: Final = {
     StopReason.SAMPLE_FAILED: Reason.SAMPLE_FAILED,
     StopReason.WATCHDOG_FAILED: Reason.WATCHDOG_BREACH,
 }
-_PEAK_FIGURES: Final = (
+PEAK_FIGURES: Final = (
     MemoryFigure.FREE_LEAST,
     MemoryFigure.USED_MOST,
     MemoryFigure.USED_BEYOND_CAP,
@@ -201,7 +201,7 @@ class GroupWatch:
                     most - before - self.cap_mb
                 )
         if self.stop is not None and (blind := self.stop.blind_reason) is not None:
-            figures |= {name: not_measured(blind) for name in _PEAK_FIGURES}
+            figures |= {name: not_measured(blind) for name in PEAK_FIGURES}
         figures |= self._after_figures(before)
         if self.stop is not None and self.kill is not None:
             figures[MEMORY_STOP] = self.stop.record(self.kill, self._seconds)
