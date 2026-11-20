@@ -1,0 +1,7 @@
+claim_id = "94e902fa54a7409db83196cb24cd3805"
+agent = "Claude 76251661-cb30-4447-a3ad-32a83a396daa"
+role = "builder"
+base = "f4578d881ef8cc69d002c8918ca4fbd200fd7233"
+branch = "claude/issue-71-vision-hosted-service"
+scope = ["docs/VISION.md"]
+opened_commit = "a6217f64bd4d94a40731d7bef8ddc01f6cb708b8"
