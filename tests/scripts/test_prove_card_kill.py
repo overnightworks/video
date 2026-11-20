@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Final
 import pytest
 
 import card_drive
-from card_record import MEMORY_STOP, Reason, StopReason, value_of
+from card_record import MEMORY_STOP, CompilerHome, Reason, StopReason, value_of
 from support.prove_card_support import (
     APPEARS_WITHIN_SECONDS,
     BELOW_THE_FLOOR,
@@ -455,6 +455,8 @@ def test_a_kill_that_fails_on_the_breach_path_is_closed_and_the_record_is_writte
         entry[MEMORY_STOP]["seconds_to_no_process_left"], Reason.KILL_FAILED
     )
     assert entry[MEMORY_STOP]["reason"] == StopReason.BELOW_FLOOR
+    # `probe-run` started and outlived the kill: its group's reading stands.
+    assert entry["compiler_home_at_start"] == value_of(CompilerHome.EMPTY)
     assert group_follows
 
 
