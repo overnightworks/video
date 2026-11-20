@@ -265,14 +265,14 @@ def test_staging_left_by_an_interrupted_run_is_cleared_at_the_next_start(
     assert not leftover.exists()
 
 
-@pytest.mark.parametrize("as_a_link", [False, True], ids=["file", "link"])
+@pytest.mark.parametrize("kind", ["file", "link"])
 def test_a_pickled_vae_checkpoint_beside_a_pinned_file_is_refused_before_any_download(
-    hub: Hub, weights: Weights, tmp_path: Path, as_a_link: bool
+    hub: Hub, weights: Weights, tmp_path: Path, kind: str
 ) -> None:
     pin = hub.pin(b"model", "checkpoint/model.safetensors")
     pickled = weights.root / pin.destination.parent / "autoencoder.pth"
     pickled.parent.mkdir(parents=True)
-    if as_a_link:
+    if kind == "link":
         pickled.symlink_to(tmp_path / "missing")
     else:
         pickled.write_bytes(b"pickle")

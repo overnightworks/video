@@ -38,10 +38,11 @@ def fetch_weights(
 
     A file there with its digest is kept; one with another digest, or a link, is
     removed before its download. A directory that holds a pickled VAE checkpoint
-    next to a pinned file is refused before any download. Each download is a real file in `weights.staging`,
-    which sits beside `weights.root`, and is renamed into place once its digest
-    matches, so the weights directory never holds a partial file. The hub's own
-    metadata stays in staging, which is cleared first and removed at the end.
+    next to a pinned file is refused before any download. Each download is a real
+    file in `weights.staging`, which sits beside `weights.root`, and is renamed into
+    place once its digest matches, so the weights directory never holds a partial
+    file. The hub's own metadata stays in staging, which is cleared first and
+    removed at the end.
     `download` is the Hugging Face file downloader.
 
     Raises:
