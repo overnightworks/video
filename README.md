@@ -146,21 +146,21 @@ service's own default of `VIDEO_MAX_LAG_MS`; a value below 1, not a whole number
 twice ends the command with one line before any service starts. The `lag` cell sweeps them:
 each value runs, smallest first and before the other cells (the `wire` group), as a group of
 its own named `lag-<value>`, one service with `VIDEO_MAX_LAG_MS` at the value, driving one
-session's two sentences with idle between them. A session the service ends `unavailable`
-counts as starved, whatever made a call fail: a call that missed the lag, or any other
-failure of the worker. Starvation is the value's outcome, not a failed cell; any other end of
-the session fails the cell. The cell holds, per
-value, `max_lag_ms`, `starved` and the figures of each sentence that completed, then
-`smallest_without_starvation_ms` (the smallest value at which and at every larger value no
-session starved) and `largest_starved_ms`. Each is `not_measured` with the reason
-`largest_value_starved` or `no_value_starved` when there is none, and with the reason of a
-value that has no outcome (a failed load, a memory refusal, a stop) when one has none. The
-`wire` group runs after the sweep at the largest value named, whether or not the sweep
-runs: its figures do not depend on the lag while nothing starves, except the frame memory,
-which grows with it, so they are the conservative ones and are not taken at the value an
-operator will set. Each service's entry names its `max_lag_ms`. In card mode every named
-value costs one model load, and the `wire` group one more. The fake behind `--dry-run` does
-not starve at the default lag.
+session's two sentences with idle between them. A session the service ends
+`unavailable` counts as starved, whatever made a call fail: a call that missed the
+lag, or any other failure of the worker. Starvation is the value's outcome, not a
+failed cell; any other end of the session fails the cell. The cell holds, per value,
+`max_lag_ms`, `starved` and the figures of each sentence that completed, then
+`smallest_without_starvation_ms` (the smallest value at which and at every larger
+value no session starved) and `largest_starved_ms`. Each is `not_measured` with the
+reason `largest_value_starved` or `no_value_starved` when there is none, and with the
+reason of a value that has no outcome (a failed load, a memory refusal, a stop) when
+one has none. The `wire` group runs after the sweep at the largest value named,
+whether or not the sweep runs: its figures do not depend on the lag while nothing
+starves, except the frame memory, which grows with it, so they are the conservative
+ones and are not taken at the value an operator will set. Each service's entry names
+its `max_lag_ms`. In card mode every named value costs one model load, and the `wire`
+group one more. The fake behind `--dry-run` does not starve at the default lag.
 The command waits for the service's readiness as long as the service's own bounds for
 the provider's start and each look's preparation allow, plus a slack. Every exit stops
 the service first, which reaps its provider worker. A service that has not exited within
