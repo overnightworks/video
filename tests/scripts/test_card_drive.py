@@ -12,7 +12,6 @@ import os
 import signal
 import subprocess
 import sys
-import time
 import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, Final
@@ -22,8 +21,8 @@ import pytest
 from support.prove_card_support import (
     APPEARS_WITHIN_SECONDS,
     GONE_WITHIN_SECONDS,
-    POLL_SECONDS,
     ended,
+    marked_processes,
     process_state,
     wait_until,
 )
@@ -165,19 +164,7 @@ class StandInTop:
 
     def marked(self) -> dict[int, str]:
         """Every live process of this test, by pid, with its state letter."""
-        found = {}
-        for entry in Path("/proc").iterdir():
-            if not entry.name.isdigit():
-                continue
-            try:
-                environment = (entry / "environ").read_bytes().split(b"\0")
-            except OSError:
-                continue
-            if f"{MARKER}={self.marker}".encode() in environment:
-                state = process_state(int(entry.name))
-                if state not in {None, "Z"}:
-                    found[int(entry.name)] = state
-        return found
+        return marked_processes(MARKER, self.marker)
 
     def result(self) -> dict[str, object]:
         """What the stand-in reported, once it has."""
@@ -273,19 +260,14 @@ def test_the_service_and_its_worker_end_with_the_process_that_started_them(
         env=os.environ | {"PYTHONPATH": str(SCRIPTS)},
     )
     pids_file = tmp_path / "pids.json"
-    deadline = time.monotonic() + APPEARS_WITHIN_SECONDS
     try:
-        while not pids_file.exists() and time.monotonic() < deadline:
-            time.sleep(POLL_SECONDS)
-        assert pids_file.exists()
+        assert wait_until(pids_file.exists, APPEARS_WITHIN_SECONDS)
         pids = json.loads(pids_file.read_text())
     finally:
         holder.kill()
         holder.wait(timeout=ENDS_WITHIN_SECONDS)
 
-    deadline = time.monotonic() + GONE_WITHIN_SECONDS
-    while not all(ended(pid) for pid in pids) and time.monotonic() < deadline:
-        time.sleep(POLL_SECONDS)
+    gone = wait_until(lambda: all(ended(pid) for pid in pids), GONE_WITHIN_SECONDS)
 
     assert len(pids) > 1
-    assert all(ended(pid) for pid in pids)
+    assert gone

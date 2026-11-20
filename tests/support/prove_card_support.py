@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 import struct
 import subprocess
@@ -63,6 +64,23 @@ def process_state(pid: int) -> str | None:
 def ended(pid: int) -> bool:
     """Whether the process is gone or a zombie that only waits to be reaped."""
     return process_state(pid) in {None, "Z"}
+
+
+def marked_processes(name: str, value: str) -> dict[int, str]:
+    """The live processes whose environment holds `name=value`, by pid, with state."""
+    found = {}
+    for entry in Path("/proc").iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            environment = (entry / "environ").read_bytes().split(b"\0")
+        except OSError:
+            continue
+        if f"{name}={value}".encode() in environment:
+            state = process_state(int(entry.name))
+            if state not in {None, "Z"}:
+                found[int(entry.name)] = state
+    return found
 
 
 def is_not_measured(figure: dict, reason: Reason) -> bool:
@@ -142,16 +160,14 @@ class Run:
     def alive(self) -> dict[int, str]:
         """The processes of this run, still alive, with their command lines."""
         found = {}
-        for entry in Path("/proc").iterdir():
-            if not entry.name.isdigit():
-                continue
-            try:
-                environment = (entry / "environ").read_bytes().split(b"\0")
-                if f"{MARKER}={self.marker}".encode() in environment:
-                    found[int(entry.name)] = (entry / "cmdline").read_bytes().decode()
-            except OSError:
-                continue
-        return {pid: line for pid, line in found.items() if line}
+        for pid in marked_processes(MARKER, self.marker):
+            with contextlib.suppress(OSError):
+                line = (
+                    Path(f"/proc/{pid}/cmdline").read_bytes().decode(errors="replace")
+                )
+                if line:
+                    found[pid] = line
+        return found
 
     def processes(self) -> list[str]:
         """The command lines of the processes of this run, still alive."""
