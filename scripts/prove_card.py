@@ -31,7 +31,6 @@ from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Final
 
-from logline import Outcome
 from pydantic import ValidationError
 
 from card_drive import (
@@ -61,13 +60,14 @@ from card_record import (
     FREE_MEMORY_LINE,
     KILL_FIGURES,
     MEMORY_FIGURES,
-    START_TO_READY_LINE,
     Reason,
     closed_record,
     completed_cells,
     completed_service,
+    failed_load,
     judged,
     not_measured,
+    service_figures,
     value_of,
 )
 from card_supervision import (
@@ -149,15 +149,6 @@ def _beside(record: Path, suffix: str) -> Path:
 def _group_log(record: Path, group: str) -> Path:
     """Where the service of `group` writes its log."""
     return _beside(record, f"{group}.log")
-
-
-def step_figures(line: dict[str, object]) -> dict[str, object]:
-    """A load or preparation as the service logged it: outcome, reason, duration."""
-    return {
-        name: value_of(line[name])
-        for name in ("outcome", "reason", "duration_ms")
-        if name in line
-    }
 
 
 def _sentence_figures(
@@ -449,44 +440,6 @@ def _provider_of(arguments: argparse.Namespace) -> Mapping[str, str]:
     return _card_provider(os.environ).environment
 
 
-def _service_figures(
-    service: Service, log: Path, *, dry_run: bool
-) -> dict[str, object]:
-    """The service's start, load and preparations; its stop is added once it ends."""
-    return {
-        "start_to_ready_ms": judged(
-            service.start_to_ready_ms, START_TO_READY_LINE, dry_run=dry_run
-        ),
-        "provider_load": step_figures(service.lines("provider_load.ended")[0]),
-        "look_preparations": [
-            {"look": value_of(line["look"])} | step_figures(line)
-            for line in service.lines("look_preparation.ended")
-        ],
-        "log": value_of(log.name),
-    }
-
-
-def _unloaded(service: Service) -> tuple[Reason, str] | None:
-    """Why the cells cannot run, and the line that says so, when the load failed.
-
-    A step is failed by its logged outcome; a failed step read after ready carries the
-    reason the service logged.
-    """
-    load = service.lines("provider_load.ended")[0]
-    if load["outcome"] == Outcome.FAILED:
-        return (
-            Reason.PROVIDER_NOT_LOADED,
-            f"the provider did not load ({load['reason']})",
-        )
-    for line in service.lines("look_preparation.ended"):
-        if line["outcome"] == Outcome.FAILED:
-            return (
-                Reason.LOOK_NOT_PREPARED,
-                f"the look {line['look']} was not prepared ({line['reason']})",
-            )
-    return None
-
-
 def _stop_figure(service: Service) -> dict[str, object]:
     """How long the service took to exit after its stop, if it was still running."""
     if service.stop_to_exit_ms is None:
@@ -505,6 +458,27 @@ def _write_fragment(path: Path, fragment: dict[str, object]) -> None:
     # The parent names the fragment's path in its own scratch directory.
     temporary.write_text(json.dumps(fragment))  # NOSONAR(S8707)
     temporary.replace(path)
+
+
+async def _drive_cells(
+    group: str,
+    names: list[str],
+    drive: Drive,
+    cells: dict[str, object],
+    save: Callable[[GroupOutcome], None],
+) -> GroupOutcome:
+    """Drive `names` in turn, saving after each; a cell that raises ends the group."""
+    for position, name in enumerate(names):
+        try:
+            cells[name] = await GROUPS[group][name](drive)
+        except Exception:  # noqa: BLE001 - the failure is the cell's record entry
+            traceback.print_exc()
+            cells[name] = not_measured(Reason.CELL_FAILED)
+            cells.update(completed_cells(names[position + 1 :], {}, Reason.GROUP_ENDED))
+            save(GroupOutcome.RUNNING)
+            return GroupOutcome.FAILED
+        save(GroupOutcome.RUNNING)
+    return GroupOutcome.DONE
 
 
 def _run_group(
@@ -535,7 +509,7 @@ def _run_group(
         drive = Drive(
             service, identity, audio, dry_run=arguments.dry_run, record=arguments.record
         )
-        figures = _service_figures(service, log, dry_run=arguments.dry_run)
+        figures = service_figures(service, log, dry_run=arguments.dry_run)
 
         def save(outcome: GroupOutcome) -> None:
             _write_fragment(
@@ -548,25 +522,10 @@ def _run_group(
                 },
             )
 
-        async def run_cells() -> GroupOutcome:
-            for position, name in enumerate(names):
-                try:
-                    cells[name] = await GROUPS[group][name](drive)
-                except Exception:  # noqa: BLE001 - the failure is the cell's record entry
-                    traceback.print_exc()
-                    cells[name] = not_measured(Reason.CELL_FAILED)
-                    cells.update(
-                        completed_cells(names[position + 1 :], {}, Reason.GROUP_ENDED)
-                    )
-                    save(GroupOutcome.RUNNING)
-                    return GroupOutcome.FAILED
-                save(GroupOutcome.RUNNING)
-            return GroupOutcome.DONE
-
-        if (unloaded := _unloaded(service)) is None:
-            outcome = asyncio.run(run_cells())
+        if (failure := failed_load(service)) is None:
+            outcome = asyncio.run(_drive_cells(group, names, drive, cells, save))
         else:
-            reason, message = unloaded
+            reason, message = failure
             cells.update(completed_cells(names, {}, reason))
             print(f"the {group} group: {message}", file=sys.stderr)
             save(GroupOutcome.RUNNING)

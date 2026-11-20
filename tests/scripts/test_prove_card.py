@@ -24,6 +24,7 @@ from card_record import (
     SERVICE_FIGURES,
     Reason,
     completed_service,
+    step_figures,
     value_of,
 )
 from support.prove_card_support import (
@@ -159,12 +160,12 @@ def test_the_wait_for_ready_covers_the_services_bounds_for_every_look(
 def test_a_failed_step_is_recorded_as_the_service_logged_it() -> None:
     logged = {"outcome": "failed", "reason": "provider_failed", "duration_ms": 12.5}
 
-    assert prove_card.step_figures(logged) == {
+    assert step_figures(logged) == {
         "outcome": {"value": "failed"},
         "reason": {"value": "provider_failed"},
         "duration_ms": {"value": 12.5},
     }
-    assert "reason" not in prove_card.step_figures({"outcome": "ok", "duration_ms": 1})
+    assert "reason" not in step_figures({"outcome": "ok", "duration_ms": 1})
 
 
 @pytest.mark.parametrize("named", ["lag", "clear"])
