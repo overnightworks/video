@@ -3,6 +3,6 @@ agent = "Claude 8d6968f0-90db-42e6-8c2e-47e423be7ebd"
 role = "builder"
 base = "460b2cfd8f3935bf901d13a3e2a63b4dfb3b40d4"
 branch = "claude/issue-35-p3c1-the-flashhead-lite-provider-fetches"
-scope = [".github/workflows/ci.yml", ".gitignore", "README.md", "docs/ARCHITECTURE.md", "providers/flashhead-lite"]
+scope = [".github/workflows/ci.yml", ".gitignore", "README.md", "docs/ARCHITECTURE.md", "providers/flashhead-lite", "tests/test_providers.py"]
 opened_commit = "807ae3039e57979a13cba0d18950350c2e10571a"
 whole_reason = "The fetch, its pins, the licence texts and the job's check prove one provider change together."
