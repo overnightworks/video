@@ -35,7 +35,8 @@ flowchart LR
 - `src/video_service`: the one process. `__main__.py` binds the listener, serves
   health at once, loads on a daemon thread and drains on a stop; `app.py` holds the
   routes and `refusals.py` the HTTP form of a refusal; `session_route.py` refuses
-  or accepts a session upgrade and `session.py` is one session's state machine;
+  a session upgrade or hands its place to `session.py`, which accepts it and is
+  one session's state machine;
   `viewer_route.py` refuses or admits a viewer and ends one, and `media.py` holds a
   session's viewers: one aiortc peer with an Opus and a VP8 track each;
   `callers.py` proves the two tokens; `runtime.py` holds the provider, the looks,
@@ -182,9 +183,11 @@ ends. The service keeps no image; what a provider prepares stays inside it.
 ## Sessions
 
 `runtime.open_session` gives a place, or the refusal in the wire's order, and the
-route accepts the upgrade on it. `session.py` then runs four tasks and ends with
-the first that ends: the receive loop (events and audio in, queue and clear), the
-producer, the pacer and the drain watcher. The frame clock is one grid of frame
+route refuses the upgrade or hands the place to `session.py`, which accepts the
+upgrade inside the cleanup that gives the place back, so an upgrade whose client
+left before it was accepted still returns its place. It then runs four tasks and
+ends with the first that ends: the receive loop (events and audio in, queue and
+clear), the producer, the pacer and the drain watcher. The frame clock is one grid of frame
 periods: a sentence's audio sets it while it plays and the face at rest runs on it
 while no sentence has audio, so the stream never stops. A frame is due one frame
 period after the one before, input the client sent after the last frame had left
