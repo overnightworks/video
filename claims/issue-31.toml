@@ -1,8 +1,0 @@
-claim_id = "44402359ca4041eaa62c21c630c1b539"
-agent = "Claude 8d6968f0-90db-42e6-8c2e-47e423be7ebd"
-role = "builder"
-base = "49b2e7fb666a01184e8521b0590c899df06609fc"
-branch = "claude/issue-31-p3b2c-the-flashhead-lite-provider-s-torc"
-scope = [".aco/ahead-of-caller.toml", "docs/ARCHITECTURE.md", "providers/flashhead-lite", "providers/provider-contract", "pyproject.toml", "sonar-project.properties"]
-opened_commit = "f27b8ff2c7ac01658d87871f2ed7a1f030ab64a5"
-whole_reason = "The renderer, the worker, the contract's cap name and the coverage exclusions prove one provider change together."
