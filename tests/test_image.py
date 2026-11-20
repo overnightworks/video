@@ -167,12 +167,16 @@ class _Model(BaseModel):
 
 
 class _ImageConfiguration(_Model):
+    model_config = ConfigDict(extra="ignore", frozen=True, populate_by_name=True)
+
     user: str = Field(alias="User")
     environment: list[str] = Field(alias="Env")
     healthcheck: object | None = Field(default=None, alias="Healthcheck")
 
 
 class _State(_Model):
+    model_config = ConfigDict(extra="ignore", frozen=True, populate_by_name=True)
+
     status: str = Field(alias="Status")
     exit_code: int = Field(alias="ExitCode")
 
@@ -349,6 +353,14 @@ def _answer(service: str, method: str, path: str) -> _Answer:
     ran = _docker("exec", service, "python", "-c", _REQUEST, method, path)
     assert ran.returncode == 0, ran.stderr
     return _Answer.model_validate_json(ran.stdout)
+
+
+def test_docker_inspect_objects_with_further_fields_are_read() -> None:
+    config = {"User": "1000", "Env": [], "Cmd": ["serve"], "WorkingDir": "/app"}
+    state = {"Status": "exited", "ExitCode": 0, "Running": False, "Pid": 0}
+
+    assert _ImageConfiguration.model_validate(config).user == "1000"
+    assert _State.model_validate(state).exit_code == 0
 
 
 def test_the_image_declares_a_numeric_non_root_user_and_no_deployment_setting(
