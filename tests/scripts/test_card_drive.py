@@ -34,12 +34,28 @@ SCRIPTS: Final = Path(__file__).resolve().parents[2] / "scripts"
 MARKER: Final = "CARD_DRIVE_TEST_MARKER"
 ENDS_WITHIN_SECONDS: Final = 60
 TREE_PROCESSES: Final = 6
+PARENT_OF_A_SLEEPER: Final = """
+import subprocess
+
+sleeper = subprocess.Popen(["sleep", "60"])
+print(sleeper.pid, flush=True)
+sleeper.wait()
+"""
+NAMED_WITH_A_SPLIT_LETTER: Final = """
+import ctypes
+import time
+
+ctypes.CDLL(None).prctl(15, ("a" * 14 + "\\u00fc").encode())
+print("named", flush=True)
+time.sleep(60)
+"""
 # The stand-in top marks itself a subreaper through the code under test, starts what
 # its mode needs and runs the kill when the test says so.
 STAND_IN_TOP: Final = """
 import dataclasses
 import json
 import os
+import resource
 import subprocess
 import sys
 import time
@@ -78,8 +94,8 @@ def sleeper():
     return subprocess.Popen(["sleep", "60"])
 
 
-def killed():
-    kill = card_drive.end_processes_below()
+def killed(control=card_drive.KERNEL):
+    kill = card_drive.end_processes_below(control)
     return {
         "left": kill.processes_left,
         "alive": kill.processes_alive,
@@ -99,21 +115,61 @@ elif mode == "guard":
     seen = [card_drive.read_process(c.pid) for c in (reused, reparented, unchanged)]
     other_start = dataclasses.replace(seen[0], started=seen[0].started + 1)
     other_parent = dataclasses.replace(seen[1], parent=seen[1].parent + 1)
-    card_drive.end_if_unchanged(other_start)
-    card_drive.end_if_unchanged(other_parent)
-    card_drive.end_if_unchanged(seen[2])
+    card_drive.end_if_unchanged((other_start,))
+    card_drive.end_if_unchanged((other_parent,))
+    card_drive.end_if_unchanged((seen[2],))
     report({"reused": seen[0].pid, "reparented": seen[1].pid, "unchanged": seen[2].pid})
+elif mode in ("ancestry-stale", "ancestry-intact"):
+    parent = subprocess.Popen(
+        [sys.executable, "-c", PARENT_OF_A_SLEEPER], stdout=subprocess.PIPE, text=True
+    )
+    grandchild = int(parent.stdout.readline())
+    lineage = (card_drive.read_process(grandchild), card_drive.read_process(parent.pid))
+    if mode == "ancestry-stale":
+        # The parent the read showed is gone and its id names another process.
+        replaced = dataclasses.replace(lineage[1], started=lineage[1].started + 1)
+        lineage = (lineage[0], replaced)
+    card_drive.end_if_unchanged(lineage)
+    report({"grandchild": grandchild})
 elif mode == "raising":
     unkillable, killable = sleeper(), sleeper()
-    opened = card_drive._pidfd_open
 
     def refused(pid):
         if pid == unkillable.pid:
             raise PermissionError
-        return opened(pid)
+        return card_drive.KERNEL.open(pid)
 
-    card_drive._pidfd_open = refused
-    report(killed() | {"unkillable": unkillable.pid, "killable": killable.pid})
+    control = dataclasses.replace(card_drive.KERNEL, open=refused)
+    report(killed(control) | {"unkillable": unkillable.pid, "killable": killable.pid})
+elif mode == "unreadable":
+    unreadable, killable = sleeper(), sleeper()
+
+    def refused(pid):
+        if pid == unreadable.pid:
+            raise PermissionError
+        return card_drive.KERNEL.read_stat(pid)
+
+    control = dataclasses.replace(card_drive.KERNEL, read_stat=refused)
+    report(killed(control) | {"unreadable": unreadable.pid, "killable": killable.pid})
+elif mode == "unlistable":
+    sleeper()
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    # Listing the processes needs a descriptor beyond the standard three.
+    resource.setrlimit(resource.RLIMIT_NOFILE, (3, hard))
+    try:
+        result = killed()
+    finally:
+        resource.setrlimit(resource.RLIMIT_NOFILE, (soft, hard))
+    report(result)
+elif mode == "split-name":
+    # The kernel cuts a name at 15 bytes, here inside the two bytes of a letter.
+    named = subprocess.Popen(
+        [sys.executable, "-c", NAMED_WITH_A_SPLIT_LETTER],
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    named.stdout.readline()
+    report(killed() | {"named": named.pid})
 """
 # Holds the service the way the proof does and reports the pids it should take with it.
 SERVICE_HOLDER: Final = """
@@ -184,7 +240,11 @@ class StandInTop:
 
 @pytest.fixture
 def top(tmp_path: Path) -> Iterator[StandInTop]:
-    stand_in = StandInTop(tmp_path, STAND_IN_TOP)
+    children = (
+        f"PARENT_OF_A_SLEEPER = {PARENT_OF_A_SLEEPER!r}\n"
+        f"NAMED_WITH_A_SPLIT_LETTER = {NAMED_WITH_A_SPLIT_LETTER!r}\n"
+    )
+    stand_in = StandInTop(tmp_path, children + STAND_IN_TOP)
     yield stand_in
     stand_in.end()
 
@@ -236,6 +296,21 @@ def test_a_pid_that_is_not_the_process_that_was_read_is_not_signalled(
     assert ended(result["unchanged"])
 
 
+@pytest.mark.parametrize("mode", ["ancestry-stale", "ancestry-intact"])
+def test_a_process_is_signalled_only_while_its_parents_are_still_those_that_were_read(
+    top: StandInTop, mode: str
+) -> None:
+    ended_by_kill = mode == "ancestry-intact"
+    top.start(mode)
+
+    result = top.result()
+
+    assert wait_until(
+        lambda: ended(result["grandchild"]) == ended_by_kill, GONE_WITHIN_SECONDS
+    )
+    assert ended(result["grandchild"]) == ended_by_kill
+
+
 def test_a_kill_that_raises_for_one_process_goes_on_with_the_others(
     top: StandInTop,
 ) -> None:
@@ -248,6 +323,38 @@ def test_a_kill_that_raises_for_one_process_goes_on_with_the_others(
     assert result["alive"] == 1
     assert process_state(result["unkillable"]) not in {None, "Z"}
     assert ended(result["killable"])
+
+
+def test_a_process_that_cannot_be_read_fails_the_kill_which_goes_on_with_the_others(
+    top: StandInTop,
+) -> None:
+    top.start("unreadable")
+
+    result = top.result()
+
+    assert result["failed"] is True
+    assert process_state(result["unreadable"]) not in {None, "Z"}
+    assert ended(result["killable"])
+
+
+def test_a_kill_that_cannot_list_the_processes_fails_instead_of_raising(
+    top: StandInTop,
+) -> None:
+    top.start("unlistable")
+
+    assert top.result()["failed"] is True
+
+
+def test_a_process_whose_name_the_kernel_cut_inside_a_letter_is_ended(
+    top: StandInTop,
+) -> None:
+    top.start("split-name")
+
+    result = top.result()
+
+    assert result["failed"] is False
+    assert result["alive"] == 0
+    assert wait_until(lambda: ended(result["named"]), GONE_WITHIN_SECONDS)
 
 
 def test_the_service_and_its_worker_end_with_the_process_that_started_them(

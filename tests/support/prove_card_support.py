@@ -56,14 +56,15 @@ def write_audio(path: Path, *, seconds: float, channels: int = 1) -> None:
 def process_state(pid: int) -> str | None:
     """The process's state letter, or none once nothing has the id."""
     try:
-        return Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0]
+        return (
+            Path(f"/proc/{pid}/stat")
+            .read_bytes()
+            .rsplit(b")", 1)[1]
+            .split()[0]
+            .decode()
+        )
     except OSError:
         return None
-
-
-def ended(pid: int) -> bool:
-    """Whether the process is gone or a zombie that only waits to be reaped."""
-    return process_state(pid) in {None, "Z"}
 
 
 def marked_processes(name: str, value: str) -> dict[int, str]:
@@ -81,6 +82,11 @@ def marked_processes(name: str, value: str) -> dict[int, str]:
             if state not in {None, "Z"}:
                 found[int(entry.name)] = state
     return found
+
+
+def ended(pid: int) -> bool:
+    """Whether the process is gone or a zombie that only waits to be reaped."""
+    return process_state(pid) in {None, "Z"}
 
 
 def is_not_measured(figure: dict, reason: Reason) -> bool:

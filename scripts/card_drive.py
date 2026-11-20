@@ -146,10 +146,21 @@ def read_audio(path: Path) -> Audio:
     return audio
 
 
+def _read_stat(pid: int) -> bytes:
+    return Path(f"/proc/{pid}/stat").read_bytes()
+
+
+def _stat_fields(stat: bytes) -> list[str]:
+    """The fields of a `stat` after the command name: state first.
+
+    The kernel cuts the name at a byte, which may split a character, so only the
+    fields after its closing bracket are decoded.
+    """
+    return stat.rsplit(b")", 1)[1].decode("ascii").split()
+
+
 def _process_fields(pid: int) -> list[str]:
-    """The fields of `/proc/<pid>/stat` after the command name: state first."""
-    text = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
-    return text.rsplit(")", 1)[1].split()
+    return _stat_fields(_read_stat(pid))
 
 
 _PARENT_FIELD: Final = 1
@@ -204,6 +215,24 @@ def _pidfd_send_kill(pidfd: int) -> None:
 
 
 @dataclass(frozen=True)
+class ProcessControl:
+    """What the kill asks of the kernel; a test hands it a variant."""
+
+    become_subreaper: Callable[[], None]
+    open: Callable[[int], int]
+    send_kill: Callable[[int], None]
+    read_stat: Callable[[int], bytes]
+
+
+KERNEL: Final = ProcessControl(
+    become_subreaper=become_subreaper,
+    open=_pidfd_open,
+    send_kill=_pidfd_send_kill,
+    read_stat=_read_stat,
+)
+
+
+@dataclass(frozen=True)
 class Process:
     """A process as `/proc` showed it; its parent and start time tell a reused id."""
 
@@ -218,64 +247,93 @@ class Process:
         return self.state != _ZOMBIE
 
 
-def read_process(pid: int) -> Process | None:
-    """The process `pid` as it is now, or none once it is gone."""
+# A process first, then each parent of it up to the child of the top.
+Lineage = tuple[Process, ...]
+
+
+def read_process(pid: int, control: ProcessControl = KERNEL) -> Process | None:
+    """The process `pid` as it is now, or none once it is gone; other errors raise."""
     try:
-        fields = _process_fields(pid)
-    except OSError:
+        fields = _stat_fields(control.read_stat(pid))
+    except FileNotFoundError, ProcessLookupError:
         return None
     return Process(
         pid, int(fields[_PARENT_FIELD]), int(fields[_START_FIELD]), fields[0]
     )
 
 
-def _all_processes() -> dict[int, Process]:
-    found = (
-        read_process(int(entry.name))
-        for entry in Path("/proc").iterdir()
-        if entry.name.isdigit()
-    )
-    return {process.pid: process for process in found if process is not None}
+def _all_processes(control: ProcessControl) -> tuple[dict[int, Process], bool]:
+    """Every process `/proc` shows, and whether one of them could not be read."""
+    found: dict[int, Process] = {}
+    unreadable = False
+    for entry in Path("/proc").iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            process = read_process(int(entry.name), control)
+        except OSError:
+            unreadable = True
+            continue
+        if process is not None:
+            found[process.pid] = process
+    return found, unreadable
 
 
-def _depth(process: Process, processes: dict[int, Process], top: int) -> int | None:
-    """How many parents lead from `process` to `top`, or none when they do not."""
-    depth, ancestor = 1, process
-    while ancestor.parent != top:
-        found = processes.get(ancestor.parent)
-        if found is None or depth > len(processes):
+def _lineage(
+    process: Process, processes: dict[int, Process], top: int
+) -> Lineage | None:
+    """`process` and its parents up to the child of `top`, or none if cut short."""
+    chain = [process]
+    while chain[-1].parent != top:
+        found = processes.get(chain[-1].parent)
+        if found is None or len(chain) > len(processes):
             return None
-        ancestor, depth = found, depth + 1
-    return depth
+        chain.append(found)
+    return tuple(chain)
 
 
-def _below(top: int) -> list[Process]:
-    """The processes whose parents lead to `top`, the deepest first."""
-    processes = _all_processes()
-    depths = {pid: _depth(found, processes, top) for pid, found in processes.items()}
-    return sorted(
-        (processes[pid] for pid, depth in depths.items() if depth is not None),
-        key=lambda found: -(depths[found.pid] or 0),
-    )
+@dataclass(frozen=True)
+class Below:
+    """The lineages of the processes below the top, deepest first, from one read."""
+
+    lineages: list[Lineage]
+    unreadable: bool
 
 
-def end_if_unchanged(seen: Process) -> bool:
-    """Send SIGKILL to `seen` through a pidfd unless its id now names another process.
+def _below(top: int, control: ProcessControl) -> Below:
+    processes, unreadable = _all_processes(control)
+    lineages = [
+        lineage
+        for found in processes.values()
+        if (lineage := _lineage(found, processes, top)) is not None
+    ]
+    return Below(sorted(lineages, key=len, reverse=True), unreadable)
 
-    The pidfd is opened first and the parent and start time are read after, so an id
-    freed and reused in between is not signalled. Whether it went without an error: a
+
+def _unchanged(link: Process, control: ProcessControl) -> bool:
+    """Whether `link` is still the process it was, under the parent it had."""
+    now = read_process(link.pid, control)
+    return now is not None and (now.parent, now.started) == (link.parent, link.started)
+
+
+def end_if_unchanged(lineage: Lineage, control: ProcessControl = KERNEL) -> bool:
+    """Send SIGKILL to the first process of `lineage` through a pidfd unless it moved.
+
+    The pidfd is opened first and the process and each parent of it are read after, so
+    an id freed and reused in between, the process's or a parent's, is not signalled:
+    one read of every process is not atomic, and a parent that was reaped and replaced
+    would else lead a stranger into the top's tree. Whether it went without an error: a
     process already gone is no error.
     """
     try:
-        pidfd = _pidfd_open(seen.pid)
+        pidfd = control.open(lineage[0].pid)
     except ProcessLookupError:
         return True
     except OSError:
         return False
     try:
-        now = read_process(seen.pid)
-        if now is not None and (now.parent, now.started) == (seen.parent, seen.started):
-            _pidfd_send_kill(pidfd)
+        if all(_unchanged(link, control) for link in lineage):
+            control.send_kill(pidfd)
     except ProcessLookupError:
         pass
     except OSError:
@@ -300,28 +358,37 @@ def _reap_children(zombies: list[Process]) -> None:
             os.waitpid(zombie.pid, os.WNOHANG)
 
 
-def end_processes_below() -> Kill:
+def end_processes_below(control: ProcessControl = KERNEL) -> Kill:
     """End every process below this one by pidfd-checked SIGKILL passes, stopping none.
 
     A pass signals every live descendant, the deepest first, and reaps the zombies
     that are this process's children by their ids. It runs until none is alive or
     `KILL_WITHIN_SECONDS` has passed. It must run in a child subreaper, so an orphan
-    of a descendant stays below.
+    of a descendant stays below. A process that cannot be read or signalled fails the
+    kill, which goes on with the others; a pass that cannot list or reap ends it.
     """
     top = os.getpid()
     deadline = time.monotonic() + KILL_WITHIN_SECONDS
     first: int | None = None
     failed = False
     while True:
-        below = _below(top)
-        _reap_children(
-            [found for found in below if found.parent == top and not found.alive]
-        )
-        alive = [found for found in below if found.alive]
+        try:
+            below = _below(top, control)
+            _reap_children(
+                [
+                    lineage[0]
+                    for lineage in below.lineages
+                    if lineage[0].parent == top and not lineage[0].alive
+                ]
+            )
+        except OSError:
+            return Kill(first or 0, 0, failed=True)
+        failed |= below.unreadable
+        alive = [lineage for lineage in below.lineages if lineage[0].alive]
         first = len(alive) if first is None else first
         if not alive or time.monotonic() >= deadline:
             return Kill(first, len(alive), failed)
-        ended = [end_if_unchanged(found) for found in alive]
+        ended = [end_if_unchanged(lineage, control) for lineage in alive]
         failed |= not all(ended)
         time.sleep(POLL_SECONDS)
 
