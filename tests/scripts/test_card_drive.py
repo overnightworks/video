@@ -55,11 +55,9 @@ STAND_IN_TOP: Final = """
 import dataclasses
 import json
 import os
-import resource
 import subprocess
 import sys
 import time
-import types
 from pathlib import Path
 
 import card_drive
@@ -161,28 +159,23 @@ elif mode == "unreadable":
     report(killed(control) | {"unreadable": unreadable.pid, "killable": killable.pid})
 elif mode == "unlistable":
     sleeper()
-    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
-    # Listing the processes needs a descriptor beyond the standard three.
-    resource.setrlimit(resource.RLIMIT_NOFILE, (3, hard))
-    try:
-        result = killed()
-    finally:
-        resource.setrlimit(resource.RLIMIT_NOFILE, (soft, hard))
-    report(result)
+
+    def refused():
+        raise PermissionError
+
+    control = dataclasses.replace(card_drive.KERNEL, list_processes=refused)
+    report(killed(control))
 elif mode == "unlistable-briefly":
     sleeping = sleeper()
-    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
-    resource.setrlimit(resource.RLIMIT_NOFILE, (3, hard))
+    refusals = [PermissionError]
 
-    def sleep_after_failed_attempt(seconds):
-        # The kill waits only after an attempt that could not list the processes.
-        resource.setrlimit(resource.RLIMIT_NOFILE, (soft, hard))
-        time.sleep(seconds)
+    def refused_once():
+        if refusals:
+            raise refusals.pop()
+        return card_drive.KERNEL.list_processes()
 
-    card_drive.time = types.SimpleNamespace(
-        monotonic=time.monotonic, sleep=sleep_after_failed_attempt
-    )
-    report(killed() | {"sleeper": sleeping.pid})
+    control = dataclasses.replace(card_drive.KERNEL, list_processes=refused_once)
+    report(killed(control) | {"sleeper": sleeping.pid})
 elif mode == "unreadable-briefly":
     sleeping = sleeper()
     refusals = [PermissionError]

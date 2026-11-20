@@ -219,13 +219,19 @@ class ProcessControl:
     """What the kill asks of the kernel; a test hands it a variant."""
 
     become_subreaper: Callable[[], None]
+    list_processes: Callable[[], list[int]]
     open: Callable[[int], int]
     send_kill: Callable[[int], None]
     read_stat: Callable[[int], bytes]
 
 
+def _list_processes() -> list[int]:
+    return [int(e.name) for e in Path("/proc").iterdir() if e.name.isdigit()]
+
+
 KERNEL: Final = ProcessControl(
     become_subreaper=become_subreaper,
+    list_processes=_list_processes,
     open=_pidfd_open,
     send_kill=_pidfd_send_kill,
     read_stat=_read_stat,
@@ -266,11 +272,9 @@ def _all_processes(control: ProcessControl) -> tuple[dict[int, Process], bool]:
     """Every process `/proc` shows, and whether one of them could not be read."""
     found: dict[int, Process] = {}
     unreadable = False
-    for entry in Path("/proc").iterdir():
-        if not entry.name.isdigit():
-            continue
+    for pid in control.list_processes():
         try:
-            process = read_process(int(entry.name), control)
+            process = read_process(pid, control)
         except OSError:
             unreadable = True
             continue
