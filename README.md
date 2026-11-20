@@ -153,22 +153,20 @@ is alive or `KILL_WITHIN_SECONDS` has passed). The service's entry in the record
 `processes_left_after_stop`, how many it found (0 when the group stopped its service
 cleanly), and `processes_alive_after_kill`, how many were still alive past the bound; a kill
 that raised, or met a process it could not read, makes both `not_measured` with the reason
-`kill_failed`, and the command writes
-the record, starts no later group and exits non-zero. A service that had exited before its
-stop has `stop_to_exit_ms` `not_measured` with `exited_before_stop`. An interrupt (INT or
-TERM) ends the command with one line, after any kill that is running has ended. Each
-group's service log is written beside the record from the service's start, so it is
-there however the group ends (cells done, a failed cell, an interrupt, a kill), and the
-command prints its path. A kill of the command
-itself is not trapped: `probe-run`'s parent-death signal stops the group's process, which
-stops its service, and the cap ends what stays. It writes no record and leaves the
-throwaway identity's keys in its `prove-card-record-*` directory under `TMPDIR`; any other
-end of the command removes them. A service that dies by a
-signal ends its worker, which reads its closed input on a thread of its own, also while
-the provider loads. That does not cover the time before the worker's `run_worker` runs
-(FlashHead lite imports torch first), a load step that holds the interpreter lock, a
-worker not built on `run_worker`, nor the compiler's helper processes, which no input
-thread ends.
+`kill_failed`, and the command writes the record, starts no later group and exits non-zero.
+A service that had exited before its stop has `stop_to_exit_ms` `not_measured` with
+`exited_before_stop`. An interrupt (INT or TERM) ends the command with one line, after any
+kill that is running has ended. Each group's service log is written beside the record from
+the service's start, so it is there however the group ends (cells done, a failed cell, an
+interrupt, a kill), and the command prints its path. A kill of the command itself is not
+trapped: `probe-run`'s parent-death signal stops the group's process, which stops its
+service, and the cap ends what stays. It writes no record and leaves the throwaway
+identity's keys in its `prove-card-record-*` directory under `TMPDIR`; any other end of the
+command removes them. A service that dies by a signal ends its worker, which reads its
+closed input on a thread of its own, also while the provider loads. That does not cover the
+time before the worker's `run_worker` runs (FlashHead lite imports torch first), a load step
+that holds the interpreter lock, a worker not built on `run_worker`, nor the compiler's
+helper processes, which no input thread ends.
 
 The record is written however a group ends, from the fragment each group's process
 rewrites after every cell and once more when the group ends (whole or absent, never half
