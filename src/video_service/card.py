@@ -58,7 +58,6 @@ def _output_of(command: list[str]) -> str:
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
-            text=True,
         )
     except OSError as error:
         message = "nvidia-smi did not start"
@@ -72,10 +71,14 @@ def _output_of(command: list[str]) -> str:
     if process.returncode != 0:
         message = "nvidia-smi failed"
         raise CardReadingError(message)
-    return output
+    try:
+        return output.decode()
+    except UnicodeDecodeError as error:
+        message = "nvidia-smi printed text that is not UTF-8"
+        raise CardReadingError(message) from error
 
 
-def _abandon(process: subprocess.Popen[str]) -> None:
+def _abandon(process: subprocess.Popen[bytes]) -> None:
     """Kill `process`, wait at most the reap bound for it and its output, let go."""
     process.kill()
     try:

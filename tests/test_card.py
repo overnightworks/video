@@ -68,6 +68,7 @@ def test_health_reports_the_used_memory_of_the_reading(
         "printf '7123\\n'",
         "printf '7123, 4096\\n'",
         "printf '[N/A], [N/A], [N/A]\\n'",
+        "printf '\\377\\376\\n'",
     ],
     ids=[
         "is-missing",
@@ -77,6 +78,7 @@ def test_health_reports_the_used_memory_of_the_reading(
         "prints-one-figure",
         "prints-two-figures",
         "prints-not-available",
+        "prints-undecodable-bytes",
     ],
 )
 def test_an_nvidia_smi_that_cannot_say_is_an_error_and_health_reports_no_memory_used(
