@@ -74,7 +74,7 @@ from video_provider_fake import FakeProvider
 def write_reading(name):
     if name in os.environ:
         reading = Path(os.environ["NVIDIA_SMI_READING"])
-        temporary = reading.with_suffix(".tmp")
+        temporary = reading.with_suffix(".worker")
         temporary.write_text(os.environ[name])
         temporary.replace(reading)
 

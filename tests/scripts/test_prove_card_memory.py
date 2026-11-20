@@ -16,6 +16,7 @@ import pytest
 
 import card_drive
 import card_identity
+from card_memory import PEAK_FIGURES
 from card_record import (
     FREE_MEMORY_LINE,
     MEMORY_FIGURES,
@@ -392,6 +393,16 @@ def test_a_dry_run_records_the_memory_figures_as_not_measured_and_samples_no_car
     assert not run.nvidia_smi_log.exists()
 
 
+def _unmeasured_for(entry: dict, reason: Reason) -> bool:
+    """Whether the start (line and value kept) and the peaks are not measured."""
+    start = entry["start_to_ready_ms"]
+    return (
+        {"value", "line"} <= start.keys()
+        and (start["verdict"], start["reason"]) == (Verdict.NOT_MEASURED, reason)
+        and all(is_not_measured(entry[name], reason) for name in PEAK_FIGURES)
+    )
+
+
 def _ended_by_a_step(error: str, group: str) -> str:
     """The one line the group's process wrote for a failed step; no traceback."""
     ended = [line for line in lines(error) if line.startswith(f"the {group} group")]
@@ -417,6 +428,7 @@ def test_a_provider_that_fails_to_load_ends_its_group_before_its_first_cell(
     assert is_not_measured(record["cells"]["lag"], Reason.EARLIER_GROUP_FAILED)
     assert entry["provider_load"]["outcome"] == value_of("failed")
     assert entry["provider_load"]["reason"] == value_of("provider_failed")
+    assert _unmeasured_for(entry, Reason.PROVIDER_NOT_LOADED)
     assert entry["look_preparations"] == []
     assert len(run.probe_run_log.read_text().splitlines()) == 1
     assert [log.name for log in run.logs()] == ["record.wire.log"]
@@ -438,6 +450,11 @@ def test_a_provider_that_fails_to_load_in_a_later_group_keeps_the_cells_before_i
     assert record["cells"]["clear"]["outcome"]["value"] == "cancelled"
     assert is_not_measured(record["cells"]["lag"], Reason.PROVIDER_NOT_LOADED)
     assert record["services"]["lag"]["provider_load"]["outcome"] == value_of("failed")
+    assert _unmeasured_for(record["services"]["lag"], Reason.PROVIDER_NOT_LOADED)
+    assert record["services"]["wire"]["start_to_ready_ms"]["verdict"] in {
+        Verdict.MET,
+        Verdict.MISSED,
+    }
     assert run.processes() == []
 
 
@@ -463,6 +480,7 @@ def test_a_look_that_is_not_prepared_ends_its_group_naming_the_look_and_the_reas
     assert is_not_measured(record["cells"]["clear"], Reason.LOOK_NOT_PREPARED)
     assert is_not_measured(record["cells"]["lag"], Reason.EARLIER_GROUP_FAILED)
     assert entry["provider_load"]["outcome"] == value_of("ok")
+    assert _unmeasured_for(entry, Reason.LOOK_NOT_PREPARED)
     assert prepared == {
         name: "failed" if name == look else "ok" for name in card_identity.LOOK_NAMES
     }
@@ -481,4 +499,5 @@ def test_a_provider_root_without_the_worker_ends_the_group_as_a_failed_load(
     assert status != 0
     assert "provider_failed" in _ended_by_a_step(error, "lag")
     assert is_not_measured(record["cells"]["lag"], Reason.PROVIDER_NOT_LOADED)
+    assert _unmeasured_for(record["services"]["lag"], Reason.PROVIDER_NOT_LOADED)
     assert run.processes() == []

@@ -53,7 +53,7 @@ from card_drive import (
     timed,
 )
 from card_identity import LOOK_NAMES, throwaway_identity
-from card_memory import GroupWatch
+from card_memory import GroupWatch, peaks_of_a_failed_group
 from card_record import (
     ENCODER_CORES_LINE,
     FIRST_OUTPUT_LINE,
@@ -527,6 +527,7 @@ def _run_group(
         else:
             reason, message = failure
             cells.update(completed_cells(names, {}, reason))
+            figures["start_to_ready_ms"] |= not_measured(reason)
             print(f"the {group} group: {message}", file=sys.stderr)
             save(GroupOutcome.RUNNING)
             outcome = GroupOutcome.FAILED
@@ -703,6 +704,7 @@ def _gather(
             if watch is None
             else watch.entry()
         )
+        top_figures |= peaks_of_a_failed_group(parts.get("cells", {}), top_figures)
         if watch is not None and watch.stop is not None:
             reason = gathered.later = watch.stop.cell_reason
             # A cell the stop failed may have left later cells `group_ended`.

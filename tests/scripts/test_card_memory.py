@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Final
 import pytest
 
 from card_drive import KILL_WITHIN_SECONDS, Kill
-from card_memory import GroupWatch, Stop
+from card_memory import PEAK_FIGURES, GroupWatch, Stop, peaks_of_a_failed_group
 from card_record import (
     FREE_MEMORY_LINE,
     MEMORY_STOP,
@@ -17,6 +17,7 @@ from card_record import (
     Reason,
     StopReason,
     Verdict,
+    not_measured,
     value_of,
 )
 from support.prove_card_support import is_not_measured
@@ -346,3 +347,46 @@ def test_a_probe_run_that_outlives_the_kill_gives_no_status_after_a_bounded_wait
     assert watch.stop is not None
     assert None not in child.waited
     assert child.waited[-1] <= KILL_WITHIN_SECONDS
+
+
+@pytest.mark.parametrize(
+    ("cell_reasons", "kept", "expected"),
+    [
+        ([Reason.PROVIDER_NOT_LOADED], None, Reason.PROVIDER_NOT_LOADED),
+        ([Reason.LOOK_NOT_PREPARED], None, Reason.LOOK_NOT_PREPARED),
+        (
+            [Reason.LOOK_NOT_PREPARED, Reason.PROVIDER_NOT_LOADED],
+            None,
+            Reason.PROVIDER_NOT_LOADED,
+        ),
+        ([Reason.LOOK_NOT_PREPARED], Reason.SAMPLE_FAILED, Reason.LOOK_NOT_PREPARED),
+        (
+            [Reason.PROVIDER_NOT_LOADED],
+            Reason.WATCHDOG_BREACH,
+            Reason.PROVIDER_NOT_LOADED,
+        ),
+    ],
+)
+def test_a_failed_groups_peaks_become_the_cells_reason_except_those_already_unmeasured(
+    cell_reasons: list[Reason], kept: Reason | None, expected: Reason
+) -> None:
+    cells = {f"cell{i}": not_measured(reason) for i, reason in enumerate(cell_reasons)}
+    entry = {name: value_of(1) for name in PEAK_FIGURES}
+    entry[MEMORY_STOP] = {"reason": StopReason.BELOW_FLOOR}
+    if kept is not None:
+        entry[MemoryFigure.USED_MOST] = not_measured(kept)
+
+    figures = peaks_of_a_failed_group(cells, entry)
+
+    assert MEMORY_STOP not in figures
+    for name in PEAK_FIGURES:
+        if name == MemoryFigure.USED_MOST and kept is not None:
+            assert name not in figures
+        else:
+            assert is_not_measured(figures[name], expected)
+
+
+def test_a_group_with_no_failed_cell_keeps_every_peak_figure() -> None:
+    entry = {name: value_of(1) for name in PEAK_FIGURES}
+
+    assert peaks_of_a_failed_group({"cell": value_of(3)}, entry) == {}

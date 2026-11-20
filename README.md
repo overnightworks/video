@@ -178,19 +178,27 @@ was not prepared (card mode only; the fake never fails) runs no cell: each of it
 `not_measured` with the reason `provider_not_loaded` or `look_not_prepared`, its process
 prints one line on standard error naming the group, the failed step (the look by name) and
 the reason the service logged, and its service entry keeps the logged outcome, reason and
-duration of the load and of each preparation. A failed group ends the command: each cell of
-a group not started is `earlier_group_failed`. A group whose process ended without a fragment, or with
-one it did not end (the cap, a kill), keeps the cells its fragment holds, and every cell
-and every figure of its service that the fragment lacks is `no_fragment`. An interrupt
-(INT or TERM) writes no record.
+duration of the load and of each preparation. Nothing rendered in such a group, so its
+entry's start (`start_to_ready_ms`, which keeps its line and value) and its least free,
+most used and beyond-the-cap card memory are `not_measured` with the same reason, while
+the used memory before and after and the floor stay values. A failed group ends the
+command: each cell of a group not started is `earlier_group_failed`. When a failed load
+coincides with a breach (see below), the cells the failed step made `provider_not_loaded`
+or `look_not_prepared` keep that reason, and the breach shows in `memory_stop`, in the
+unfinished cells and in the later groups only. A group whose process ended without a
+fragment, or with one it did not end (the cap, a kill), keeps the cells its fragment holds,
+and every cell and every figure of its service that the fragment lacks is `no_fragment`.
+An interrupt (INT or TERM) writes no record.
 
 The record is JSON. Its figures come from the service's own log lines, the session's events
 and what the viewers receive: per sentence the first output, the frames against the audio's
 length and the late frames; the time from a clear to its confirmation and to the last loud
 audio frame a viewer receives (the clear waits for the viewer's first loud audio frame, for
-at most half the audio's length; when none reached the viewer before the clear, the figure
-is `not_measured` with the reason `no_loud_audio_before_clear`, in both modes); per viewer (one, and each of five) the frames per second at
-the peer in a sentence and between sentences, the loud audio frames between sentences, the
+at most a share of the audio's length that stays below the whole, so that a quiet file
+still clears while audio is queued; when none reached the viewer before the clear, the
+figure is `not_measured` with the reason `no_loud_audio_before_clear`, in both modes); per
+viewer (one, and each of five) the frames per second at the peer in a sentence and between
+sentences, the loud audio frames between sentences, the
 gaps in the video timestamps and the frame size the provider drew; the service's CPU, read
 from its own process's accounting, at no, one and five viewers, and the encoders' share at
 five; each session's opening time; each service's start, the provider's load and each look's
@@ -210,8 +218,9 @@ recording.
 Without `--dry-run` the command drives `flashhead-lite` with the operator's
 `VIDEO_PROVIDER_ROOT` and `VIDEO_CARD_MEMORY_MB`, passed to the service unchanged and
 checked first against the service's own settings, and ends with one line naming the setting
-when either is missing or invalid. `--memory-floor-mb` is the free card memory in MiB (0 or more) the
-run keeps beside the provider's cap (default 1024, the program plan's "free memory at least
+when either is missing or invalid. `--memory-floor-mb` is the free card memory in MiB (0 or
+more) the run keeps beside the provider's cap (default 1024, the program plan's "free memory
+at least
 1 GB"); every memory figure is in MiB. The command samples the card itself, from outside the
 group, and refuses a group, before it starts or while its service does not yet exist, if
 the card's free memory minus the cap is below the floor, or a sample fails: nothing of the
@@ -228,8 +237,9 @@ existed, the used memory after, their difference and what the run added at its p
 the cap; the least free is judged against the line "free card memory at least 1024 MiB at
 the peak". After a breach whose sample failed or whose watchdog failed, those three figures
 are `not_measured` with the reason `sample_failed` or `watchdog_breach`, since the samples
-cannot say the peak; a breach below the floor keeps them. The watchdog cannot stop an allocation faster than one interval (the provider's
-cap does), memory outside the cap (the CUDA context, compiler peaks), which it sees only
+cannot say the peak; a breach below the floor keeps them. The watchdog cannot stop an
+allocation faster than one interval (the provider's cap does), memory outside the cap (the
+CUDA context, compiler peaks), which it sees only
 afterwards, the voice's own growth, nor a driver or `nvidia-smi` that reports wrong figures;
 it reads GPU 0 only.
 

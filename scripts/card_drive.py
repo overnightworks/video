@@ -583,12 +583,12 @@ def running_service(
     } | {
         "PYTHONUNBUFFERED": "1",
         "SSL_CERT_FILE": str(identity.ca_file),
-        "VIDEO_PORT": str(port := _free_port()),
-        "VIDEO_CONFIG_FILE": str(identity.config_file),
-        "VIDEO_LOOKS_FILE": str(identity.looks_file),
-        "VIDEO_LOOK_SOURCES": identity.look_sources,
-        "VIDEO_MAX_LAG_MS": str(max_lag_ms),
-        "VIDEO_DRAIN_SECONDS": str(DRAIN_SECONDS),
+        f"{ENVIRONMENT_PREFIX}PORT": str(port := _free_port()),
+        f"{ENVIRONMENT_PREFIX}CONFIG_FILE": str(identity.config_file),
+        f"{ENVIRONMENT_PREFIX}LOOKS_FILE": str(identity.looks_file),
+        f"{ENVIRONMENT_PREFIX}LOOK_SOURCES": identity.look_sources,
+        f"{ENVIRONMENT_PREFIX}MAX_LAG_MS": str(max_lag_ms),
+        f"{ENVIRONMENT_PREFIX}DRAIN_SECONDS": str(DRAIN_SECONDS),
         **provider,
     }
     with log.open("wb") as output:
