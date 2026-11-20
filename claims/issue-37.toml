@@ -3,6 +3,6 @@ agent = "Claude 76251661-cb30-4447-a3ad-32a83a396daa"
 role = "builder"
 base = "ace1b3ffb4c1fc2c13c4d5854f0c1b6dd9747124"
 branch = "claude/issue-37-p3c2-video-s-gpu-image-with-the-flashhea"
-scope = [".dockerignore", ".github", "Dockerfile", "README.md", "docs/ARCHITECTURE.md", "pyproject.toml", "quality/config.toml", "tests"]
+scope = [".dockerignore", ".github", "Dockerfile", "README.md", "docs/ARCHITECTURE.md", "pyproject.toml", "quality/baseline.toml", "quality/config.toml", "tests"]
 opened_commit = "d866f2ae9e1f34e06bfc4d5eab50d209f82d128f"
 whole_reason = "The image, its test, the jobs that build it and the documents prove one delivery change together."
