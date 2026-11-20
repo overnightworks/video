@@ -1,0 +1,8 @@
+claim_id = "474a556bb67747b198efc65c5eb62cbf"
+agent = "Claude 8d6968f0-90db-42e6-8c2e-47e423be7ebd"
+role = "builder"
+base = "a716f2392c2d4fdc4767275cf059dcbe70577566"
+branch = "claude/issue-44-p3d2b2-card-reading-fragments"
+scope = ["README.md", "docs/ARCHITECTURE.md", "scripts/card_record.py", "scripts/prove_card.py", "src/video_service/card.py", "tests/scripts/test_prove_card.py", "tests/test_card.py"]
+opened_commit = "d04b8769a8b0674adeb29b149e3e39f97472c1e4"
+whole_reason = "The bounded card reading and the record from every group's fragment are the two foundations card mode's guard builds on, each with its caller today, its test and its documentation line."
