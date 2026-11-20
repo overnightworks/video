@@ -40,8 +40,8 @@ class Line:
         return Verdict.MET if self.compare(value, self.limit) else Verdict.MISSED
 
 
-# Each line is the program plan's section 7 budget row (overnightworks/video#1);
-# the parent item (#16) requires the record to meet them or name each miss.
+# Each line is a budget row the card proof confirms: the record meets it or names
+# the miss.
 FIRST_OUTPUT_LINE: Final = Line(
     "first PCM byte to first frame out at most 1000 ms", 1000, operator.le
 )
