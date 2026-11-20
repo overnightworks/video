@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
 import signal
@@ -26,7 +27,7 @@ from card_record import Reason, Verdict
 from video_service.provider_process import ProcessBounds
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterator
 
 REPOSITORY_ROOT: Final = Path(__file__).resolve().parents[2]
 SCRIPTS: Final = REPOSITORY_ROOT / "scripts"
@@ -715,6 +716,60 @@ def test_a_failed_group_ends_the_command_and_no_later_group_starts(run: Run) -> 
     )
     assert len(run.probe_run_log.read_text().splitlines()) == 1
     assert [log.name for log in run.logs()] == ["record.wire.log"]
+
+
+class _ServiceAtItsStop:
+    """What the proof reads of a service whose cells have ended."""
+
+    start_to_ready_ms = 1
+    stop_to_exit_ms = 0
+
+    def lines(self, event: str) -> list[dict[str, object]]:
+        return [{"outcome": "ok"}] if event == "provider_load.ended" else []
+
+
+def test_a_failed_cells_reasons_are_in_the_fragment_before_the_service_stops(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write_audio(tmp_path / "speech.wav", seconds=AUDIO_SECONDS)
+    arguments = prove_card._arguments(  # noqa: SLF001 - the group's run is the unit
+        [
+            *("--record", str(tmp_path / "record.json")),
+            *("--audio", str(tmp_path / "speech.wav")),
+            *("--dry-run", "--cells", "sentences", "clear", "looks"),
+        ]
+    )
+    arguments.fragment = tmp_path / "wire.json"
+    held_at_the_stop: dict = {}
+
+    async def finishes(_drive: object) -> dict:
+        return {"done": True}
+
+    async def raises(_drive: object) -> dict:
+        message = "the cell broke"
+        raise RuntimeError(message)
+
+    @contextlib.contextmanager
+    def service_whose_stop_fails(
+        *_arguments: object, **_keywords: object
+    ) -> Iterator[_ServiceAtItsStop]:
+        yield _ServiceAtItsStop()
+        held_at_the_stop.update(json.loads(arguments.fragment.read_text()))
+        raise card_drive.DriveError
+
+    monkeypatch.setattr(prove_card, "running_service", service_whose_stop_fails)
+    monkeypatch.setitem(
+        prove_card.GROUPS,
+        "wire",
+        {"sentences": finishes, "clear": raises, "looks": finishes},
+    )
+
+    with pytest.raises(card_drive.DriveError):
+        prove_card._run_group("wire", arguments, tmp_path)  # noqa: SLF001
+
+    assert held_at_the_stop["cells"]["sentences"] == {"done": True}
+    assert _not_measured(held_at_the_stop["cells"]["clear"], Reason.CELL_FAILED)
+    assert _not_measured(held_at_the_stop["cells"]["looks"], Reason.GROUP_ENDED)
 
 
 def test_a_fragment_is_whole_or_absent_when_its_rename_is_interrupted(

@@ -378,7 +378,8 @@ def _run_group(
 
     The fragment is rewritten after each cell and once more when the group ends. A cell
     that raises an `Exception` ends the group: it is `cell_failed`, the cells after it
-    `group_ended`. Anything else, an interrupt's `SystemExit` included, is not caught.
+    `group_ended`, and the fragment holds both before the service stops. Anything
+    else, an interrupt's `SystemExit` included, is not caught.
     """
     audio = read_audio(arguments.audio)
     names = _chosen(group, arguments)
@@ -414,6 +415,7 @@ def _run_group(
                     cells.update(
                         completed_cells(names[position + 1 :], {}, Reason.GROUP_ENDED)
                     )
+                    save(GroupOutcome.RUNNING)
                     return GroupOutcome.FAILED
                 save(GroupOutcome.RUNNING)
             return GroupOutcome.DONE
