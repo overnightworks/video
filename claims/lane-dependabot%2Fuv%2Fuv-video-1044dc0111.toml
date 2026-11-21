@@ -1,0 +1,7 @@
+claim_id = "088590607b3f48158fd5f16024d40ff1"
+agent = "Claude 96f52b2d-d9f6-4ad8-a5ea-2d4090292ae7"
+role = "builder"
+base = "01106b64d48f74c0ec52d6862228c13ba1fbe0b5"
+branch = "dependabot/uv/uv-video-1044dc0111"
+scope = ["pyproject.toml", "uv.lock"]
+opened_commit = "7cc2394e7ca673489eb9bb4d390371d13e30d647"
