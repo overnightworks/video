@@ -65,12 +65,14 @@ esac
 # The `flashhead-lite` worker of a provider root: the fake provider with the steps a
 # case scripts through the environment, each writing a reading for the stand-in. It
 # fails its load for the group the case names, and fails the preparation of
-# the looks the case lists. It renders in chunks as the case's environment says. At its
+# the looks the case lists. It renders in chunks as the case's environment says, and
+# holds the end of every sentence until the file the case names exists. At its
 # start it writes the `HOME` and `TMPDIR` it sees to
 # the file the case names and puts one entry into its `HOME`, as a compiler would.
 WORKER_STAND_IN: Final = f"""#!{sys.executable}
 import json
 import os
+import threading
 import time
 from pathlib import Path
 
@@ -113,8 +115,23 @@ def seconds(name):
     return float(os.environ.get(name, 0))
 
 
+def gate_opened_by(name):
+    if name not in os.environ:
+        return None
+    opened = threading.Event()
+
+    def watch():
+        while not Path(os.environ[name]).exists():
+            time.sleep(0.01)
+        opened.set()
+
+    threading.Thread(target=watch, daemon=True).start()
+    return opened
+
+
 run_worker(
     Scripted(
+        finish_gate=gate_opened_by("WORKER_GATE_FILE"),
         refuses=os.environ.get("WORKER_REFUSES", "").split(),
         render_seconds=seconds("WORKER_RENDER_SECONDS"),
         idle_render_seconds=seconds("WORKER_IDLE_RENDER_SECONDS"),
@@ -123,6 +140,8 @@ run_worker(
 )
 """
 CAP_MB: Final = 4000
+# Beyond what a test holds a sentence for.
+HELD_SENTENCE_LAG_MS: Final = 600_000
 # Long enough that the cells never finish before the watchdog has sampled.
 LOAD_SECONDS: Final = 30
 USED_MB: Final = 2000
@@ -274,6 +293,17 @@ class Run:
             "WORKER_CHUNK_FRAMES": str(chunk_frames),
             "WORKER_RENDER_SECONDS": str(render_seconds),
             "WORKER_IDLE_RENDER_SECONDS": str(idle_render_seconds),
+        }
+
+    def hold_sentences_until(self, gate: Path) -> None:
+        """Have the provider hold the end of each sentence until `gate` exists.
+
+        The service ends a session whose provider call outlasts its lag bound, so the
+        bound is raised beyond what a test waits.
+        """
+        self.environment = self.environment | {
+            "WORKER_GATE_FILE": str(gate),
+            "VIDEO_MAX_LAG_MS": str(HELD_SENTENCE_LAG_MS),
         }
 
     def fail_the_load_of(self, group: str) -> None:

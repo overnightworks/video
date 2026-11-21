@@ -264,10 +264,13 @@ def test_a_file_pressed_again_while_it_plays_is_spoken_again(
 ) -> None:
     second = run.directory / "second.wav"
     write_audio(second, seconds=SECOND_SECONDS)
-    command = live(audio=[second])
+    gate = run.directory / "sentences.gate"
+    run.hold_sentences_until(gate)
+    command = live(audio=[second], card=True)
 
     assert command.post(f"/speak/{second.name}") == httpx2.codes.NO_CONTENT
     assert command.post(f"/speak/{second.name}") == httpx2.codes.NO_CONTENT
+    gate.touch()
 
     assert run.wait_until(
         lambda: command.sentences() == [SECOND_SECONDS * 1000] * 2,
