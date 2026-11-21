@@ -1,0 +1,13 @@
+dependency_paths = [
+  ".github/workflows/",
+  "Dockerfile",
+  "pyproject.toml",
+  "uv.lock",
+  "packages/client/pyproject.toml",
+  "providers/fake/pyproject.toml",
+  "providers/provider-contract/pyproject.toml",
+  "providers/flashhead-lite/pyproject.toml",
+  "providers/flashhead-lite/uv.lock",
+  "packages/browser/package.json",
+  "packages/browser/pnpm-lock.yaml",
+]
