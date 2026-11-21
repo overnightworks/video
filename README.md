@@ -329,6 +329,11 @@ playback and the state is `ended`.
 
 Two workflows release, each dispatched with its version as the only input.
 
+```sh
+gh workflow run release-distributions.yml -f version=X.Y.Z
+gh workflow run release.yml -f version=YYYY.MM.DD.N
+```
+
 - `.github/workflows/release-distributions.yml` takes `X.Y.Z`, which every
   `pyproject.toml` and `packages/*/package.json` of the repository must stand at
   (`uv run python scripts/check_release.py X.Y.Z` checks it). It proves the client installs
