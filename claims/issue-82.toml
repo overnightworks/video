@@ -1,8 +1,0 @@
-claim_id = "f6946ffd7e514866b30fd4a991f53719"
-agent = "Claude 96f52b2d-d9f6-4ad8-a5ea-2d4090292ae7"
-role = "builder"
-base = "a92e6f213d0800ac0dcd69c36221cc8c3d35e364"
-branch = "claude/issue-82-release-video-s-image-under-the-app-s-da"
-scope = [".github/workflows/release-distributions.yml", ".github/workflows/release.yml", "README.md", "docs/ARCHITECTURE.md"]
-opened_commit = "fb6186decf3293b2a9e63d84449a28ead226f3ae"
-whole_reason = "Splitting one release workflow into two moves its jobs between the files, and the two documents that name the release change with them."
