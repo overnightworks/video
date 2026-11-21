@@ -224,7 +224,8 @@ def throwaway_identity(
 ) -> Iterator[Identity]:
     """Serve the issuer and the looks `looks` under `directory` until the block ends.
 
-    `alpha_image` is served unchanged as the look `alpha`, in place of its square.
+    `alpha_image` is served unchanged as the look `alpha`, in place of its square, when
+    `looks` has it.
     """
     private = rsa.generate_private_key(public_exponent=65537, key_size=_KEY_BITS)
     private_pem = private.private_bytes(
@@ -234,9 +235,10 @@ def throwaway_identity(
     ).decode()
     jwk = json.loads(jwt.algorithms.RSAAlgorithm.to_jwk(private.public_key()))
     jwk |= {"kid": _KEY_IDENTIFIER, "use": "sig", "alg": _ALGORITHM}
-    images = {name: _look_png(name) for name in looks}
-    if alpha_image is not None:
-        images["alpha"] = alpha_image
+    images = {
+        name: _look_png(name) if name != "alpha" or alpha_image is None else alpha_image
+        for name in looks
+    }
     files = {_KEY_SET_PATH: json.dumps({"keys": [jwk]}).encode()} | {
         f"{LOOKS_PATH}{name}": data for name, data in images.items()
     }
