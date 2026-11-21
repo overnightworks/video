@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import itertools
 import os
 import signal
 import socket
@@ -136,6 +137,7 @@ class LivePage:
         self._audio = audio
         self._over = over
         self._sending = asyncio.Lock()
+        self._sentence_numbers = itertools.count(1)
 
     def routes(self, package: Path) -> list[Route | Mount]:
         """The relay, the buttons, the built `package` and the page."""
@@ -193,7 +195,11 @@ class LivePage:
         name = request.path_params["name"]
         if name not in self._audio:
             return Response(status_code=HTTPStatus.NOT_FOUND)
-        return await self._sent(lambda: self._session.speak(name, self._audio[name]))
+        # The wire refuses an id that is still queued, so each press has its own.
+        sentence = f"sentence-{next(self._sentence_numbers)}"
+        return await self._sent(
+            lambda: self._session.speak(sentence, self._audio[name])
+        )
 
     async def _clear(self, _request: Request) -> Response:
         return await self._sent(self._session.clear)

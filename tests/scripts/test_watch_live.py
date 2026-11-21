@@ -242,6 +242,24 @@ def test_the_page_lists_the_audio_files_and_speaks_the_one_it_is_told_to(
     command.ended()
 
 
+def test_a_file_pressed_again_while_it_plays_is_spoken_again(
+    live: Callable[..., Live], run: Run
+) -> None:
+    second = run.directory / "second.wav"
+    write_audio(second, seconds=SECOND_SECONDS)
+    command = live(audio=[second])
+
+    assert command.post(f"/speak/{second.name}") == httpx2.codes.NO_CONTENT
+    assert command.post(f"/speak/{second.name}") == httpx2.codes.NO_CONTENT
+
+    assert run.wait_until(
+        lambda: len(command.sentences()) == 2, SENTENCE_WITHIN_SECONDS
+    )
+    command.post("/end")
+    status, _ = command.ended()
+    assert status == 0
+
+
 def test_clear_is_accepted_while_a_sentence_plays(
     live: Callable[..., Live], run: Run
 ) -> None:
