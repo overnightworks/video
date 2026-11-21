@@ -275,7 +275,7 @@ viewers end with it.
 - `looks` has one key per look the look file names, whatever its state. A look's
   `ready` is true exactly when a session for it would open now: the provider is
   ready and the look's image passed every start check
-  ([ARCHITECTURE](ARCHITECTURE.md#looks)) and the service is not draining. A look
+  ([CONFIG-5](configuration.md#look-file)) and the service is not draining. A look
   that failed stays false and the other looks serve.
 - `sessions.open` is the number of sessions open now; `sessions.limit` is
   `VIDEO_MAX_SESSIONS`.

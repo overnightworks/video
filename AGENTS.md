@@ -21,7 +21,6 @@ Run each from the repository root.
 - `looks.py` is the only module that fetches a look's image, and only at start; nothing fetches during a session.
 - The `fake` provider is a development dependency: no image installs it, and nothing under `src/` imports it at module level.
 - The submodule `providers/flashhead-lite/soulx-flashhead` stays unchanged; every adaptation lives in the provider's own modules.
-- The service offers no `/docs`, `/redoc`, `/openapi.json`, look administration, upload or recording.
 - A new mandatory CI job is added by its display name to `mandatory_jobs` in `quality/config.toml`; the required check is `quality / verdict`.
 - A new root entry is declared in `quality/config.toml` with a reason, or lives in its owner's directory.
 - `sonar-project.properties` carries only the keys the quality gate allows.
@@ -35,7 +34,9 @@ Run each from the repository root.
 
 ## Documents
 
-- `README.md`: read when you start or configure the service.
+- `README.md`: read when you start the service.
 - `docs/VISION.md`: read when you judge whether a change still serves the service's purpose.
 - `docs/ARCHITECTURE.md`: read when you change a building block, the trust model or delivery.
 - `docs/wire.md`: read when you change or call the wire.
+- `docs/configuration.md`: read when you change a setting, the look file or the caller file.
+- `docs/runbooks/`: read when you run the card proof or the live page.

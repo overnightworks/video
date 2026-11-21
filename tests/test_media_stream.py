@@ -1,4 +1,4 @@
-"""A viewer's offer gets one stream: Opus and VP8, idle between sentences."""
+"""A viewer's offer gets one stream: Opus and VP8, idle between sentences (WIRE-10)."""
 
 from __future__ import annotations
 

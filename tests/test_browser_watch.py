@@ -1,4 +1,4 @@
-"""A browser page watches a session through its app's route, in headless Chromium."""
+"""A browser page watches a session through its app's route in Chromium (WIRE-14)."""
 
 from __future__ import annotations
 

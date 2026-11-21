@@ -1,4 +1,4 @@
-"""The settings and the look file: what the process refuses to start on."""
+"""What the process refuses to start on: settings and files (CONFIG-1 to 4, 6)."""
 
 from __future__ import annotations
 

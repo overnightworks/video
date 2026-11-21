@@ -99,6 +99,7 @@ def test_a_child_without_a_cap_gets_none(
     stub_environment: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """CONFIG-3: the child's cap is the launch's value, never an inherited one."""
     if ambient is None:
         monkeypatch.delenv(CARD_MEMORY_MB_ENV, raising=False)
     else:
@@ -114,6 +115,7 @@ def test_the_cap_and_the_image_bound_of_the_launch_replace_inherited_values(
     stub_environment: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """CONFIG-3: the child's cap is the launch's value, never an inherited one."""
     monkeypatch.setenv(CARD_MEMORY_MB_ENV, "77")
     monkeypatch.setenv(MAX_IMAGE_PIXELS_ENV, "88")
 
