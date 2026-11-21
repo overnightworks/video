@@ -171,17 +171,25 @@ def test_the_service_is_given_the_portrait_as_its_one_look(
     command.ended()
 
 
+@pytest.mark.parametrize("nested", [False, True], ids=["exec", "timeout-as-child"])
+@pytest.mark.parametrize("stop", [signal.SIGINT, signal.SIGTERM])
 def test_a_stop_signal_ends_the_service_and_the_command(
-    live: Callable[..., Live],
+    run: Run, live: Callable[..., Live], stop: signal.Signals, *, nested: bool
 ) -> None:
+    if nested:
+        run.nest_timeout_under_probe_run()
     command = live()
     assert command.address
 
-    command.command.send_signal(signal.SIGTERM)
+    command.command.send_signal(stop)
 
+    # Sooner than the page's idle time would end it.
+    assert command.run.wait_until(
+        lambda: command.command.poll() is not None, ENDED_WITHIN_SECONDS
+    )
     status, _ = command.ended()
     assert status == 0
-    assert "stopped by SIGTERM" in command.run.printed()
+    assert f"stopped by {stop.name}" in command.run.printed()
 
 
 def test_a_service_that_dies_ends_the_command_with_a_failure(

@@ -48,6 +48,12 @@ echo "$*" >> "$PROBE_RUN_LOG"
 while [ -n "$PROBE_RUN_HOLD" ] && [ ! -e "$PROBE_RUN_HOLD" ]; do sleep 0.05; done
 exec setpriv --pdeathsig TERM timeout "$@"
 """
+# The real `probe-run` keeps its script running and starts `timeout` as its child, so
+# the group's process has `timeout` as its parent and `probe-run` above that.
+NESTED_PROBE_RUN_STAND_IN: Final = PROBE_RUN_STAND_IN.replace(
+    'exec setpriv --pdeathsig TERM timeout "$@"',
+    'setpriv --pdeathsig TERM timeout "$@" &\nwait $!',
+)
 # A stand-in for `nvidia-smi` that answers with what the test wrote to the reading file:
 # a line `used, free, total`, `fail` or `hang`, after the delay the test sets; every
 # answer it gives is logged, so a test can tell which starts came after a reading.
@@ -331,6 +337,10 @@ class Run:
         if not self.nvidia_smi_answers.exists():
             return 0
         return self.nvidia_smi_answers.read_text().splitlines().count(reading)
+
+    def nest_timeout_under_probe_run(self) -> None:
+        """Have the `probe-run` stand-in keep running with `timeout` as its child."""
+        (self.directory / "bin" / "probe-run").write_text(NESTED_PROBE_RUN_STAND_IN)
 
     def in_card_mode(self, *, cap_mb: int = CAP_MB) -> None:
         """Set the operator's two provider settings, for a run without `--dry-run`."""

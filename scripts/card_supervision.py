@@ -30,7 +30,7 @@ from card_drive import (
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from card_drive import Kill, Process, ProcessControl
+    from card_drive import Kill, Lineage, Process, ProcessControl
     from card_memory import Ender, GroupWatch, Stop
 
 CHILD_MARKER: Final = "PROVE_CARD_GROUP"
@@ -130,6 +130,23 @@ def named_pid(fragment: Path) -> int | None:
         return None
 
 
+def lineage_below_probe_run(
+    group: Process, probe_run: Process, control: ProcessControl
+) -> Lineage | None:
+    """The group's process and what lies between it and `probe-run`, or none.
+
+    The group's process is `probe-run`'s own child under a stand-in that executes into
+    `timeout`, and `timeout`'s child under the real `probe-run`, which keeps running
+    beside it. A process with another ancestry is no part of the group.
+    """
+    if group.parent == probe_run.pid:
+        return (group, probe_run)
+    between = read_process(group.parent, control)
+    if between is not None and between.parent == probe_run.pid:
+        return (group, between, probe_run)
+    return None
+
+
 def settled_at_group(
     probe_run: Process | None,
     fragment: Path,
@@ -138,20 +155,22 @@ def settled_at_group(
 ) -> bool:
     """Whether the pid file names the group's process, which settles the stop there.
 
-    The stop is sent only to a process whose parent is `probe-run`, checked by
-    `signal_if_unchanged`; `timeout` may have reaped the group's process and the kernel
-    reused its id. An id that names no process or another's child, and a check that
-    cannot be made, send nothing: the stop stays recorded and the end-of-group kill
-    follows. Where the id is not yet written or holds no number, the stop is not
-    settled and goes to `probe-run`.
+    The stop is sent only to a process below `probe-run` with no stranger between,
+    checked by `signal_if_unchanged`; `timeout` may have reaped the group's process and
+    the kernel reused its id. An id that names no process or one outside `probe-run`,
+    and a check that cannot be made, send nothing: the stop stays recorded and the
+    end-of-group kill follows. Where the id is not yet written or holds no number, the
+    stop is not settled and goes to `probe-run`.
     """
     if (group_pid := named_pid(fragment)) is None:
         return False
     if probe_run is not None:
         with suppress(OSError):
             group = read_process(group_pid, control)
-            if group is not None and group.parent == probe_run.pid:
-                signal_if_unchanged((group, probe_run), signum, control)
+            if group is not None:
+                lineage = lineage_below_probe_run(group, probe_run, control)
+                if lineage is not None:
+                    signal_if_unchanged(lineage, signum, control)
     return True
 
 
