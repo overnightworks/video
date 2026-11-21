@@ -139,12 +139,13 @@ def lineage_below_probe_run(
     `timeout`, and `timeout`'s child under the real `probe-run`, which keeps running
     beside it. A process with another ancestry is no part of the group.
     """
-    if group.parent == probe_run.pid:
-        return (group, probe_run)
-    between = read_process(group.parent, control)
-    if between is not None and between.parent == probe_run.pid:
-        return (group, between, probe_run)
-    return None
+    links = [group]
+    if group.parent != probe_run.pid:
+        between = read_process(group.parent, control)
+        if between is None or between.parent != probe_run.pid:
+            return None
+        links.append(between)
+    return (*links, probe_run)
 
 
 def settled_at_group(
