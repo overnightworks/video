@@ -23,6 +23,7 @@ import wave
 from contextlib import asynccontextmanager, contextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Final
 
 import httpx2
@@ -53,10 +54,12 @@ from video_client.wire import (
     RefusalCode,
     viewers_path,
 )
+from video_service.config import Settings
 from video_service.provider_process import ProcessBounds
+from video_service.providers import ProviderName
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
+    from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Mapping
 
     from websockets.asyncio.client import ClientConnection
 
@@ -79,7 +82,10 @@ STOP_SIGNALS: Final = (signal.SIGINT, signal.SIGTERM)
 _SIGNAL_EXIT_BASE: Final = 128
 _HOST: Final = "127.0.0.1"
 _PARENT_DEATH_COMMAND: Final = ("setpriv", "--pdeathsig", "KILL")
-_ENVIRONMENT_PREFIX: Final = "VIDEO_"
+# The service's own settings name the variables that configure it.
+ENVIRONMENT_PREFIX: Final[str] = Settings.model_config["env_prefix"]
+PROVIDER_VARIABLE: Final = f"{ENVIRONMENT_PREFIX}PROVIDER"
+FAKE_PROVIDER: Final = MappingProxyType({PROVIDER_VARIABLE: ProviderName.FAKE.value})
 _SET_CHILD_SUBREAPER: Final = 36
 # The interpreter this repository runs on is a standalone build whose `os` has no
 # pidfd calls, so they are the kernel's system calls, numbered alike on every
@@ -128,7 +134,9 @@ def read_audio(path: Path) -> Audio:
             )
             pcm = source.readframes(source.getnframes())
     except (OSError, EOFError, wave.Error) as error:
-        message = f"{path}: the audio cannot be read ({error})"
+        # An empty file or one cut inside its header raises an `EOFError` with no text.
+        reason = str(error) or "the file ends inside its header"
+        message = f"{path}: the audio cannot be read ({reason})"
         raise SystemExit(message) from None
     try:
         PcmFormat(type="audio/pcm", rate=shape[2])
@@ -208,20 +216,18 @@ def _pidfd_open(pid: int) -> int:
     return _checked(_libc().syscall(_SYSCALL_PIDFD_OPEN, pid, 0))
 
 
-def _pidfd_send_kill(pidfd: int) -> None:
-    _checked(
-        _libc().syscall(_SYSCALL_PIDFD_SEND_SIGNAL, pidfd, signal.SIGKILL, None, 0)
-    )
+def _pidfd_send_signal(pidfd: int, signum: int) -> None:
+    _checked(_libc().syscall(_SYSCALL_PIDFD_SEND_SIGNAL, pidfd, signum, None, 0))
 
 
 @dataclass(frozen=True)
 class ProcessControl:
-    """What the kill asks of the kernel; a test hands it a variant."""
+    """What the kill and a forwarded stop ask of the kernel; a test swaps it."""
 
     become_subreaper: Callable[[], None]
     list_processes: Callable[[], list[int]]
     open: Callable[[int], int]
-    send_kill: Callable[[int], None]
+    send_signal: Callable[[int, int], None]
     read_stat: Callable[[int], bytes]
 
 
@@ -233,7 +239,7 @@ KERNEL: Final = ProcessControl(
     become_subreaper=become_subreaper,
     list_processes=_list_processes,
     open=_pidfd_open,
-    send_kill=_pidfd_send_kill,
+    send_signal=_pidfd_send_signal,
     read_stat=_read_stat,
 )
 
@@ -296,6 +302,12 @@ def _lineage(
     return tuple(chain)
 
 
+def has_child(parent: int, control: ProcessControl = KERNEL) -> bool:
+    """Whether any process shows `parent` as its parent now."""
+    processes, _ = _all_processes(control)
+    return any(process.parent == parent for process in processes.values())
+
+
 @dataclass(frozen=True)
 class Below:
     """The lineages of the processes below the top, deepest first, from one read."""
@@ -320,8 +332,10 @@ def _unchanged(link: Process, control: ProcessControl) -> bool:
     return now is not None and (now.parent, now.started) == (link.parent, link.started)
 
 
-def end_if_unchanged(lineage: Lineage, control: ProcessControl = KERNEL) -> bool:
-    """Send SIGKILL to the first process of `lineage` through a pidfd unless it moved.
+def signal_if_unchanged(
+    lineage: Lineage, signum: int, control: ProcessControl = KERNEL
+) -> bool:
+    """Send `signum` to the first process of `lineage` through a pidfd unless it moved.
 
     The pidfd is opened first and the process and each parent of it are read after, so
     an id freed and reused in between, the process's or a parent's, is not signalled:
@@ -337,7 +351,7 @@ def end_if_unchanged(lineage: Lineage, control: ProcessControl = KERNEL) -> bool
         return False
     try:
         if all(_unchanged(link, control) for link in lineage):
-            control.send_kill(pidfd)
+            control.send_signal(pidfd, signum)
     except ProcessLookupError:
         pass
     except OSError:
@@ -362,11 +376,14 @@ def _reap_children(zombies: list[Process]) -> None:
             os.waitpid(zombie.pid, os.WNOHANG)
 
 
-def end_processes_below(control: ProcessControl = KERNEL) -> Kill:
+def end_processes_below(
+    control: ProcessControl = KERNEL, *, spare: int | None = None
+) -> Kill:
     """End every process below this one by pidfd-checked SIGKILL passes, stopping none.
 
     A pass signals every live descendant, the deepest first, and reaps the zombies
-    that are this process's children by their ids. It runs until none is alive or
+    that are this process's children by their ids, all but `spare`, whose status stays
+    for the `Popen` that holds it. It runs until none is alive or
     `KILL_WITHIN_SECONDS` has passed. It must run in a child subreaper, so an orphan
     of a descendant stays below. A process that cannot be read or signalled, and a pass
     that cannot list or reap, fail the kill, which goes on with the others and tries
@@ -384,7 +401,9 @@ def end_processes_below(control: ProcessControl = KERNEL) -> Kill:
                 [
                     lineage[0]
                     for lineage in below.lineages
-                    if lineage[0].parent == top and not lineage[0].alive
+                    if lineage[0].parent == top
+                    and not lineage[0].alive
+                    and lineage[0].pid != spare
                 ]
             )
         except OSError:
@@ -395,7 +414,7 @@ def end_processes_below(control: ProcessControl = KERNEL) -> Kill:
         if not (alive or below.unreadable) or time.monotonic() >= deadline:
             return Kill(first, len(alive), failed)
         for lineage in alive:
-            failed |= not end_if_unchanged(lineage, control)
+            failed |= not signal_if_unchanged(lineage, signal.SIGKILL, control)
         time.sleep(POLL_SECONDS)
 
 
@@ -471,13 +490,6 @@ def _wait_until_ready(service: Service, started: float) -> None:
     raise DriveError(message)
 
 
-def hold_workers(service_pid: int) -> None:
-    """Stop the service's workers where they are, so no call to them is answered."""
-    for worker in worker_pids(service_pid):
-        with suppress(ProcessLookupError):
-            os.killpg(worker, signal.SIGSTOP)
-
-
 def _kill(service_pid: int) -> None:
     """Kill the groups of the service's worker children now, then the service's."""
     for worker in worker_pids(service_pid):
@@ -543,9 +555,19 @@ def _stop_first(service: Service) -> Callable[[int, object], None]:
 
 @contextmanager
 def running_service(
-    identity: Identity, log: Path, *, max_lag_ms: int
+    identity: Identity,
+    log: Path,
+    *,
+    max_lag_ms: int,
+    compiler_home: Path,
+    provider: Mapping[str, str] = FAKE_PROVIDER,
 ) -> Iterator[Service]:
-    """Start the fake-provider service, logging to `log`; the block's end stops it.
+    """Start the service, logging to `log`; the block's end stops it.
+
+    `provider` holds the `VIDEO_` variables that choose the provider and its settings:
+    the `fake` provider unless the caller gives the operator's. `compiler_home` is both
+    `HOME` and `TMPDIR` of the service and so of its worker, where the compilers keep
+    their caches.
 
     The parent-death signal follows the thread that starts the service, so the
     caller is the main thread, which lives until the process ends.
@@ -553,17 +575,19 @@ def running_service(
     environment = {
         key: value
         for key, value in os.environ.items()
-        if not key.startswith(_ENVIRONMENT_PREFIX)
+        if not key.startswith(ENVIRONMENT_PREFIX)
     } | {
+        "HOME": str(compiler_home),
+        "TMPDIR": str(compiler_home),
         "PYTHONUNBUFFERED": "1",
         "SSL_CERT_FILE": str(identity.ca_file),
-        "VIDEO_PROVIDER": "fake",
-        "VIDEO_PORT": str(port := _free_port()),
-        "VIDEO_CONFIG_FILE": str(identity.config_file),
-        "VIDEO_LOOKS_FILE": str(identity.looks_file),
-        "VIDEO_LOOK_SOURCES": identity.look_sources,
-        "VIDEO_MAX_LAG_MS": str(max_lag_ms),
-        "VIDEO_DRAIN_SECONDS": str(DRAIN_SECONDS),
+        f"{ENVIRONMENT_PREFIX}PORT": str(port := _free_port()),
+        f"{ENVIRONMENT_PREFIX}CONFIG_FILE": str(identity.config_file),
+        f"{ENVIRONMENT_PREFIX}LOOKS_FILE": str(identity.looks_file),
+        f"{ENVIRONMENT_PREFIX}LOOK_SOURCES": identity.look_sources,
+        f"{ENVIRONMENT_PREFIX}MAX_LAG_MS": str(max_lag_ms),
+        f"{ENVIRONMENT_PREFIX}DRAIN_SECONDS": str(DRAIN_SECONDS),
+        **provider,
     }
     with log.open("wb") as output:
         started = time.monotonic()
@@ -670,7 +694,7 @@ class Session:
         )
         await self.send(start)
         for offset in range(0, len(audio.pcm), CHUNK_BYTES):
-            await self.socket.send(audio.pcm[offset : offset + CHUNK_BYTES])
+            await self._deliver(audio.pcm[offset : offset + CHUNK_BYTES])
         await self.send(SentenceEnd(type="sentence.end", sentence=sentence))
         return trace_id
 
@@ -680,7 +704,21 @@ class Session:
 
     async def send(self, event: ClientEvent) -> None:
         """Send one client event."""
-        await self.socket.send(event.model_dump_json(exclude_none=True))
+        await self._deliver(event.model_dump_json(exclude_none=True))
+
+    async def _deliver(self, message: str | bytes) -> None:
+        """Send `message`; a closed connection raises the `error` event received first.
+
+        The service sends its `error` event and then closes, so the close can be seen
+        before the event is read; `recv` hands out what arrived before the close.
+        """
+        try:
+            await self.socket.send(message)
+        except ConnectionClosed:
+            with suppress(ConnectionClosed):
+                error = await self.until(ErrorEvent)
+                raise SessionEndedError(error.error.code) from None
+            raise
 
 
 @asynccontextmanager

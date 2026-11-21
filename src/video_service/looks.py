@@ -174,7 +174,8 @@ def _webp_canvas_pixels(data: bytes) -> int | None:
     return width * height
 
 
-def _decode(data: bytes, max_pixels: int) -> DecodedImage:
+def decode_image(data: bytes, max_pixels: int) -> DecodedImage:
+    """The decoded image of `data`, or `LookRefusedError` for the check it failed."""
     # Pillow's own cap would refuse above the operator's setting as not an image; the
     # setting is the only pixel cap, and it is checked before any pixel is decoded.
     Image.MAX_IMAGE_PIXELS = None
@@ -200,4 +201,4 @@ def fetch_image(source: LookSource, limits: LookLimits) -> DecodedImage:
     data = _fetch(source.url, limits.max_bytes)
     if hashlib.sha256(data).hexdigest() != source.sha256:
         raise LookRefusedError(LookFailure.DIGEST_MISMATCH)
-    return _decode(data, limits.max_pixels)
+    return decode_image(data, limits.max_pixels)

@@ -13,8 +13,13 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING, Final
 
+from logline import Outcome
+
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Callable, Collection, Mapping, Sequence
+    from pathlib import Path
+
+    from card_drive import Service
 
 Figure = dict[str, object]
 
@@ -36,6 +41,31 @@ class Reason(StrEnum):
     NO_FRAGMENT = "no_fragment"
     EXITED_BEFORE_STOP = "exited_before_stop"
     KILL_FAILED = "kill_failed"
+    MEMORY_REFUSED = "memory_refused"
+    WATCHDOG_BREACH = "watchdog_breach"
+    SAMPLE_FAILED = "sample_failed"
+    NO_CARD = "no_card"
+    NO_LOUD_AUDIO_BEFORE_CLEAR = "no_loud_audio_before_clear"
+    PROVIDER_NOT_LOADED = "provider_not_loaded"
+    LOOK_NOT_PREPARED = "look_not_prepared"
+    NO_VALUE_STARVED = "no_value_starved"
+    LARGEST_VALUE_STARVED = "largest_value_starved"
+
+
+class CompilerHome(StrEnum):
+    """What the compilers' home held just before a group's service started."""
+
+    EMPTY = "empty"
+    FILLED = "filled"
+
+
+class StopReason(StrEnum):
+    """Why the top ended a group for memory; a code set apart from `Reason`."""
+
+    SHORT_FOR_CAP = "short_for_cap"
+    BELOW_FLOOR = "below_floor"
+    SAMPLE_FAILED = "sample_failed"
+    WATCHDOG_FAILED = "watchdog_failed"
 
 
 @dataclass(frozen=True)
@@ -68,20 +98,51 @@ START_TO_READY_LINE: Final = Line(
 ENCODER_CORES_LINE: Final = Line(
     "the service's CPU at five viewers beyond none at most 2 cores", 2, operator.le
 )
+# In MiB, the unit `nvidia-smi` reports; the limit is also the floor's default.
+FREE_MEMORY_LINE: Final = Line(
+    "free card memory at least 1024 MiB at the peak", 1024, operator.ge
+)
 
 # What the top counts below itself at a group's end: before and after its kill.
 KILL_FIGURES: Final = ("processes_left_after_stop", "processes_alive_after_kill")
+
+
+class MemoryFigure(StrEnum):
+    """What the top's samples say of one group, in MiB."""
+
+    USED_BEFORE = "card_used_before_mb"
+    FREE_LEAST = "card_free_least_mb"
+    USED_MOST = "card_used_most_mb"
+    USED_AFTER = "card_used_after_mb"
+    USED_AFTER_MINUS_BEFORE = "card_used_after_minus_before_mb"
+    USED_BEYOND_CAP = "card_used_beyond_cap_mb"
+    FLOOR = "card_floor_mb"
+
+
+MEMORY_FIGURES: Final = tuple(MemoryFigure)
+
+
+class LagFigure(StrEnum):
+    """What the lag sweep concludes, in ms."""
+
+    SMALLEST_WITHOUT_STARVATION = "smallest_without_starvation_ms"
+    LARGEST_STARVED = "largest_starved_ms"
+
+
+# Only a group the top ended for memory has this entry.
+MEMORY_STOP: Final = "memory_stop"
 # What a service's entry in the record names, in its order.
 SERVICE_FIGURES: Final = (
+    "max_lag_ms",
+    "compiler_home_at_start",
     "start_to_ready_ms",
     "provider_load",
     "look_preparations",
     "stop_to_exit_ms",
     *KILL_FIGURES,
+    *MEMORY_FIGURES,
     "log",
 )
-
-NO_CARD_REASON: Final = "no card is driven, so a timing here is the fake's"
 
 
 def value_of(value: object) -> Figure:
@@ -98,7 +159,7 @@ def not_measured(reason: str, line: Line | None = None) -> Figure:
 def judged(value: float, line: Line, *, dry_run: bool) -> Figure:
     """`value` against `line`; a run with no card gives the value, no verdict."""
     if dry_run:
-        return value_of(value) | not_measured(NO_CARD_REASON, line)
+        return value_of(value) | not_measured(Reason.NO_CARD, line)
     return value_of(value) | {"line": line.text, "verdict": line.verdict(value)}
 
 
@@ -114,10 +175,33 @@ def closed_record(
 
 
 def completed_cells(
-    names: Sequence[str], cells: dict[str, object], reason: Reason
+    names: Sequence[str],
+    cells: dict[str, object],
+    reason: Reason,
+    *,
+    replacing: Collection[Reason] = (),
 ) -> dict[str, object]:
-    """Every cell of `names`: its figures in `cells`, or not measured for `reason`."""
-    return {name: cells.get(name, not_measured(reason)) for name in names}
+    """Every cell of `names`: its figures in `cells`, or not measured for `reason`.
+
+    A cell `cells` holds as not measured for a reason in `replacing` counts as missing.
+    """
+    return {
+        name: (
+            not_measured(reason)
+            if _not_measured_for(cells.get(name), replacing)
+            else cells[name]
+        )
+        for name in names
+    }
+
+
+def _not_measured_for(figure: object, reasons: Collection[Reason]) -> bool:
+    """Whether `figure` is missing, or not measured for one of `reasons`."""
+    return figure is None or (
+        isinstance(figure, dict)
+        and figure.get("verdict") == Verdict.NOT_MEASURED
+        and figure.get("reason") in reasons
+    )
 
 
 def completed_service(figures: dict[str, object], reason: Reason) -> dict[str, object]:
@@ -127,3 +211,92 @@ def completed_service(figures: dict[str, object], reason: Reason) -> dict[str, o
     `SERVICE_FIGURES` shows in the record, where a finished group's keys are checked.
     """
     return {name: not_measured(reason) for name in SERVICE_FIGURES} | figures
+
+
+def step_figures(line: dict[str, object]) -> dict[str, object]:
+    """A load or preparation as the service logged it: outcome, reason, duration."""
+    return {
+        name: value_of(line[name])
+        for name in ("outcome", "reason", "duration_ms")
+        if name in line
+    }
+
+
+def service_figures(
+    service: Service, log: Path, max_lag_ms: int, *, dry_run: bool
+) -> dict[str, object]:
+    """The service's lag, start, load and preparations; its stop comes once it ends."""
+    return {
+        "max_lag_ms": value_of(max_lag_ms),
+        "start_to_ready_ms": judged(
+            service.start_to_ready_ms, START_TO_READY_LINE, dry_run=dry_run
+        ),
+        "provider_load": step_figures(service.lines("provider_load.ended")[0]),
+        "look_preparations": [
+            {"look": value_of(line["look"])} | step_figures(line)
+            for line in service.lines("look_preparation.ended")
+        ],
+        "log": value_of(log.name),
+    }
+
+
+def failed_load(service: Service) -> tuple[Reason, str] | None:
+    """Why the cells cannot run, and the line that says so, when the load failed.
+
+    A step is failed by its logged outcome; a failed step read after ready carries the
+    reason the service logged.
+    """
+    load = service.lines("provider_load.ended")[0]
+    if load["outcome"] == Outcome.FAILED:
+        return (
+            Reason.PROVIDER_NOT_LOADED,
+            f"the provider did not load ({load['reason']})",
+        )
+    for line in service.lines("look_preparation.ended"):
+        if line["outcome"] == Outcome.FAILED:
+            return (
+                Reason.LOOK_NOT_PREPARED,
+                f"the look {line['look']} was not prepared ({line['reason']})",
+            )
+    return None
+
+
+def _lag_entry(max_lag_ms: int, cell: object) -> dict[str, object]:
+    """One swept value's figures: its cell's, or its cell's reason where it has none."""
+    figures = cell if "starved" in cell else {"starved": cell, "sentences": cell}
+    return {"max_lag_ms": value_of(max_lag_ms)} | figures
+
+
+def lag_cell(sweep: Mapping[int, object]) -> dict[str, object]:
+    """The `lag` cell: each swept value's figures and the two figures the sweep is for.
+
+    `sweep` holds each value's cell as its group left it: its figures, or not
+    measured. The smallest value without starvation lies above every value that
+    starved. A value with no outcome leaves both figures not measured, for the reason
+    of the smallest such value.
+    """
+    entries = [_lag_entry(lag, sweep[lag]) for lag in sorted(sweep)]
+    outcomes = [entry["starved"] for entry in entries]
+    figures = {"values": entries}
+    if unmeasured := next(
+        (outcome for outcome in outcomes if "reason" in outcome), None
+    ):
+        gap = not_measured(unmeasured["reason"])
+        return figures | {
+            LagFigure.SMALLEST_WITHOUT_STARVATION: gap,
+            LagFigure.LARGEST_STARVED: gap,
+        }
+    starved = [
+        entry["max_lag_ms"]["value"]
+        for entry, outcome in zip(entries, outcomes, strict=True)
+        if outcome["value"]
+    ]
+    above = [lag for lag in sorted(sweep) if not starved or lag > max(starved)]
+    return figures | {
+        LagFigure.SMALLEST_WITHOUT_STARVATION: (
+            value_of(above[0]) if above else not_measured(Reason.LARGEST_VALUE_STARVED)
+        ),
+        LagFigure.LARGEST_STARVED: (
+            value_of(max(starved)) if starved else not_measured(Reason.NO_VALUE_STARVED)
+        ),
+    }

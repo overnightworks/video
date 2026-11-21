@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import contextlib
 import json
 import os
@@ -15,18 +14,31 @@ import av
 import pytest
 from PIL import Image
 
+import card_cells
 import card_drive
 import card_identity
 import prove_card
-from card_record import SERVICE_FIGURES, Reason, completed_service, value_of
+from card_record import (
+    KILL_FIGURES,
+    MEMORY_FIGURES,
+    SERVICE_FIGURES,
+    CompilerHome,
+    Reason,
+    completed_service,
+    step_figures,
+    value_of,
+)
 from support.prove_card_support import (
     APPEARS_WITHIN_SECONDS,
     AUDIO_SECONDS,
     CELLS_BY_GROUP,
+    DEFAULT_LAG_MS,
     GONE_WITHIN_SECONDS,
+    LAG_SERVICE,
     RUN_WITHIN_SECONDS,
     Run,
     ended,
+    is_cell_not_measured,
     is_not_measured,
     write_audio,
 )
@@ -97,10 +109,40 @@ def test_two_looks_in_sequence_are_each_recorded_under_their_look(
     assert all(session["frame_count"]["value"] > 0 for session in looks)
 
 
-def test_a_lag_far_too_small_is_recorded_as_unavailable(
+def test_a_dry_run_sweeps_the_default_lag_and_no_session_starves_at_it(
     dry_run: tuple[Run, dict],
 ) -> None:
-    assert dry_run[1]["cells"]["lag"]["ended_unavailable"]["value"] is True
+    lag = dry_run[1]["cells"]["lag"]
+
+    (swept,) = lag["values"]
+    assert swept["max_lag_ms"] == value_of(DEFAULT_LAG_MS)
+    assert swept["starved"] == value_of(False)  # noqa: FBT003 - the figure's value
+    assert [sentence["sentence"] for sentence in swept["sentences"]] == [
+        "first",
+        "second",
+    ]
+    assert lag["smallest_without_starvation_ms"] == value_of(DEFAULT_LAG_MS)
+    assert is_not_measured(lag["largest_starved_ms"], Reason.NO_VALUE_STARVED)
+
+
+def test_a_dry_runs_services_name_the_lag_each_runs_at(
+    dry_run: tuple[Run, dict],
+) -> None:
+    services = dry_run[1]["services"]
+
+    assert list(services) == [LAG_SERVICE, "wire"]
+    assert all(
+        service["max_lag_ms"] == value_of(DEFAULT_LAG_MS)
+        for service in services.values()
+    )
+
+
+def test_the_first_service_of_a_run_starts_on_an_empty_compiler_home(
+    dry_run: tuple[Run, dict],
+) -> None:
+    first = dry_run[1]["services"][LAG_SERVICE]
+
+    assert first["compiler_home_at_start"] == value_of(CompilerHome.EMPTY)
 
 
 def test_every_service_of_the_run_stops_and_none_is_left(
@@ -108,7 +150,7 @@ def test_every_service_of_the_run_stops_and_none_is_left(
 ) -> None:
     services = dry_run[1]["services"]
 
-    assert set(services) == {"wire", "lag"}
+    assert set(services) == {LAG_SERVICE, "wire"}
     assert all(set(service) == set(SERVICE_FIGURES) for service in services.values())
     assert all(
         service["stop_to_exit_ms"]["value"] >= 0 for service in services.values()
@@ -152,12 +194,12 @@ def test_the_wait_for_ready_covers_the_services_bounds_for_every_look(
 def test_a_failed_step_is_recorded_as_the_service_logged_it() -> None:
     logged = {"outcome": "failed", "reason": "provider_failed", "duration_ms": 12.5}
 
-    assert prove_card.step_figures(logged) == {
+    assert step_figures(logged) == {
         "outcome": {"value": "failed"},
         "reason": {"value": "provider_failed"},
         "duration_ms": {"value": 12.5},
     }
-    assert "reason" not in prove_card.step_figures({"outcome": "ok", "duration_ms": 1})
+    assert "reason" not in step_figures({"outcome": "ok", "duration_ms": 1})
 
 
 @pytest.mark.parametrize("named", ["lag", "clear"])
@@ -193,17 +235,6 @@ def test_without_probe_run_on_the_path_the_command_refuses_and_names_it(
 
     assert status != 0
     assert "probe-run is not on PATH" in error
-    assert not run.record.exists()
-
-
-def test_without_dry_run_the_command_refuses_and_names_what_is_missing(
-    run: Run,
-) -> None:
-    status, error = run.finish(run.start())
-
-    assert status != 0
-    assert "--dry-run" in error
-    assert "viewers" in error
     assert not run.record.exists()
 
 
@@ -258,10 +289,30 @@ def test_five_viewers_each_have_their_figures_and_the_encoders_share_is_recorded
     assert dry_run[1]["cells"]["viewer"]["service_cpu_cores"]["one_viewer"]["value"] > 0
 
 
-def test_a_clear_with_a_viewer_records_the_time_to_the_last_loud_frame(
+def test_a_clear_after_the_viewers_first_loud_frame_records_the_time_to_the_last_one(
     dry_run: tuple[Run, dict],
 ) -> None:
-    assert dry_run[1]["cells"]["clear"]["clear_to_last_loud_frame_ms"]["value"] > 0
+    figure = dry_run[1]["cells"]["clear"]["clear_to_last_loud_frame_ms"]
+
+    assert figure["value"] >= 0
+    assert figure["reason"] == Reason.NO_CARD
+
+
+def test_a_clear_when_no_loud_frame_reached_the_viewer_is_not_measured(
+    run: Run,
+) -> None:
+    write_audio(run.audio, seconds=AUDIO_SECONDS, amplitude=0)
+
+    status, error = run.finish(run.start("--dry-run", "--cells", "clear"))
+    cell = json.loads(run.record.read_text())["cells"]["clear"]
+
+    assert status == 0, error
+    assert cell["clear_to_last_loud_frame_ms"]["verdict"] == "not_measured"
+    assert (
+        cell["clear_to_last_loud_frame_ms"]["reason"]
+        == Reason.NO_LOUD_AUDIO_BEFORE_CLEAR
+    )
+    assert cell["clear_to_confirmation_ms"]["value"] >= 0
 
 
 def test_the_recording_is_playable_and_its_sheets_are_images_named_in_the_record(
@@ -318,6 +369,18 @@ def _stereo_audio(run: Run) -> None:
     write_audio(run.audio, seconds=2, channels=2)
 
 
+def _text_audio(run: Run) -> None:
+    run.audio.write_text("this is no sound")
+
+
+def _empty_audio(run: Run) -> None:
+    run.audio.write_bytes(b"")
+
+
+def _audio_cut_inside_its_header(run: Run) -> None:
+    run.audio.write_bytes(run.audio.read_bytes()[:20])
+
+
 def _missing_audio(run: Run) -> None:
     run.audio.unlink()
 
@@ -340,6 +403,9 @@ def _record_in_a_read_only_directory(run: Run) -> None:
     [
         (_short_audio, "audio"),
         (_stereo_audio, "audio"),
+        (_text_audio, "audio"),
+        (_empty_audio, "audio"),
+        (_audio_cut_inside_its_header, "audio"),
         (_missing_audio, "audio"),
         (_unreadable_audio, "audio"),
         (_record_in_a_missing_directory, "--record"),
@@ -356,43 +422,16 @@ def test_a_bad_input_ends_the_command_with_one_line_before_any_group_starts(
     assert status != 0
     assert len(error.strip().splitlines()) == 1
     assert named in error
+    assert "()" not in error
     assert not run.probe_run_log.exists()
     assert run.processes() == []
-
-
-def test_a_provider_that_cannot_answer_ends_the_session_as_unavailable_at_any_lag(
-    tmp_path: Path,
-) -> None:
-    audio = tmp_path / "speech.wav"
-    write_audio(audio, seconds=AUDIO_SECONDS)
-
-    async def drive_the_lag_cell() -> object:
-        # No jitter exceeds this lag, so only the held worker ends the session.
-        with (
-            card_identity.throwaway_identity(tmp_path) as identity,
-            card_drive.running_service(
-                identity, tmp_path / "service.log", max_lag_ms=500
-            ) as service,
-        ):
-            drive = prove_card.Drive(
-                service,
-                identity,
-                card_drive.read_audio(audio),
-                dry_run=True,
-                record=tmp_path / "record.json",
-            )
-            return await prove_card._lag(drive)  # noqa: SLF001 - the cell is the unit
-
-    cell = asyncio.run(drive_the_lag_cell())
-
-    assert cell["ended_unavailable"]["value"] is True
 
 
 def test_a_service_that_stops_in_time_takes_its_worker_with_it(tmp_path: Path) -> None:
     with (
         card_identity.throwaway_identity(tmp_path) as identity,
         card_drive.running_service(
-            identity, tmp_path / "service.log", max_lag_ms=500
+            identity, tmp_path / "service.log", max_lag_ms=500, compiler_home=tmp_path
         ) as service,
     ):
         service_pid = service.process.pid
@@ -408,7 +447,10 @@ def _stop_a_service_that_cannot_stop(directory: Path, pids: list[int]) -> None:
     with (
         card_identity.throwaway_identity(directory) as identity,
         card_drive.running_service(
-            identity, directory / "service.log", max_lag_ms=500
+            identity,
+            directory / "service.log",
+            max_lag_ms=500,
+            compiler_home=directory,
         ) as service,
     ):
         pids.append(service.process.pid)
@@ -489,7 +531,7 @@ def test_a_group_process_killed_before_its_fragment_measures_what_the_top_ends(
     status, _ = run.finish(command)
     record = json.loads(run.record.read_text())
     service = record["services"]["wire"]
-    measured_by_the_top = {"processes_left_after_stop", "processes_alive_after_kill"}
+    measured_by_the_top = {*KILL_FIGURES, *MEMORY_FIGURES, "compiler_home_at_start"}
 
     assert serving
     assert status != 0
@@ -500,6 +542,7 @@ def test_a_group_process_killed_before_its_fragment_measures_what_the_top_ends(
         for name, figure in service.items()
         if name not in measured_by_the_top
     )
+    assert service["compiler_home_at_start"] == value_of(CompilerHome.EMPTY)
     assert service["processes_left_after_stop"]["value"] >= 0
     assert service["processes_alive_after_kill"] == value_of(0)
     assert [log.name for log in run.logs()] == ["record.wire.log"]
@@ -570,14 +613,14 @@ def test_a_failed_group_ends_the_command_and_no_later_group_starts(run: Run) -> 
 
     assert status != 0
     assert list(record["cells"]) == ["viewer", "lag"]
-    assert is_not_measured(record["cells"]["viewer"], Reason.CELL_FAILED)
-    assert is_not_measured(record["cells"]["lag"], Reason.EARLIER_GROUP_FAILED)
+    assert is_not_measured(record["cells"]["viewer"], Reason.EARLIER_GROUP_FAILED)
+    assert is_cell_not_measured(record, "lag", Reason.CELL_FAILED)
     assert all(
         is_not_measured(figure, Reason.EARLIER_GROUP_FAILED)
-        for figure in record["services"]["lag"].values()
+        for figure in record["services"]["wire"].values()
     )
     assert len(run.probe_run_log.read_text().splitlines()) == 1
-    assert [log.name for log in run.logs()] == ["record.wire.log"]
+    assert [log.name for log in run.logs()] == [f"record.{LAG_SERVICE}.log"]
 
 
 class _ServiceAtItsStop:
@@ -620,14 +663,15 @@ def test_a_failed_cells_reasons_are_in_the_fragment_before_the_service_stops(
         raise card_drive.DriveError
 
     monkeypatch.setitem(
-        prove_card.GROUPS,
+        card_cells.GROUPS,
         "wire",
         {"sentences": finishes, "clear": raises, "looks": finishes},
     )
 
+    (wire,) = prove_card._groups(arguments)  # noqa: SLF001
     with pytest.raises(card_drive.DriveError):
         prove_card._run_group(  # noqa: SLF001
-            "wire", arguments, tmp_path, service_whose_stop_fails
+            wire, arguments, tmp_path, tmp_path, service_whose_stop_fails
         )
 
     assert held_at_the_stop["cells"]["sentences"] == {"done": True}

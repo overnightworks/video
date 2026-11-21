@@ -75,7 +75,9 @@ refused, in this order and with the refusal's HTTP status, for the first of:
 4. `VIDEO_MAX_SESSIONS` sessions are open: `busy` with `Retry-After: 5`;
 5. the provider cannot open the session: `unavailable`.
 
-A session holds its place until it ends, whoever ends it. Every refusal writes a
+A session holds its place until it ends, whoever ends it. An upgrade that finds every
+place taken waits for a place of a session that has ended and is refused `busy` only
+if every place is held by a session that has not. Every refusal writes a
 `session.ended` line with outcome `refused` and its code as `reason`.
 
 **WIRE-4** Every server event is one JSON text message with a `type` and a fresh

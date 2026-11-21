@@ -131,14 +131,43 @@ child's pipe, and the child ends.
 is the card proof's drive. It starts the service from the checkout with the `fake` provider,
 under a throwaway issuer and look server it serves over HTTPS beneath a certificate authority
 of its own, and drives sessions through the wire as an app does: sentences with idle between
-them, a clear inside a sentence, one session on each of two looks, a lag far too small, and
+them, a clear inside a sentence, one session on each of two looks, a sweep of lags, and
 viewers, which are receive-only aiortc peers attached through the viewer route with the
 session's tokens. `--audio` is a mono 16-bit WAV of at least a second, at a rate the wire
 carries; the command checks it, and that `--record` names a file in an existing writable
 directory, before any service starts, and ends with one line when either fails. `--cells`
 names the cells to run (`sentences`, `clear`, `looks`, `viewer`, `viewers`, `lag`); each
-group of them runs as one service under `probe-run`, which the command calls itself. The service starts under `setpriv --pdeathsig KILL`
-(the host needs `setpriv`, as `probe-run` does), so a kill of the group's process ends it.
+group of them runs as one service under `probe-run`, which the command calls itself. The
+service starts under `setpriv --pdeathsig KILL` (the host needs `setpriv`, as `probe-run`
+does), so a kill of the group's process ends it.
+
+`--look-image PATH` serves that file, unchanged, as the look `alpha` in every group; `beta`
+stays a square, so the cells that use two looks run as before. The command checks the file
+before any service starts: it must be readable and a PNG, JPEG or WebP within the service's
+`VIDEO_LOOK_MAX_BYTES` and `VIDEO_LOOK_MAX_PIXELS` defaults, or it ends with one line naming
+the argument. The provider prepares a look without a face crop, so the image is a head and
+shoulders, centred and square.
+
+`--lag-ms` names one or more distinct whole numbers of at least 1, in ms, and defaults to the
+service's own default of `VIDEO_MAX_LAG_MS`; a value below 1, not a whole number or named
+twice ends the command with one line before any service starts. The `lag` cell sweeps them:
+each value runs, smallest first and before the other cells (the `wire` group), as a group of
+its own named `lag-<value>`, one service with `VIDEO_MAX_LAG_MS` at the value, driving one
+session's two sentences with idle between them. A session the service ends
+`unavailable` counts as starved, whatever made a call fail: a call that missed the
+lag, or any other failure of the worker. Starvation is the value's outcome, not a
+failed cell; any other end of the session fails the cell. The cell holds, per value,
+`max_lag_ms`, `starved` and the figures of each sentence that completed, then
+`smallest_without_starvation_ms` (the smallest value at which and at every larger
+value no session starved) and `largest_starved_ms`. Each is `not_measured` with the
+reason `largest_value_starved` or `no_value_starved` when there is none, and with the
+reason of a value that has no outcome (a failed load, a memory refusal, a stop) when
+one has none. The `wire` group runs after the sweep at the largest value named,
+whether or not the sweep runs: its figures do not depend on the lag while nothing
+starves, except the frame memory, which grows with it, so they are the conservative
+ones and are not taken at the value an operator will set. Each service's entry names
+its `max_lag_ms`. In card mode every named value costs one model load, and the `wire`
+group one more. The fake behind `--dry-run` does not starve at the default lag.
 The command waits for the service's readiness as long as the service's own bounds for
 the provider's start and each look's preparation allow, plus a slack. Every exit stops
 the service first, which reaps its provider worker. A service that has not exited within
@@ -161,43 +190,100 @@ the service's start, so it is there however the group ends (cells done, a failed
 interrupt, a kill), and the command prints its path. A kill of the command itself is not
 trapped: `probe-run`'s parent-death signal stops the group's process, which stops its
 service, and the cap ends what stays. It writes no record and leaves the throwaway
-identity's keys in its `prove-card-record-*` directory under `TMPDIR`; any other end of the
-command removes them. A service that dies by a signal ends its worker, which reads its
-closed input on a thread of its own, also while the provider loads. That does not cover the
-time before the worker's `run_worker` runs (FlashHead lite imports torch first), a load step
+identity's keys and the compiler home (below) in its `prove-card-record-*` directory under
+`TMPDIR`; any other end of the command removes them. A service that dies by a signal ends
+its worker, which reads its closed input on a thread of its own, also while the provider
+loads. That does not cover the time before the worker's `run_worker` runs (FlashHead lite imports torch first), a load step
 that holds the interpreter lock, a worker not built on `run_worker`, nor the compiler's
 helper processes, which no input thread ends.
+
+The command creates one empty compiler home in its run's temporary directory before the
+first group, and every group's service runs with it as both `HOME` and `TMPDIR`, as the
+image sets both to one directory; the provider's worker inherits them, so the compilers'
+caches (inductor, Triton, CUDA's compute cache) and the worker's reads from `HOME` start
+from it, not from the operator's. A service entry holds `compiler_home_at_start`: `empty`
+when the compiler home held no entry just before the group's `probe-run` started,
+`filled` otherwise, in both modes; a group whose `probe-run` did not start has it
+`not_measured` with the reason its other figures carry. The cold figures are the start,
+the load and each look's preparation of an entry marked `empty`, the warm ones those of
+an entry marked `filled`; `start_to_ready_ms` keeps its line in both. The first
+service of a run finds the home empty, a later one finds what an earlier wrote, and a cold figure is a cold compile with the weights
+possibly in the host's page cache. A compiler cache variable in the operator's
+environment (`TORCHINDUCTOR_CACHE_DIR`, `TRITON_CACHE_DIR`, `CUDA_CACHE_PATH`) sends that
+cache elsewhere, where the label does not look.
 
 The record is written however a group ends, from the fragment each group's process
 rewrites after every cell and once more when the group ends (whole or absent, never half
 written). A cell that raises ends its group: it is `not_measured` with the reason
 `cell_failed`, each later cell of the group `group_ended`, and the command exits non-zero
-after it writes the record. A failed group ends the command: each cell of a group not
-started is `earlier_group_failed`. A group whose process ended without a fragment, or with
-one it did not end (the cap, a kill), keeps the cells its fragment holds, and every cell
-and every figure of its service that the fragment lacks is `no_fragment`. An interrupt
-(INT or TERM) writes no record.
+after it writes the record. A group whose provider failed to load or one of whose looks
+was not prepared (card mode only; the fake never fails) runs no cell: each of its cells is
+`not_measured` with the reason `provider_not_loaded` or `look_not_prepared`, its process
+prints one line on standard error naming the group, the failed step (the look by name) and
+the reason the service logged, and its service entry keeps the logged outcome, reason and
+duration of the load and of each preparation. Nothing rendered in such a group, so its
+entry's start (`start_to_ready_ms`, which keeps its line and value) and its least free,
+most used and beyond-the-cap card memory are `not_measured` with the same reason, while
+the used memory before and after and the floor stay values. A failed group ends the
+command: each cell of a group not started is `earlier_group_failed`. When a failed load
+coincides with a breach (see below), the cells the failed step made `provider_not_loaded`
+or `look_not_prepared` keep that reason, and the breach shows in `memory_stop`, in the
+unfinished cells and in the later groups only. A group whose process ended without a
+fragment, or with one it did not end (the cap, a kill), keeps the cells its fragment holds,
+and every cell and every figure of its service that the fragment lacks is `no_fragment`.
+An interrupt (INT or TERM) writes no record.
 
 The record is JSON. Its figures come from the service's own log lines, the session's events
 and what the viewers receive: per sentence the first output, the frames against the audio's
 length and the late frames; the time from a clear to its confirmation and to the last loud
-audio frame a viewer receives; per viewer (one, and each of five) the frames per second at
-the peer in a sentence and between sentences, the loud audio frames between sentences, the
+audio frame a viewer receives (the clear waits for the viewer's first loud audio frame, for
+at most a share of the audio's length that stays below the whole, so that a quiet file
+still clears while audio is queued; when none reached the viewer before the clear, the
+figure is `not_measured` with the reason `no_loud_audio_before_clear`, in both modes); per
+viewer (one, and each of five) the frames per second at the peer in a sentence and between
+sentences, the loud audio frames between sentences, the
 gaps in the video timestamps and the frame size the provider drew; the service's CPU, read
 from its own process's accounting, at no, one and five viewers, and the encoders' share at
 five; each session's opening time; each service's start, the provider's load and each look's
 preparation as the service logged them (outcome, the reason when one is logged,
-duration), and its stop's time to exit; and that a lag far too small ends the session as `unavailable`. Beside the record the command writes
-one viewer's audio and video as `<record>.viewer.mp4`, contact sheets of it as
-`<record>.viewer-sheet-<n>.png` for the judge of the picture, and each group's service log as
-`<record>.<group>.log`; the record names them and the command prints their paths. A dry run
-shows that the drive works, and its figures are the fake's (a 256x256 picture on whatever
-host runs it), so a figure judged against a line of the program plan (first output, clear to
-silence, start, frames per second, the encoders' two cores) holds its value and the verdict
-`not_measured` with the reason. It cannot show a card's timing or memory, nor the picture's
-likeness to the idle look: the video is judged by eye. Against `fake`, a quiet audio file
-gives an all-black recording. Without `--dry-run` the command
-refuses and names what is missing.
+duration), and its stop's time to exit; and the lag sweep's figures. Beside the record the
+command writes one viewer's audio and video as `<record>.viewer.mp4`, contact sheets of it
+as `<record>.viewer-sheet-<n>.png` for the judge of the picture, and each group's service
+log as `<record>.<group>.log`; the record names them and the command prints their paths. A
+dry run shows that the drive works, and its figures are the fake's (a 256x256 picture on
+whatever host runs it), so a figure judged against a line of the program plan (first
+output, clear to silence, start, frames per second, the encoders' two cores) holds its
+value and the verdict `not_measured` with the reason. It cannot show a card's timing or
+memory, nor the picture's likeness to the idle look: the video is judged by eye. Against
+`fake`, a quiet audio file gives an all-black recording.
+
+Without `--dry-run` the command drives `flashhead-lite` with the operator's
+`VIDEO_PROVIDER_ROOT` and `VIDEO_CARD_MEMORY_MB`, passed to the service unchanged and
+checked first against the service's own settings, and ends with one line naming the setting
+when either is missing or invalid. `--memory-floor-mb` is the free card memory in MiB (0 or
+more) the run keeps beside the provider's cap (default 1024, the program plan's "free memory
+at least
+1 GB"); every memory figure is in MiB. The command samples the card itself, from outside the
+group, and refuses a group, before it starts or while its service does not yet exist, if
+the card's free memory minus the cap is below the floor, or a sample fails: nothing of the
+group starts, and its cells are `not_measured` with the reason `memory_refused`. From the
+first sample that finds the group's service the watchdog samples every half second; free
+memory below the floor, a failed sample or a failure of the watchdog itself is a breach, and
+the command prints one line on standard error, sends SIGKILL to every process below it as
+the end-of-group kill does, and records the breach under `memory_stop` in the group's
+service entry (its reason, the sample, the floor, the cap and the seconds to no process
+left): the group's unfinished cells and every later group are `not_measured` with the reason
+`watchdog_breach`, no later group starts and the command exits non-zero. A group's entry
+holds the card's used memory before, the most used and the least free while the service
+existed, the used memory after, their difference and what the run added at its peak beyond
+the cap; the least free is judged against the line "free card memory at least 1024 MiB at
+the peak". After a breach whose sample failed or whose watchdog failed, those three figures
+are `not_measured` with the reason `sample_failed` or `watchdog_breach`, since the samples
+cannot say the peak; a breach below the floor keeps them. The watchdog cannot stop an
+allocation faster than one interval (the provider's cap does), memory outside the cap (the
+CUDA context, compiler peaks), which it sees only
+afterwards, the voice's own growth, nor a driver or `nvidia-smi` that reports wrong figures;
+it reads GPU 0 only.
 
 ## Install the client
 
