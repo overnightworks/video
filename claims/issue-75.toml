@@ -3,5 +3,6 @@ agent = "Claude 76251661-cb30-4447-a3ad-32a83a396daa"
 role = "builder"
 base = "9545581c93408d4149b732b59ce9892e6c5036e1"
 branch = "claude/issue-75-image-paths"
-scope = [".github/workflows/ci.yml", ".github/workflows/image-test.yml", "tests/test_image_paths.py"]
+scope = [".github/workflows/ci.yml", ".github/workflows/image-test.yml", "docs/ARCHITECTURE.md", "scripts/image_paths.py", "tests/scripts/test_image_paths.py", "tests/test_image_paths.py"]
 opened_commit = "68673ac599e62758dcbab2a06c9a20166b9c278b"
+whole_reason = "One detection: the workflow step, the script that reads the allowlist, its test and the architecture line naming it change together."
