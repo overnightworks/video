@@ -1,0 +1,157 @@
+:root {
+  color-scheme: light dark;
+  --page: #ffffff;
+  --panel: #f2f2f4;
+  --edge: #9a9aa3;
+  --text: #1d1d22;
+  --quiet: #5b5b66;
+  --main: #2563eb;
+  --on-main: #ffffff;
+  --live: #1f9d55;
+  --waiting: #b7791f;
+  --over: #5b5b66;
+  --failed: #c0392b;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --page: #16161a;
+    --panel: #222228;
+    --edge: #5b5b66;
+    --text: #ececf1;
+    --quiet: #a9a9b3;
+    --main: #3b82f6;
+    --live: #3ddc84;
+    --waiting: #e6a93a;
+    --over: #a9a9b3;
+    --failed: #ff6b5e;
+  }
+}
+
+body {
+  margin: 0;
+  background: var(--page);
+  color: var(--text);
+  font: 16px/1.4 system-ui, sans-serif;
+}
+
+main {
+  box-sizing: border-box;
+  max-width: 30rem;
+  margin: 0 auto;
+  padding: 1rem;
+}
+
+.stage {
+  position: relative;
+  aspect-ratio: 1;
+  background: var(--panel);
+  border: 1px solid var(--edge);
+  border-radius: 0.5rem;
+  overflow: hidden;
+}
+
+#host,
+#host video {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+#watch {
+  position: absolute;
+  inset: 50% auto auto 50%;
+  transform: translate(-50%, -50%);
+}
+
+#state {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.75rem 0;
+  min-height: 1.4em;
+}
+
+.shape {
+  box-sizing: border-box;
+  width: 0.9rem;
+  height: 0.9rem;
+  border: 2px solid var(--over);
+}
+
+[data-state="idle"] .shape {
+  border-style: dashed;
+  border-radius: 50%;
+}
+
+[data-state="loading"] .shape {
+  border-color: var(--waiting);
+  border-radius: 50%;
+  animation: pulse 1s ease-in-out infinite;
+}
+
+[data-state="live"] .shape {
+  border-color: var(--live);
+  background: var(--live);
+  border-radius: 50%;
+}
+
+[data-state="ended"] .shape {
+  background: var(--over);
+}
+
+[data-state="failed"] .shape {
+  border-color: var(--failed);
+  background: var(--failed);
+  clip-path: polygon(50% 0, 100% 100%, 0 100%);
+}
+
+@keyframes pulse {
+  50% {
+    opacity: 0.25;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-state="loading"] .shape {
+    animation: none;
+  }
+}
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+button,
+select {
+  min-height: 2.5rem;
+  padding: 0 1rem;
+  font: inherit;
+  color: var(--text);
+  background: var(--page);
+  border: 1px solid var(--edge);
+  border-radius: 0.4rem;
+}
+
+button.primary {
+  color: var(--on-main);
+  background: var(--main);
+  border-color: var(--main);
+}
+
+button:disabled {
+  opacity: 0.4;
+}
+
+button:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--main);
+  outline-offset: 2px;
+}
+
+#note {
+  min-height: 1.4em;
+  color: var(--quiet);
+}

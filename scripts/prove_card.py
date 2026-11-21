@@ -165,21 +165,21 @@ def _arguments(argv: Sequence[str]) -> argparse.Namespace:
     return arguments
 
 
-def _checked_record(path: Path) -> Path:
-    """The record's absolute path, once it names a file in a writable directory."""
+def checked_record(path: Path, option: str = "--record") -> Path:
+    """The file's absolute path, once it names a file in a writable directory."""
     record = path.resolve()
     directory = record.parent
     if record.is_dir() or not (
         directory.is_dir() and os.access(directory, os.W_OK | os.X_OK)
     ):
         message = (
-            f"--record {path}: it must name a file in an existing writable directory"
+            f"{option} {path}: it must name a file in an existing writable directory"
         )
         raise SystemExit(message)
     return record
 
 
-def _checked_look_image(path: Path) -> bytes:
+def checked_look_image(path: Path) -> bytes:
     """The file's bytes once the service's own limits accept them as a look's image."""
     limits = _GivenSettings(provider=ProviderName.FAKE)
     try:
@@ -203,7 +203,7 @@ def _give_look_image(arguments: argparse.Namespace) -> None:
     """Keep the checked bytes of the named look image; none named, none kept."""
     if arguments.look_image is not None:
         arguments.look_image = arguments.look_image.resolve()
-        arguments.look_image_bytes = _checked_look_image(arguments.look_image)
+        arguments.look_image_bytes = checked_look_image(arguments.look_image)
 
 
 class _GivenSettings(Settings):
@@ -247,7 +247,7 @@ class CardProvider:
     card_memory_mb: int
 
 
-def _card_provider(environ: Mapping[str, str]) -> CardProvider:
+def card_provider(environ: Mapping[str, str]) -> CardProvider:
     """The operator's two provider settings, once the service's own fields accept them.
 
     The refusal names the setting alone: the validation error carries the value.
@@ -279,7 +279,7 @@ def _provider_of(arguments: argparse.Namespace) -> Mapping[str, str]:
     """The `VIDEO_` variables that choose the provider the service runs."""
     if arguments.dry_run:
         return FAKE_PROVIDER
-    return _card_provider(os.environ).environment
+    return card_provider(os.environ).environment
 
 
 def _stop_figure(service: Service) -> dict[str, object]:
@@ -672,14 +672,14 @@ def main(argv: Sequence[str] | None = None, control: ProcessControl = KERNEL) ->
     if group := os.environ.get(CHILD_MARKER):
         _give_look_image(arguments)
         return _child(group, arguments)
-    arguments.record = _checked_record(arguments.record)
+    arguments.record = checked_record(arguments.record)
     read_audio(arguments.audio)
     _give_look_image(arguments)
     arguments.limits = (
         None
         if arguments.dry_run
         else CardLimits(
-            _card_provider(os.environ).card_memory_mb, arguments.memory_floor_mb
+            card_provider(os.environ).card_memory_mb, arguments.memory_floor_mb
         )
     )
     try:
