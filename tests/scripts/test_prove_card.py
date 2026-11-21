@@ -431,7 +431,11 @@ def test_a_service_that_stops_in_time_takes_its_worker_with_it(tmp_path: Path) -
     with (
         card_identity.throwaway_identity(tmp_path) as identity,
         card_drive.running_service(
-            identity, tmp_path / "service.log", max_lag_ms=500, compiler_home=tmp_path
+            identity,
+            tmp_path / "service.log",
+            max_lag_ms=500,
+            compiler_home=tmp_path,
+            service_pid_file=tmp_path / "service.record",
         ) as service,
     ):
         service_pid = service.process.pid
@@ -451,6 +455,7 @@ def _stop_a_service_that_cannot_stop(directory: Path, pids: list[int]) -> None:
             directory / "service.log",
             max_lag_ms=500,
             compiler_home=directory,
+            service_pid_file=directory / "service.record",
         ) as service,
     ):
         pids.append(service.process.pid)
