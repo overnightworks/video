@@ -48,7 +48,8 @@ RUN uv sync --locked --no-dev --no-editable --no-build \
 # looks for. The wheel packs upstream's flash_head tree and both licence texts.
 # NVIDIA's libraries are the largest part of the environment, and a layer stays under
 # 10 GB: they move out, so the final stage copies them as a layer of their own and the
-# rest of the environment as another.
+# rest of the environment as another. Bytecode skips test directories: a wheel may pack
+# a test file that is not valid Python (mediapipe's), and nothing imports one.
 FROM build-base AS provider-environment
 ENV UV_PROJECT_ENVIRONMENT=/opt/providers/flashhead-lite/.venv
 WORKDIR /build/providers/flashhead-lite
@@ -64,7 +65,7 @@ COPY providers/flashhead-lite/soulx-flashhead/LICENSE soulx-flashhead/LICENSE
 COPY providers/flashhead-lite/soulx-flashhead/flash_head soulx-flashhead/flash_head
 COPY providers/flashhead-lite/src src
 RUN uv sync --locked --no-dev --no-editable --no-build \
- && /opt/providers/flashhead-lite/.venv/bin/python -m compileall -q -j 0 \
+ && /opt/providers/flashhead-lite/.venv/bin/python -m compileall -q -j 0 -x '/tests?/' \
     --invalidation-mode checked-hash /opt/providers/flashhead-lite/.venv/lib \
  && mv /opt/providers/flashhead-lite/.venv/lib/python3.14/site-packages/nvidia /opt/flashhead-nvidia
 
