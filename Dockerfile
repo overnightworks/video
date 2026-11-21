@@ -78,7 +78,7 @@ FROM python-base
 RUN apt-get update \
  && apt-get install --yes --no-install-recommends gcc libc6-dev \
  && rm -rf /var/lib/apt/lists/* \
- && useradd --no-create-home --uid 1001 video
+ && useradd --no-create-home --uid 1001 video-service
 COPY --from=weights /opt/providers/flashhead-lite/weights /opt/providers/flashhead-lite/weights
 COPY --from=provider-environment /opt/flashhead-nvidia /opt/providers/flashhead-lite/.venv/lib/python3.14/site-packages/nvidia
 COPY --from=provider-environment /opt/providers/flashhead-lite/.venv /opt/providers/flashhead-lite/.venv
