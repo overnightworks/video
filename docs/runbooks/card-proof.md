@@ -46,9 +46,9 @@ the memory guard or the kill fails; the record is written all the same, with eac
 that was not measured marked `not_measured` and its reason.
 
 - `record.json`: the figures.
-- `record.json.viewer.mp4` and `record.json.viewer-sheet-<n>.png`: one viewer's audio and
+- `record.viewer.mp4` and `record.viewer-sheet-<n>.png`: one viewer's audio and
   video, and contact sheets of it; judge the picture by eye.
-- `record.json.<group>.log`: each group's service log.
+- `record.<group>.log`: each group's service log.
 
 A dry run's figures are the fake's (a 256x256 picture on any host): only a run on the
 card shows timing, memory and the picture.
