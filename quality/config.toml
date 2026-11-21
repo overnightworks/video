@@ -1,5 +1,5 @@
 [gate]
-mandatory_jobs = ["Video: lint, tests", "Video: browser package", "Video: browser layer", "Video: flashhead-lite provider"]
+mandatory_jobs = ["Video: lint, tests", "Video: browser package", "Video: browser layer", "Video: flashhead-lite provider", "Video: image / Test"]
 
 [[root.allow]]
 entry = "packages/"
@@ -27,3 +27,8 @@ reason = "it drives packages/browser in Chromium against the service, which has 
 path = "tests/test_browser_watch.py"
 rule = "test-layout"
 reason = "it drives packages/browser in Chromium against the service, which has no module of that name"
+
+[[layout.allow]]
+path = "tests/test_image.py"
+rule = "test-layout"
+reason = "it drives the built image, which has no module of that name"

@@ -11,7 +11,7 @@ sessions over `WS /v1/sessions`: an app opens one on a look with two tokens, que
 sentences of audio, clears them, and reads when each starts and stops. The session's
 opener adds viewers over `POST /v1/sessions/{id}/viewers` with a WebRTC offer and gets
 one Opus and VP8 stream of the provider's picture and sound, with the idle picture
-and silence between sentences. The browser package shows that stream in a page. No image exists to deploy, and the service downloads no weights.
+and silence between sentences. The browser package shows that stream in a page. The release builds a private image that carries the pinned weights; the service downloads none.
 
 ## Quick start
 
@@ -103,7 +103,7 @@ holds the settings that shape the wire.
 | `VIDEO_DRAIN_SECONDS` | `30` | The longest from the stop to the exit, the cut of the sessions left included. |
 
 The `fake` provider is a development dependency (`uv sync --all-groups` installs
-it, and its `video-fake-worker` runs beside the interpreter) that no image installs.
+it, and its `video-fake-worker` runs beside the interpreter) that the image does not install.
 
 To run `flashhead-lite` from source, check out the submodule, create the provider's own environment
 (`git submodule update --init`, then `uv sync --locked --all-groups --project providers/flashhead-lite`),
@@ -331,7 +331,18 @@ Dispatch `.github/workflows/release.yml` with the version `X.Y.Z`, which every
 `pyproject.toml` and `packages/*/package.json` of the repository must stand at
 (`uv run python scripts/check_release.py X.Y.Z` checks it). The release proves the
 client installs by its Git pin at the gated commit, packs the browser package as a
-tarball release file and proves it installs, and tags the commit.
+tarball release file and proves it installs, builds the image, pushes it, attests it and
+proves it with `tests/test_image.py`, and tags the commit.
+
+The image is `ghcr.io/overnightworks/video:X.Y.Z`, a private package that the release page does
+not carry. It holds the service, the FlashHead lite provider in its own environment and the
+pinned weights, and runs as a numeric non-root user on a read-only root with `/tmp` as the one
+writable place it needs. Of the service's settings it sets only `VIDEO_PROVIDER_ROOT`, and it
+points `HOME` and `TMPDIR` at `/tmp`; the deployment sets `VIDEO_PROVIDER`,
+`VIDEO_CARD_MEMORY_MB`, `VIDEO_CONFIG_FILE` and `VIDEO_HOST`, and reads readiness from
+`GET /health`. The build runs on the organisation's larger runner, to which the repository needs
+access. `VIDEO_IMAGE=<image> uv run --locked pytest -q -m image tests/test_image.py` tests an
+image you have pulled or built; it starts containers and needs Docker.
 
 ## Documentation
 
