@@ -348,14 +348,23 @@ playback and the state is `ended`.
 
 ## Release
 
-Dispatch `.github/workflows/release.yml` with the version `X.Y.Z`, which every
-`pyproject.toml` and `packages/*/package.json` of the repository must stand at
-(`uv run python scripts/check_release.py X.Y.Z` checks it). The release proves the
-client installs by its Git pin at the gated commit, packs the browser package as a
-tarball release file and proves it installs, builds the image, pushes it, attests it and
-proves it with `tests/test_image.py`, and tags the commit.
+Two workflows release, each dispatched with its version as the only input.
 
-The image is `ghcr.io/overnightworks/video:X.Y.Z`, a private package that the release page does
+```sh
+gh workflow run release-distributions.yml -f version=X.Y.Z
+gh workflow run release.yml -f version=YYYY.MM.DD.N
+```
+
+- `.github/workflows/release-distributions.yml` takes `X.Y.Z`, which every
+  `pyproject.toml` and `packages/*/package.json` of the repository must stand at
+  (`uv run python scripts/check_release.py X.Y.Z` checks it). It proves the client installs
+  by its Git pin at the gated commit, packs the browser package as a tarball release file and
+  proves it installs, and tags the commit `vX.Y.Z`.
+- `.github/workflows/release.yml` takes the day's version `YYYY.MM.DD.N`, `N` counting the
+  day's releases from 1. It builds the image, pushes it, attests it, proves it with
+  `tests/test_image.py` and tags the commit `vYYYY.MM.DD.N`.
+
+The image is `ghcr.io/overnightworks/video:YYYY.MM.DD.N`, a private package that the release page does
 not carry. It holds the service, the FlashHead lite provider in its own environment and the
 pinned weights, and runs as a numeric non-root user on a read-only root with `/tmp` as the one
 writable place it needs. Of the service's settings it sets only `VIDEO_PROVIDER_ROOT`, and it
