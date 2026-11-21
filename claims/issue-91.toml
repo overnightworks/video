@@ -1,8 +1,0 @@
-claim_id = "d22bdd48a9b54882abdb1b589831c719"
-agent = "Claude 08995c7c-c9e2-445a-ad5b-63926da5891d"
-role = "builder"
-base = "16c47c96b7d8dcaa128155913c05af57bf9e52dc"
-branch = "claude/issue-91-video-pins-quality-v0-23-0"
-scope = [".github/workflows/ci.yml", ".github/workflows/code-scanning.yml", ".github/workflows/release-distributions.yml", ".github/workflows/release.yml"]
-opened_commit = "316b58464e3b6fe5bfc85bb3fc7f4cd76c28df27"
-whole_reason = "One release pin moves in every workflow that calls quality; split, two workflows would run different gate versions."
