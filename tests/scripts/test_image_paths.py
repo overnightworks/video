@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import io
+import subprocess
+import sys
 from typing import TYPE_CHECKING
 
 import pytest
@@ -13,6 +15,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 _SHIPPED = REPOSITORY_ROOT / ".dockerignore"
+_SCRIPT = REPOSITORY_ROOT / "scripts" / "image_paths.py"
 
 
 @pytest.fixture(scope="module")
@@ -94,12 +97,12 @@ def test_a_path_above_an_allowlisted_pattern_is_held_as_a_submodule_pointer() ->
 def _run(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
-    changed: str,
+    changed: list[str],
     capsys: pytest.CaptureFixture[str],
 ) -> tuple[int, str]:
     dockerignore = tmp_path / ".dockerignore"
     dockerignore.write_text("*\n!src/**/*.py\n", encoding="utf-8")
-    monkeypatch.setattr("sys.stdin", io.StringIO(changed))
+    monkeypatch.setattr("sys.stdin", io.StringIO("\0".join(changed) + "\0"))
     code = main([str(dockerignore)])
     return code, capsys.readouterr().out
 
@@ -108,15 +111,39 @@ def test_the_command_prints_the_held_paths_and_succeeds(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     code, output = _run(
-        monkeypatch, tmp_path, "README.md\nsrc/a.py\n\nDockerfile\n", capsys
+        monkeypatch, tmp_path, ["README.md", "src/a.py", "", "Dockerfile"], capsys
     )
 
     assert (code, output) == (0, "src/a.py\nDockerfile\n")
 
 
-def test_the_command_fails_when_no_changed_path_is_held(
+def test_the_command_holds_a_path_with_a_character_git_would_quote(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    code, output = _run(monkeypatch, tmp_path, "README.md\ndocs/wire.md\n", capsys)
+    path = 'src/video_service/caf\u00e9 "x".py'
 
-    assert (code, output) == (1, "")
+    code, output = _run(monkeypatch, tmp_path, ["README.md", path], capsys)
+
+    assert (code, output) == (0, f"{path}\n")
+
+
+def test_the_command_succeeds_and_prints_nothing_when_no_changed_path_is_held(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    code, output = _run(monkeypatch, tmp_path, ["README.md", "docs/wire.md"], capsys)
+
+    assert (code, output) == (0, "")
+
+
+def test_the_command_fails_without_output_when_the_allowlist_is_missing(
+    tmp_path: Path,
+) -> None:
+    finished = subprocess.run(  # noqa: S603 - the interpreter and the repository's script
+        [sys.executable, "-I", str(_SCRIPT), str(tmp_path / "missing")],
+        input=b"src/a.py\0",
+        capture_output=True,
+        check=False,
+    )
+
+    assert finished.returncode != 0
+    assert finished.stdout == b""

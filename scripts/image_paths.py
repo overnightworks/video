@@ -80,15 +80,17 @@ class BuildContext:
 
 
 def main(argv: list[str]) -> int:
-    """Print the paths on standard input that the image is built from.
+    """Print the paths the image is built from among those on standard input.
 
-    Return 0 when there is one and 1 when there is none, as grep does.
+    The paths are separated by NUL, as `git diff -z` writes them. Printing no path
+    means none is held; any failure leaves a nonzero status, so a caller reads the
+    output only after a zero status.
     """
     context = BuildContext(Path(argv[0]).read_text(encoding="utf-8"))
-    held = [path for path in map(str.strip, sys.stdin) if path and context.holds(path)]
-    for path in held:
-        print(path)
-    return 0 if held else 1
+    for path in sys.stdin.read().split("\0"):
+        if path and context.holds(path):
+            print(path)
+    return 0
 
 
 if __name__ == "__main__":

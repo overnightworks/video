@@ -280,8 +280,9 @@ jobs:
         run: |
           changed=false
           if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
-            git diff --name-only --no-renames HEAD^1 HEAD > "$RUNNER_TEMP/changed-paths"
-            if python3 scripts/image_paths.py < "$RUNNER_TEMP/changed-paths"; then
+            git diff -z --name-only --no-renames HEAD^1 HEAD > "$RUNNER_TEMP/changed-paths"
+            image_inputs=$(python3 scripts/image_paths.py < "$RUNNER_TEMP/changed-paths")
+            if [ -n "$image_inputs" ]; then
               changed=true
             fi
           fi
