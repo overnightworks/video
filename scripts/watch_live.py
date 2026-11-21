@@ -411,7 +411,9 @@ def _child(arguments: argparse.Namespace) -> int:
     identity_directory = begun_child(arguments.fragment)
     audio, look_image = _checked(arguments)
     with (
-        throwaway_identity(identity_directory, look_image) as identity,
+        throwaway_identity(
+            identity_directory, look_image, looks=LOOK_NAMES[:1]
+        ) as identity,
         running_service(
             identity,
             arguments.log,

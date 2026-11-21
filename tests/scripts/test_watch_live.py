@@ -77,16 +77,18 @@ class Live:
         """The status the page's route answers a POST to `path` with."""
         return httpx2.post(self.address + path.lstrip("/")).status_code
 
-    def sentences(self) -> list[int]:
-        """The audio length in ms of each sentence the service has ended."""
+    def records(self, event: str) -> list[dict[str, object]]:
+        """The service's log lines of `event`."""
         records = (
             json.loads(line)
             for line in self.log.read_text(errors="replace").splitlines()
             if line.startswith("{")
         )
-        return [
-            line["audio_ms"] for line in records if line["event"] == "sentence.ended"
-        ]
+        return [record for record in records if record["event"] == event]
+
+    def sentences(self) -> list[int]:
+        """The audio length in ms of each sentence the service has ended."""
+        return [line["audio_ms"] for line in self.records("sentence.ended")]
 
     def ended(self) -> tuple[int, str]:
         """The command's status and standard error, once it has ended."""
@@ -152,6 +154,20 @@ def test_a_viewer_request_that_never_finishes_does_not_keep_the_command_running(
             lambda: command.command.poll() is not None, ENDED_WITHIN_SECONDS
         )
     assert command.command.returncode == 0
+
+
+def test_the_service_is_given_the_portrait_as_its_one_look(
+    live: Callable[..., Live],
+) -> None:
+    command = live()
+    assert command.address
+
+    assert [line["look"] for line in command.records("look_preparation.ended")] == [
+        watch_live.LOOK_NAMES[0]
+    ]
+
+    command.post("/end")
+    command.ended()
 
 
 def test_a_stop_signal_ends_the_service_and_the_command(
@@ -253,7 +269,8 @@ def test_a_file_pressed_again_while_it_plays_is_spoken_again(
     assert command.post(f"/speak/{second.name}") == httpx2.codes.NO_CONTENT
 
     assert run.wait_until(
-        lambda: len(command.sentences()) == 2, SENTENCE_WITHIN_SECONDS
+        lambda: command.sentences() == [SECOND_SECONDS * 1000] * 2,
+        SENTENCE_WITHIN_SECONDS,
     )
     command.post("/end")
     status, _ = command.ended()
