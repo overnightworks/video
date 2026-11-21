@@ -19,7 +19,6 @@ import argparse
 import asyncio
 import json
 import os
-import shutil
 import signal
 import sys
 import tempfile
@@ -45,8 +44,6 @@ from card_drive import (
     STOP_SIGNALS,
     Kill,
     ProcessControl,
-    end_processes_below,
-    exit_on_stop,
     read_audio,
     running_service,
 )
@@ -69,11 +66,13 @@ from card_record import (
 )
 from card_supervision import (
     CHILD_MARKER,
+    Probed,
     Stops,
     Supervision,
-    ending,
-    pid_file,
-    run_child,
+    become_subreaper,
+    begun_child,
+    ended_below,
+    started_under_probe_run,
 )
 from video_service.card import read_card_memory
 from video_service.config import Settings
@@ -87,10 +86,6 @@ if TYPE_CHECKING:
     from pydantic_settings import PydanticBaseSettingsSource
 
     from card_drive import Service
-
-PROBE_RUN: Final = "probe-run"
-KILL_GRACE_SECONDS: Final = 30
-CAP_SECONDS: Final = 1800
 
 
 class GroupOutcome(StrEnum):
@@ -411,13 +406,7 @@ def _compiler_home_at_start(run_directory: Path) -> CompilerHome:
 
 def _child(name: str, arguments: argparse.Namespace) -> int:
     """Run one group where `probe-run` started it; non-zero when a cell failed."""
-    for stopping in STOP_SIGNALS:
-        signal.signal(stopping, exit_on_stop)
-    pid_file(arguments.fragment).write_text(str(os.getpid()))  # NOSONAR(S8707)
-    # The identity's keys live in the top's temporary directory, which the top removes
-    # also when it kills this process.
-    identity_directory = arguments.fragment.with_suffix(".identity")
-    identity_directory.mkdir()
+    identity_directory = begun_child(arguments.fragment)
     (group,) = (group for group in _groups(arguments) if group.name == name)
     outcome = _run_group(
         group, arguments, identity_directory, _compiler_home(arguments.fragment.parent)
@@ -425,42 +414,14 @@ def _child(name: str, arguments: argparse.Namespace) -> int:
     return 0 if outcome is GroupOutcome.DONE else 1
 
 
-class _Probed(NamedTuple):
-    """Whether `probe-run` started for a group, and the status it left."""
-
-    started: bool
-    status: int | None
-
-
 def _under_probe_run(
     group: _Group,
     arguments: argparse.Namespace,
     fragment: Path,
     supervision: Supervision,
-) -> _Probed:
-    """Run `group` as its own process under `probe-run`; whether it started, its status.
-
-    A card-mode group the card has no room for is refused before `probe-run` starts, and
-    so is a group after a stop that arrived before it: nothing would forward that stop,
-    and the group would run through. Neither has started. A started group has no status
-    when it was ended for its memory and `probe-run` outlived the kill.
-    """
-    for tool in (PROBE_RUN, "setpriv"):
-        if shutil.which(tool) is None:
-            message = f"{tool} is not on PATH; the proof does not run without it"
-            raise SystemExit(message)
-    watch = supervision.watch
-    if watch is not None and watch.refuse_first(
-        ending(supervision.stops, supervision.control, None)
-    ):
-        return _Probed(started=False, status=None)
-    if supervision.stops.recorded:
-        return _Probed(started=False, status=None)
-    command = [
-        PROBE_RUN,
-        "-k",
-        str(KILL_GRACE_SECONDS),
-        str(CAP_SECONDS),
+) -> Probed:
+    """Run `group` as its own process under `probe-run`; its start and status."""
+    tail = [
         sys.executable,
         str(Path(__file__).resolve()),
         "--record",
@@ -477,9 +438,7 @@ def _under_probe_run(
         *(["--look-image", str(arguments.look_image)] if arguments.look_image else []),
     ]
     try:
-        return _Probed(
-            started=True, status=run_child(command, group.name, fragment, supervision)
-        )
+        return started_under_probe_run(tail, group.name, fragment, supervision)
     finally:
         if (log := _group_log(arguments.record, group.name)).exists():
             print(f"beside it: {log}")
@@ -491,7 +450,7 @@ def _run_group_process(
     fragment: Path,
     control: ProcessControl,
     watch: GroupWatch | None,
-) -> tuple[_Probed, Kill]:
+) -> tuple[Probed, Kill]:
     """Run `group`, then end what is left below the top: its `probe-run` and the kill.
 
     A stop that arrives while the group runs or the kill runs ends the command as an
@@ -506,10 +465,7 @@ def _run_group_process(
     probed = _under_probe_run(
         group, arguments, fragment, Supervision(stops, control, watch)
     )
-    if watch is None:
-        kill = end_processes_below(control)
-    else:
-        kill = watch.finish(lambda: end_processes_below(control))
+    kill = ended_below(control, watch)
     # A stop after the handlers are back reaches the top's own handler; one before is
     # in `stops`, which is read after.
     for stopping, handler in zip(STOP_SIGNALS, before, strict=True):
@@ -682,11 +638,7 @@ def main(argv: Sequence[str] | None = None, control: ProcessControl = KERNEL) ->
             card_provider(os.environ).card_memory_mb, arguments.memory_floor_mb
         )
     )
-    try:
-        control.become_subreaper()
-    except OSError as error:
-        message = f"the command cannot become a child subreaper ({error.strerror})"
-        raise SystemExit(message) from None
+    become_subreaper(control)
     for stopping in STOP_SIGNALS:
         signal.signal(stopping, _interrupted)
     gathered = _Gathered()

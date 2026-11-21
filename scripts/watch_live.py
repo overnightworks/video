@@ -18,7 +18,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import os
-import shutil
 import signal
 import socket
 import sys
@@ -47,8 +46,6 @@ from card_drive import (
     STOP_SIGNALS,
     DriveError,
     ProcessControl,
-    end_processes_below,
-    exit_on_stop,
     opened_session,
     read_audio,
     running_service,
@@ -60,18 +57,12 @@ from card_supervision import (
     CHILD_MARKER,
     Stops,
     Supervision,
-    ending,
-    pid_file,
-    run_child,
+    become_subreaper,
+    begun_child,
+    ended_below,
+    started_under_probe_run,
 )
-from prove_card import (
-    CAP_SECONDS,
-    KILL_GRACE_SECONDS,
-    PROBE_RUN,
-    card_provider,
-    checked_look_image,
-    checked_record,
-)
+from prove_card import card_provider, checked_look_image, checked_record
 from video_client.session_wire import ErrorEvent, parse_server_event
 from video_client.wire import (
     LOCATION_HEADER,
@@ -358,13 +349,7 @@ def _checked(arguments: argparse.Namespace) -> tuple[dict[str, Audio], bytes | N
 
 def _child(arguments: argparse.Namespace) -> int:
     """Run the service and the page where `probe-run` started them."""
-    for stopping in STOP_SIGNALS:
-        signal.signal(stopping, exit_on_stop)
-    pid_file(arguments.fragment).write_text(str(os.getpid()))  # NOSONAR(S8707)
-    # The identity's keys live in the top's temporary directory, which the top removes
-    # also when it kills this process.
-    identity_directory = arguments.fragment.with_suffix(".identity")
-    identity_directory.mkdir()
+    identity_directory = begun_child(arguments.fragment)
     audio, look_image = _checked(arguments)
     with (
         throwaway_identity(identity_directory, look_image) as identity,
@@ -384,27 +369,10 @@ def _child(arguments: argparse.Namespace) -> int:
 def _under_probe_run(
     arguments: argparse.Namespace,
     fragment: Path,
-    stops: Stops,
-    control: ProcessControl,
-    watch: GroupWatch | None,
+    supervision: Supervision,
 ) -> int | None:
-    """Run the child under `probe-run`; its status, none when it did not start.
-
-    A card the guard refuses, and a stop that came before the start, start nothing.
-    """
-    for tool in (PROBE_RUN, "setpriv"):
-        if shutil.which(tool) is None:
-            message = f"{tool} is not on PATH; the page does not run without it"
-            raise SystemExit(message)
-    if watch is not None and watch.refuse_first(ending(stops, control, None)):
-        return None
-    if stops.recorded:
-        return None
-    command = [
-        PROBE_RUN,
-        "-k",
-        str(KILL_GRACE_SECONDS),
-        str(CAP_SECONDS),
+    """Run the child under `probe-run`; its status, none when it did not start."""
+    tail = [
         sys.executable,
         str(Path(__file__).resolve()),
         "--log",
@@ -420,7 +388,7 @@ def _under_probe_run(
         *(["--look-image", str(arguments.look_image)] if arguments.look_image else []),
         *(["--dry-run"] if arguments.dry_run else []),
     ]
-    return run_child(command, GROUP_NAME, fragment, Supervision(stops, control, watch))
+    return started_under_probe_run(tail, GROUP_NAME, fragment, supervision).status
 
 
 def main(argv: Sequence[str] | None = None, control: ProcessControl = KERNEL) -> int:
@@ -431,11 +399,7 @@ def main(argv: Sequence[str] | None = None, control: ProcessControl = KERNEL) ->
     _checked(arguments)
     if not arguments.dry_run:
         _card_environment()
-    try:
-        control.become_subreaper()
-    except OSError as error:
-        message = f"the command cannot become a child subreaper ({error.strerror})"
-        raise SystemExit(message) from None
+    become_subreaper(control)
     stops = Stops()
     for stopping in STOP_SIGNALS:
         signal.signal(stopping, stops.record)
@@ -448,12 +412,10 @@ def main(argv: Sequence[str] | None = None, control: ProcessControl = KERNEL) ->
         (Path(scratch) / "compiler-home").mkdir()
         # Only its names are used: the child's pid file and keys lie beside it.
         fragment = Path(scratch) / "watch.json"
-        status = _under_probe_run(arguments, fragment, stops, control, watch)
-        kill = (
-            end_processes_below(control)
-            if watch is None
-            else watch.finish(lambda: end_processes_below(control))
+        status = _under_probe_run(
+            arguments, fragment, Supervision(stops, control, watch)
         )
+        kill = ended_below(control, watch)
     return _outcome(status, kill_failed=kill.failed, stops=stops, watch=watch)
 
 

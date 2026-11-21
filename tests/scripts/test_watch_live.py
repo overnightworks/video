@@ -13,7 +13,7 @@ import httpx2
 import pytest
 
 import watch_live
-from prove_card import CAP_SECONDS, KILL_GRACE_SECONDS
+from card_supervision import CAP_SECONDS, KILL_GRACE_SECONDS
 from support.browser_support import PACKAGE_BUILD, opened
 from support.prove_card_support import (
     APPEARS_WITHIN_SECONDS,
