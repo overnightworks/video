@@ -1,0 +1,7 @@
+claim_id = "6a44f25e025d486cafea26af9edac15d"
+agent = "Claude 76251661-cb30-4447-a3ad-32a83a396daa"
+role = "builder"
+base = "9545581c93408d4149b732b59ce9892e6c5036e1"
+branch = "claude/issue-75-image-paths"
+scope = [".github/workflows/ci.yml", ".github/workflows/image-test.yml", "tests/test_image_paths.py"]
+opened_commit = "68673ac599e62758dcbab2a06c9a20166b9c278b"
