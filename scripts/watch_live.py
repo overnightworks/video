@@ -27,7 +27,7 @@ from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from http import HTTPStatus
 from pathlib import Path
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Final, NamedTuple, Protocol
 
 import httpx2
 import uvicorn
@@ -97,6 +97,20 @@ CAP_STATUS: Final = 124
 GROUP_NAME: Final = "watch"
 
 
+class Over(Protocol):
+    """What ends the command: the reason, and whether the session failed by itself."""
+
+    def __call__(self, reason: str, *, failed: bool = False) -> None:
+        """End the command, unless something has ended it already."""
+
+
+class Ended(NamedTuple):
+    """Why the page was served no longer, and whether that is a failure."""
+
+    reason: str
+    failed: bool
+
+
 class LivePage:
     """The page's routes: the viewer relay, which holds the tokens, and the buttons."""
 
@@ -106,7 +120,7 @@ class LivePage:
         identity: Identity,
         session: Session,
         audio: Mapping[str, Audio],
-        over: Callable[[str], None],
+        over: Over,
     ) -> None:
         """Serve `session`, whose service `client` reaches, and speak `audio`."""
         self.admitted = 0
@@ -217,7 +231,7 @@ def _viewers(service: Service, page: LivePage) -> int:
 
 
 async def _end_when_unwatched(
-    service: Service, page: LivePage, seconds: float, over: Callable[[str], None]
+    service: Service, page: LivePage, seconds: float, over: Over
 ) -> None:
     idle = Idle(seconds, time.monotonic())
     while True:
@@ -227,15 +241,15 @@ async def _end_when_unwatched(
     over(f"no viewer for {seconds:g} seconds")
 
 
-async def _end_with_session(session: Session, over: Callable[[str], None]) -> None:
-    """Read the session's events until it ends, which ends the command."""
+async def _end_with_session(session: Session, over: Over) -> None:
+    """Read the session's events until it ends, which ends the command as a failure."""
     with suppress(ConnectionClosed):
         async for message in session.socket:
             event = parse_server_event(message)
             if isinstance(event, ErrorEvent):
-                over(f"the session ended with {event.error.code}")
+                over(f"the session ended with {event.error.code}", failed=True)
                 return
-    over("the session's connection closed")
+    over("the session's connection closed", failed=True)
 
 
 class _Server(uvicorn.Server):
@@ -251,13 +265,13 @@ async def _show(
     identity: Identity,
     audio: Mapping[str, Audio],
     arguments: argparse.Namespace,
-) -> str:
+) -> Ended:
     """Serve the page until something ends it; what ended it."""
-    ended: asyncio.Future[str] = asyncio.get_running_loop().create_future()
+    ended: asyncio.Future[Ended] = asyncio.get_running_loop().create_future()
 
-    def over(reason: str) -> None:
+    def over(reason: str, *, failed: bool = False) -> None:
         if not ended.done():
-            ended.set_result(reason)
+            ended.set_result(Ended(reason, failed))
 
     async with (
         opened_session(service, identity, LOOK_NAMES[0]) as session,
@@ -281,12 +295,12 @@ async def _show(
                 ),
             ]
             print(f"watch at http://{HOST}:{bound.getsockname()[1]}/", flush=True)
-            reason = await ended
+            result = await ended
             for watcher in watchers:
                 watcher.cancel()
             server.should_exit = True
             await serving
-    return reason
+    return result
 
 
 def _card_environment() -> Mapping[str, str]:
@@ -361,9 +375,9 @@ def _child(arguments: argparse.Namespace) -> int:
             provider=_provider_of(arguments),
         ) as service,
     ):
-        reason = asyncio.run(_show(service, identity, audio, arguments))
-    print(f"ended: {reason}")
-    return 0
+        ended = asyncio.run(_show(service, identity, audio, arguments))
+    print(f"ended: {ended.reason}")
+    return 1 if ended.failed else 0
 
 
 def _under_probe_run(

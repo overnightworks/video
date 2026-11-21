@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 import signal
 import sys
@@ -142,6 +143,19 @@ def test_a_stop_signal_ends_the_service_and_the_command(
     status, _ = command.ended()
     assert status == 0
     assert "stopped by SIGTERM" in command.run.printed()
+
+
+def test_a_service_that_dies_ends_the_command_with_a_failure(
+    live: Callable[..., Live],
+) -> None:
+    command = live()
+    assert command.address
+
+    os.kill(command.run.service_pid(), signal.SIGKILL)
+
+    status, _ = command.ended()
+    assert status != 0
+    assert "ended: the session's connection closed" in command.run.printed()
 
 
 def test_a_page_nobody_watches_ends_after_its_idle_time(
