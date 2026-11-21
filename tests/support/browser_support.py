@@ -2,7 +2,8 @@
 
 The app serves a page, the built browser package and one route that relays a viewer's
 offer to the service with the session's tokens, by its own HTTP call, as an app's
-route does. Chromium never holds a token. With `VIDEO_BROWSER_COVERAGE_DIR` set,
+route does. Chromium never holds a token; `opened` drives a page some other process
+serves, as the live page's command does. With `VIDEO_BROWSER_COVERAGE_DIR` set,
 the page's V8 coverage is written there for the CI report.
 """
 
@@ -248,6 +249,26 @@ async def serving(app: StandInApp) -> AsyncIterator[str]:
 
 
 @asynccontextmanager
+async def _chromium(
+    profile: Path, autoplay_flag: str
+) -> AsyncIterator[tuple[Page, PageCoverage]]:
+    """A page of a Chromium on `profile`, with the coverage collected for it."""
+    coverage_directory = os.environ.get(COVERAGE_DIRECTORY_VARIABLE)
+    coverage = PageCoverage(Path(coverage_directory) if coverage_directory else None)
+    async with async_playwright() as playwright:
+        context = await playwright.chromium.launch_persistent_context(
+            profile, args=[autoplay_flag]
+        )
+        try:
+            page = await context.new_page()
+            await coverage.start(page)
+            yield page, coverage
+        finally:
+            with suppress(Exception):
+                await asyncio.wait_for(context.close(), timeout=5)
+
+
+@asynccontextmanager
 async def stage(
     service: Service,
     session: OpenSession,
@@ -257,31 +278,32 @@ async def stage(
 ) -> AsyncIterator[Stage]:
     """A page of Chromium on the stand-in app of `session`."""
     app = StandInApp(service, session)
-    coverage_directory = os.environ.get(COVERAGE_DIRECTORY_VARIABLE)
-    coverage = PageCoverage(Path(coverage_directory) if coverage_directory else None)
-    async with serving(app) as address, async_playwright() as playwright:
-        context = await playwright.chromium.launch_persistent_context(
-            profile, args=[autoplay_flag]
-        )
-        try:
-            page = await context.new_page()
-            await coverage.start(page)
-            watched = Stage(page, app, profile, address)
+    async with (
+        serving(app) as address,
+        _chromium(profile, autoplay_flag) as (page, coverage),
+    ):
+        watched = Stage(page, app, profile, address)
 
-            async def record(request: PlaywrightRequest) -> None:
-                watched.requests.append(
-                    PageRequest(
-                        request.url,
-                        await request.all_headers(),
-                        request.post_data_buffer or b"",
-                    )
+        async def record(request: PlaywrightRequest) -> None:
+            watched.requests.append(
+                PageRequest(
+                    request.url,
+                    await request.all_headers(),
+                    request.post_data_buffer or b"",
                 )
+            )
 
-            page.on("request", record)
-            await page.goto(address)
-            yield watched
-            if not watched.killed:
-                await coverage.write()
-        finally:
-            with suppress(Exception):
-                await asyncio.wait_for(context.close(), timeout=5)
+        page.on("request", record)
+        await page.goto(address)
+        yield watched
+        if not watched.killed:
+            await coverage.write()
+
+
+@asynccontextmanager
+async def opened(address: str, profile: Path) -> AsyncIterator[Page]:
+    """A page of Chromium on `address`, which plays only after a user activation."""
+    async with _chromium(profile, REFUSES_AUTOPLAY) as (page, coverage):
+        await page.goto(address)
+        yield page
+        await coverage.write()

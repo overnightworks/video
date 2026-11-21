@@ -10,16 +10,18 @@ card and ends the group when the card's memory calls for it.
 from __future__ import annotations
 
 import os
+import shutil
 import signal
 import subprocess
 import sys
 from contextlib import suppress
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Final, NamedTuple
 
 from card_drive import (
     STOP_SIGNALS,
     end_processes_below,
+    exit_on_stop,
     has_child,
     read_process,
     signal_if_unchanged,
@@ -28,15 +30,41 @@ from card_drive import (
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from card_drive import Kill, Process, ProcessControl
+    from card_drive import Kill, Lineage, Process, ProcessControl
     from card_memory import Ender, GroupWatch, Stop
 
 CHILD_MARKER: Final = "PROVE_CARD_GROUP"
+PROBE_RUN: Final = "probe-run"
+KILL_GRACE_SECONDS: Final = 30
+CAP_SECONDS: Final = 1800
 
 
 def pid_file(fragment: Path) -> Path:
     """Where the group's process names itself to the command that started it."""
     return fragment.with_suffix(".pid")
+
+
+def begun_child(fragment: Path) -> Path:
+    """Set up the group's process: stop handlers, pid file, the identity directory.
+
+    The identity's keys live in the top's temporary directory, which the top removes
+    also when it kills this process.
+    """
+    for stopping in STOP_SIGNALS:
+        signal.signal(stopping, exit_on_stop)
+    pid_file(fragment).write_text(str(os.getpid()))  # NOSONAR(S8707)
+    directory = fragment.with_suffix(".identity")
+    directory.mkdir()
+    return directory
+
+
+def become_subreaper(control: ProcessControl) -> None:
+    """Make the command the parent of every orphan below it, or end it with one line."""
+    try:
+        control.become_subreaper()
+    except OSError as error:
+        message = f"the command cannot become a child subreaper ({error.strerror})"
+        raise SystemExit(message) from None
 
 
 @dataclass
@@ -102,6 +130,24 @@ def named_pid(fragment: Path) -> int | None:
         return None
 
 
+def lineage_below_probe_run(
+    group: Process, probe_run: Process, control: ProcessControl
+) -> Lineage | None:
+    """The group's process and what lies between it and `probe-run`, or none.
+
+    The group's process is `probe-run`'s own child under a stand-in that executes into
+    `timeout`, and `timeout`'s child under the real `probe-run`, which keeps running
+    beside it. A process with another ancestry is no part of the group.
+    """
+    links = [group]
+    if group.parent != probe_run.pid:
+        between = read_process(group.parent, control)
+        if between is None or between.parent != probe_run.pid:
+            return None
+        links.append(between)
+    return (*links, probe_run)
+
+
 def settled_at_group(
     probe_run: Process | None,
     fragment: Path,
@@ -110,20 +156,22 @@ def settled_at_group(
 ) -> bool:
     """Whether the pid file names the group's process, which settles the stop there.
 
-    The stop is sent only to a process whose parent is `probe-run`, checked by
-    `signal_if_unchanged`; `timeout` may have reaped the group's process and the kernel
-    reused its id. An id that names no process or another's child, and a check that
-    cannot be made, send nothing: the stop stays recorded and the end-of-group kill
-    follows. Where the id is not yet written or holds no number, the stop is not
-    settled and goes to `probe-run`.
+    The stop is sent only to a process below `probe-run` with no stranger between,
+    checked by `signal_if_unchanged`; `timeout` may have reaped the group's process and
+    the kernel reused its id. An id that names no process or one outside `probe-run`,
+    and a check that cannot be made, send nothing: the stop stays recorded and the
+    end-of-group kill follows. Where the id is not yet written or holds no number, the
+    stop is not settled and goes to `probe-run`.
     """
     if (group_pid := named_pid(fragment)) is None:
         return False
     if probe_run is not None:
         with suppress(OSError):
             group = read_process(group_pid, control)
-            if group is not None and group.parent == probe_run.pid:
-                signal_if_unchanged((group, probe_run), signum, control)
+            if group is not None:
+                lineage = lineage_below_probe_run(group, probe_run, control)
+                if lineage is not None:
+                    signal_if_unchanged(lineage, signum, control)
     return True
 
 
@@ -189,3 +237,42 @@ def run_child(
         service_exists=lambda: service_exists(fragment, control),
         end=ending(stops, control, child.pid),
     )
+
+
+class Probed(NamedTuple):
+    """Whether `probe-run` started for a group, and the status it left."""
+
+    started: bool
+    status: int | None
+
+
+def started_under_probe_run(
+    tail: list[str], group: str, fragment: Path, supervision: Supervision
+) -> Probed:
+    """Run `tail` as the group's process under `probe-run`: its start and status.
+
+    A card-mode group the card has no room for is refused before `probe-run` starts, and
+    so is a group after a stop that arrived before it: nothing would forward that stop,
+    and the group would run through. Neither has started. A started group has no status
+    when it was ended for its memory and `probe-run` outlived the kill.
+    """
+    for tool in (PROBE_RUN, "setpriv"):
+        if shutil.which(tool) is None:
+            message = f"{tool} is not on PATH; the command does not run without it"
+            raise SystemExit(message)
+    watch = supervision.watch
+    if watch is not None and watch.refuse_first(
+        ending(supervision.stops, supervision.control, None)
+    ):
+        return Probed(started=False, status=None)
+    if supervision.stops.recorded:
+        return Probed(started=False, status=None)
+    command = [PROBE_RUN, "-k", str(KILL_GRACE_SECONDS), str(CAP_SECONDS), *tail]
+    return Probed(started=True, status=run_child(command, group, fragment, supervision))
+
+
+def ended_below(control: ProcessControl, watch: GroupWatch | None) -> Kill:
+    """End what is left below the top once a group is over, as the watch ends it."""
+    if watch is None:
+        return end_processes_below(control)
+    return watch.finish(lambda: end_processes_below(control))

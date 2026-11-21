@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="de">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mozart live</title>
+<link rel="stylesheet" href="/page.css">
+<main>
+  <div class="stage">
+    <div id="host"></div>
+    <button id="watch" type="button" class="primary" title="Zeigt das Gesicht; der Browser spielt Ton erst nach einem Klick">Ansehen</button>
+  </div>
+  <p id="state" data-state="idle" aria-live="polite"><span class="shape" aria-hidden="true"></span><span id="state-text"></span></p>
+  <div class="controls">
+    <select id="file" aria-label="Datei" hidden></select>
+    <button id="speak" type="button" class="primary" disabled title="Spricht die Datei als einen Satz">Sprechen</button>
+    <button id="clear" type="button" disabled title="Schneidet den Satz ab, der gerade läuft">Abbrechen</button>
+    <button id="end" type="button" title="Beendet das Gesicht und gibt die Grafikkarte frei">Beenden</button>
+  </div>
+  <output id="note"></output>
+</main>
+<script type="module" src="/page.js"></script>

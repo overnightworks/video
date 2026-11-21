@@ -31,7 +31,7 @@ from PIL import Image
 from video_client.wire import caller_headers
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Iterator, Sequence
     from pathlib import Path
 
 LOOK_NAMES: Final = ("alpha", "beta")
@@ -218,11 +218,14 @@ def _configuration(issuer: str, key_set_url: str) -> str:
 
 @contextmanager
 def throwaway_identity(
-    directory: Path, alpha_image: bytes | None = None
+    directory: Path,
+    alpha_image: bytes | None = None,
+    looks: Sequence[str] = LOOK_NAMES,
 ) -> Iterator[Identity]:
-    """Serve the issuer and the looks under `directory` until the block ends.
+    """Serve the issuer and the looks `looks` under `directory` until the block ends.
 
-    `alpha_image` is served unchanged as the look `alpha`, in place of its square.
+    `alpha_image` is served unchanged as the look `alpha`, in place of its square, when
+    `looks` has it.
     """
     private = rsa.generate_private_key(public_exponent=65537, key_size=_KEY_BITS)
     private_pem = private.private_bytes(
@@ -232,11 +235,12 @@ def throwaway_identity(
     ).decode()
     jwk = json.loads(jwt.algorithms.RSAAlgorithm.to_jwk(private.public_key()))
     jwk |= {"kid": _KEY_IDENTIFIER, "use": "sig", "alg": _ALGORITHM}
-    looks = {name: _look_png(name) for name in LOOK_NAMES}
-    if alpha_image is not None:
-        looks["alpha"] = alpha_image
+    images = {
+        name: _look_png(name) if name != "alpha" or alpha_image is None else alpha_image
+        for name in looks
+    }
     files = {_KEY_SET_PATH: json.dumps({"keys": [jwk]}).encode()} | {
-        f"{LOOKS_PATH}{name}": data for name, data in looks.items()
+        f"{LOOKS_PATH}{name}": data for name, data in images.items()
     }
     ca_file, chain_file, key_file = _write_chain(directory)
     tls = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
@@ -253,7 +257,7 @@ def throwaway_identity(
         "".join(
             f'[{name}]\nurl = "{base}{LOOKS_PATH}{name}"\n'
             f'sha256 = "{hashlib.sha256(data).hexdigest()}"\n'
-            for name, data in looks.items()
+            for name, data in images.items()
         )
     )
     thread = threading.Thread(target=server.serve_forever)

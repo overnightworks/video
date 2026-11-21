@@ -55,6 +55,11 @@ def test_without_an_image_both_looks_are_squares(tmp_path: Path) -> None:
             assert square.size == (16, 16)
 
 
+def test_only_the_looks_asked_for_are_in_the_looks_file(tmp_path: Path) -> None:
+    with card_identity.throwaway_identity(tmp_path, looks=("beta",)) as identity:
+        assert list(read_look_file(identity.looks_file)) == ["beta"]
+
+
 def test_every_group_is_given_the_look_image_and_the_run_ends_well(run: Run) -> None:
     face = run.directory / "face.webp"
     face.write_bytes(picture(32, 24, fmt="WEBP").data)

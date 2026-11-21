@@ -461,6 +461,12 @@ class Service:
         ticks = int(fields[_USER_TICKS_FIELD]) + int(fields[_SYSTEM_TICKS_FIELD])
         return ticks / os.sysconf("SC_CLK_TCK")
 
+    @property
+    def base_url(self) -> str:
+        """The service's HTTP origin."""
+        # The service speaks plain HTTP on the loopback address and has no TLS.
+        return f"http://{_HOST}:{self.port}"  # NOSONAR(S5332)
+
     def url(self, look: str) -> str:
         """The session upgrade of `look`."""
         # The service speaks plain HTTP on the loopback address and has no TLS.
@@ -644,10 +650,8 @@ async def post_viewer_offer(
     service: Service, identity: Identity, session_id: str, offer: str
 ) -> str:
     """The service's SDP answer to a viewer's `offer` on the session's tokens."""
-    # The service speaks plain HTTP on the loopback address and has no TLS.
-    base_url = f"http://{_HOST}:{service.port}"  # NOSONAR(S5332)
     async with httpx2.AsyncClient(
-        base_url=base_url, timeout=EVENT_WITHIN_SECONDS
+        base_url=service.base_url, timeout=EVENT_WITHIN_SECONDS
     ) as client:
         response = await client.post(
             viewers_path(session_id),

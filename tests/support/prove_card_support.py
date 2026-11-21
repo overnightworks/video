@@ -48,6 +48,13 @@ echo "$*" >> "$PROBE_RUN_LOG"
 while [ -n "$PROBE_RUN_HOLD" ] && [ ! -e "$PROBE_RUN_HOLD" ]; do sleep 0.05; done
 exec setpriv --pdeathsig TERM timeout "$@"
 """
+# The real `probe-run` keeps its script running and starts `timeout` as its child, so
+# the group's process has `timeout` as its parent and `probe-run` above that.
+NESTED_PROBE_RUN_STAND_IN: Final = PROBE_RUN_STAND_IN.replace(
+    'exec setpriv --pdeathsig TERM timeout "$@"',
+    'setpriv --pdeathsig TERM timeout "$@" &\nwait $!',
+)
+assert NESTED_PROBE_RUN_STAND_IN != PROBE_RUN_STAND_IN
 # A stand-in for `nvidia-smi` that answers with what the test wrote to the reading file:
 # a line `used, free, total`, `fail` or `hang`, after the delay the test sets; every
 # answer it gives is logged, so a test can tell which starts came after a reading.
@@ -65,12 +72,14 @@ esac
 # The `flashhead-lite` worker of a provider root: the fake provider with the steps a
 # case scripts through the environment, each writing a reading for the stand-in. It
 # fails its load for the group the case names, and fails the preparation of
-# the looks the case lists. It renders in chunks as the case's environment says. At its
+# the looks the case lists. It renders in chunks as the case's environment says, and
+# holds the end of every sentence until the file the case names exists. At its
 # start it writes the `HOME` and `TMPDIR` it sees to
 # the file the case names and puts one entry into its `HOME`, as a compiler would.
 WORKER_STAND_IN: Final = f"""#!{sys.executable}
 import json
 import os
+import threading
 import time
 from pathlib import Path
 
@@ -113,8 +122,23 @@ def seconds(name):
     return float(os.environ.get(name, 0))
 
 
+def gate_opened_by(name):
+    if name not in os.environ:
+        return None
+    opened = threading.Event()
+
+    def watch():
+        while not Path(os.environ[name]).exists():
+            time.sleep(0.01)
+        opened.set()
+
+    threading.Thread(target=watch, daemon=True).start()
+    return opened
+
+
 run_worker(
     Scripted(
+        finish_gate=gate_opened_by("WORKER_GATE_FILE"),
         refuses=os.environ.get("WORKER_REFUSES", "").split(),
         render_seconds=seconds("WORKER_RENDER_SECONDS"),
         idle_render_seconds=seconds("WORKER_IDLE_RENDER_SECONDS"),
@@ -276,6 +300,15 @@ class Run:
             "WORKER_IDLE_RENDER_SECONDS": str(idle_render_seconds),
         }
 
+    def hold_sentences_until(self, gate: Path) -> None:
+        """Have the provider hold the end of each sentence until `gate` exists.
+
+        The service ends a session whose provider call outlasts its lag bound, which
+        the drive fixes at `MAX_LAG_MS`: a test releases the gate within that bound of
+        the held call starting, so it holds only what it sends in between.
+        """
+        self.environment = self.environment | {"WORKER_GATE_FILE": str(gate)}
+
     def fail_the_load_of(self, group: str) -> None:
         """Have the provider's load fail in `group`, which the group's process names."""
         self.environment = self.environment | {"WORKER_FAILS_TO_START_IN_GROUP": group}
@@ -305,6 +338,10 @@ class Run:
         if not self.nvidia_smi_answers.exists():
             return 0
         return self.nvidia_smi_answers.read_text().splitlines().count(reading)
+
+    def nest_timeout_under_probe_run(self) -> None:
+        """Have the `probe-run` stand-in keep running with `timeout` as its child."""
+        (self.directory / "bin" / "probe-run").write_text(NESTED_PROBE_RUN_STAND_IN)
 
     def in_card_mode(self, *, cap_mb: int = CAP_MB) -> None:
         """Set the operator's two provider settings, for a run without `--dry-run`."""

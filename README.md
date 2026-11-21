@@ -285,6 +285,27 @@ CUDA context, compiler peaks), which it sees only
 afterwards, the voice's own growth, nor a driver or `nvidia-smi` that reports wrong figures;
 it reads GPU 0 only.
 
+## Watching live
+
+`uv run --locked python scripts/watch_live.py --log service.log --audio speech.wav --look-image face.png`
+starts the service from the checkout with the `flashhead-lite` provider and opens one session on
+the look `alpha`, which `--look-image` sets as the card proof's does. Once the service is ready the
+command prints `watch at http://127.0.0.1:<port>/`, a page served on that address only. The page
+shows the session through the browser package's `watch`, so build it first (`pnpm run build` in
+`packages/browser`); a relay route in the command holds the session's tokens and the browser holds
+none ([WIRE-14](docs/wire.md#the-apps-route)). A browser plays sound only after a click, so the
+page starts with an "Ansehen" button. Its buttons speak the chosen `--audio` file as one sentence,
+send `output_audio_buffer.clear` and end the command. Each `--audio` file is a mono 16-bit WAV
+checked as the card proof checks it; several files are chosen by file name, and a file name may
+not be given twice. The command takes the provider's settings and the card guard as the card
+proof does (`VIDEO_PROVIDER_ROOT` is required; the cap is 7168 MiB, the floor 1024 MiB, the lag
+2400 ms), under `probe-run` with its cap of 1800 s; `--dry-run` drives the `fake` provider and
+no card guard. It stops the service at the end button, once no viewer has been attached for a
+minute (counted from the start of serving), at SIGINT or SIGTERM and at the cap, and writes
+nothing but the service's log; it exits non-zero when the session or the service ends by itself.
+The page's server answers only a request for 127.0.0.1 from the page's own origin. It has no
+recording, no microphone and no text input.
+
 ## Install the client
 
 An app depends on the client distribution by the Git pin the release notes give,
