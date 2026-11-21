@@ -302,7 +302,9 @@ proof does (`VIDEO_PROVIDER_ROOT` is required; the cap is 7168 MiB, the floor 10
 2400 ms), under `probe-run` with its cap of 1800 s; `--dry-run` drives the `fake` provider and
 no card guard. It stops the service at the end button, once no viewer has been attached for a
 minute (counted from the start of serving), at SIGINT or SIGTERM and at the cap, and writes
-nothing but the service's log. It has no recording, no microphone and no text input.
+nothing but the service's log; it exits non-zero when the session or the service ends by itself.
+The page's server answers only a request for 127.0.0.1 from the page's own origin. It has no
+recording, no microphone and no text input.
 
 ## Install the client
 
