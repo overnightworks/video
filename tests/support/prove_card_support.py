@@ -54,6 +54,7 @@ NESTED_PROBE_RUN_STAND_IN: Final = PROBE_RUN_STAND_IN.replace(
     'exec setpriv --pdeathsig TERM timeout "$@"',
     'setpriv --pdeathsig TERM timeout "$@" &\nwait $!',
 )
+assert NESTED_PROBE_RUN_STAND_IN != PROBE_RUN_STAND_IN
 # A stand-in for `nvidia-smi` that answers with what the test wrote to the reading file:
 # a line `used, free, total`, `fail` or `hang`, after the delay the test sets; every
 # answer it gives is logged, so a test can tell which starts came after a reading.
