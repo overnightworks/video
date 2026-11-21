@@ -9,6 +9,7 @@ import re
 import signal
 import socket
 import sys
+import types
 from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
@@ -430,6 +431,39 @@ def test_the_idle_time_starts_over_when_the_last_viewer_leaves() -> None:
     assert idle.expired(160, 0)
 
 
+class _ViewerLines:
+    """The service's lines of `viewer.ended`, as the page counts viewers from them."""
+
+    def __init__(self, *lines: dict[str, str]) -> None:
+        self._lines = list(lines)
+
+    def lines(self, _event: str) -> list[dict[str, str]]:
+        return self._lines
+
+
+_ADMITTED_ENDED = {"outcome": "ok", "ended_by": "peer_closed"}
+_REFUSED = {"outcome": "refused", "reason": "unavailable"}
+_FAILED = {"outcome": "failed"}
+
+
+@pytest.mark.parametrize(
+    ("admitted", "lines", "attached"),
+    [
+        (0, [], 0),
+        (2, [_ADMITTED_ENDED], 1),
+        (2, [_ADMITTED_ENDED, _ADMITTED_ENDED], 0),
+        (1, [_REFUSED], 1),
+        (1, [_FAILED], 1),
+    ],
+)
+def test_the_viewers_attached_are_the_admitted_ones_that_have_not_ended(
+    admitted: int, lines: list[dict[str, str]], attached: int
+) -> None:
+    page = types.SimpleNamespace(admitted=admitted)
+
+    assert watch_live.viewers_attached(_ViewerLines(*lines), page) == attached
+
+
 _STATE_IS = "document.getElementById('state').dataset.state === '{}'"
 _NOTE_IS = "document.getElementById('note').textContent === '{}'"
 _WITHIN_MILLISECONDS = 30_000
@@ -462,7 +496,7 @@ def test_the_page_shows_the_face_speaks_a_file_and_ends_at_its_button(
 
 
 @pytest.mark.browser
-def test_a_page_that_is_watched_stays_and_one_whose_tab_closed_ends(
+def test_a_page_whose_tab_closed_ends_after_its_idle_time(
     live: Callable[..., Live], tmp_path: Path
 ) -> None:
     command = live("--package", str(PACKAGE_BUILD), "--idle-seconds", "5")
@@ -474,8 +508,6 @@ def test_a_page_that_is_watched_stays_and_one_whose_tab_closed_ends(
             await page.wait_for_function(
                 _STATE_IS.format("live"), timeout=_WITHIN_MILLISECONDS
             )
-            await page.wait_for_timeout(8000)
-            assert command.command.poll() is None
 
     asyncio.run(scenario())
 

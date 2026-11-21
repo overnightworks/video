@@ -32,7 +32,6 @@ from typing import TYPE_CHECKING, Final, NamedTuple, Protocol
 
 import httpx2
 import uvicorn
-from logline import Outcome
 from starlette.applications import Starlette
 from starlette.datastructures import Headers
 from starlette.middleware import Middleware
@@ -232,14 +231,14 @@ class Idle:
         return now - self.since >= self.seconds
 
 
-def _viewers(service: Service, page: LivePage) -> int:
-    """The viewers attached: the offers the relay admitted less the ones that ended."""
-    ended = [
-        line
-        for line in service.lines("viewer.ended")
-        if line["outcome"] != Outcome.REFUSED
-    ]
-    return page.admitted - len(ended)
+def viewers_attached(service: Service, page: LivePage) -> int:
+    """The viewers attached: the offers the relay admitted less the admitted ones ended.
+
+    Only the line of a viewer that was admitted and has ended names who ended it; the
+    line of an offer that was refused or failed does not.
+    """
+    ended = sum("ended_by" in line for line in service.lines("viewer.ended"))
+    return page.admitted - ended
 
 
 async def _end_when_unwatched(
@@ -248,7 +247,7 @@ async def _end_when_unwatched(
     idle = Idle(seconds, time.monotonic())
     while True:
         await asyncio.sleep(IDLE_POLL_SECONDS)
-        if idle.expired(time.monotonic(), _viewers(service, page)):
+        if idle.expired(time.monotonic(), viewers_attached(service, page)):
             break
     over(f"no viewer for {seconds:g} seconds")
 
