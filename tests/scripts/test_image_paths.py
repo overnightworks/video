@@ -103,7 +103,7 @@ def _run(
     dockerignore = tmp_path / ".dockerignore"
     dockerignore.write_text("*\n!src/**/*.py\n", encoding="utf-8")
     monkeypatch.setattr("sys.stdin", io.StringIO("\0".join(changed) + "\0"))
-    code = main([str(dockerignore)])
+    code = main(tmp_path)
     return code, capsys.readouterr().out
 
 
@@ -136,14 +136,24 @@ def test_the_command_succeeds_and_prints_nothing_when_no_changed_path_is_held(
 
 
 def test_the_command_fails_without_output_when_the_allowlist_is_missing(
+    monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
+    monkeypatch.setattr("sys.stdin", io.StringIO("src/a.py\0"))
+
+    with pytest.raises(FileNotFoundError):
+        main(tmp_path)
+
+    assert capsys.readouterr().out == ""
+
+
+def test_the_script_run_without_arguments_reads_the_repository_allowlist() -> None:
     finished = subprocess.run(  # noqa: S603 - the interpreter and the repository's script
-        [sys.executable, "-I", str(_SCRIPT), str(tmp_path / "missing")],
-        input=b"src/a.py\0",
+        [sys.executable, "-I", str(_SCRIPT)],
+        input=b"README.md\0Dockerfile\0",
         capture_output=True,
         check=False,
     )
 
-    assert finished.returncode != 0
-    assert finished.stdout == b""
+    assert (finished.returncode, finished.stdout) == (0, b"Dockerfile\n")

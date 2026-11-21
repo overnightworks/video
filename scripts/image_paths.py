@@ -79,14 +79,16 @@ class BuildContext:
         return held
 
 
-def main(argv: list[str]) -> int:
+def main(root: Path = REPOSITORY_ROOT) -> int:
     """Print the paths the image is built from among those on standard input.
+
+    The allowlist is the `.dockerignore` at the root of the repository.
 
     The paths are separated by NUL, as `git diff -z` writes them. Printing no path
     means none is held; any failure leaves a nonzero status, so a caller reads the
     output only after a zero status.
     """
-    context = BuildContext(Path(argv[0]).read_text(encoding="utf-8"))
+    context = BuildContext((root / ".dockerignore").read_text(encoding="utf-8"))
     for path in sys.stdin.read().split("\0"):
         if path and context.holds(path):
             print(path)
@@ -94,4 +96,4 @@ def main(argv: list[str]) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main(sys.argv[1:] or [str(REPOSITORY_ROOT / ".dockerignore")]))
+    raise SystemExit(main())
