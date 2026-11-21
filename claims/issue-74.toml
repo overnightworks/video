@@ -1,0 +1,8 @@
+claim_id = "b3665ccf425b430da3a82cb29c08931f"
+agent = "Claude 76251661-cb30-4447-a3ad-32a83a396daa"
+role = "builder"
+base = "aefe77292d6e99ea75b86b29c2eadfe45d29336a"
+branch = "claude/issue-74-watch-live"
+scope = ["README.md", "scripts/watch_live.py", "scripts/watch_live_page", "tests/scripts/test_watch_live.py", "tests/support/browser_support.py"]
+opened_commit = "8c60bb2c026a930778edf82b31fbe14f5c8f06c1"
+whole_reason = "One local command with its page and its test, reusing the card proof's modules; the page without the command shows nothing and the command without the page cannot be watched."
