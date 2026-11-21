@@ -107,7 +107,7 @@ class Over(Protocol):
     """What ends the command: the reason, and whether the session failed by itself."""
 
     def __call__(self, reason: str, *, failed: bool = False) -> None:
-        """End the command, unless something has ended it already."""
+        """End the command, unless something has ended it already; from any thread."""
 
 
 class Ended(NamedTuple):
@@ -187,7 +187,7 @@ class LivePage:
         )
         return Response(status_code=relayed.status_code)
 
-    async def _files(self, _request: Request) -> Response:
+    def _files(self, _request: Request) -> Response:
         return JSONResponse(list(self._audio))
 
     async def _speak(self, request: Request) -> Response:
@@ -203,7 +203,7 @@ class LivePage:
     async def _clear(self, _request: Request) -> Response:
         return await self._sent(self._session.clear)
 
-    async def _end(self, _request: Request) -> Response:
+    def _end(self, _request: Request) -> Response:
         self._over("the end button")
         return Response(status_code=HTTPStatus.NO_CONTENT)
 
@@ -277,7 +277,8 @@ class _SameOrigin:
         if scope["type"] == "http":
             headers = Headers(scope=scope)
             origin = headers.get("origin")
-            if origin is not None and origin != f"http://{headers.get('host')}":
+            own_origin = f"{scope['scheme']}://{headers.get('host')}"
+            if origin is not None and origin != own_origin:
                 await Response(status_code=HTTPStatus.FORBIDDEN)(scope, receive, send)
                 return
         await self._app(scope, receive, send)
@@ -309,11 +310,16 @@ async def _show(
     arguments: argparse.Namespace,
 ) -> Ended:
     """Serve the page until something ends it; what ended it."""
-    ended: asyncio.Future[Ended] = asyncio.get_running_loop().create_future()
+    loop = asyncio.get_running_loop()
+    ended: asyncio.Future[Ended] = loop.create_future()
+
+    def settle(result: Ended) -> None:
+        if not ended.done():
+            ended.set_result(result)
 
     def over(reason: str, *, failed: bool = False) -> None:
-        if not ended.done():
-            ended.set_result(Ended(reason, failed))
+        # Starlette runs a plain route handler in a worker thread.
+        loop.call_soon_threadsafe(settle, Ended(reason, failed))
 
     async with (
         opened_session(service, identity, LOOK_NAMES[0]) as session,

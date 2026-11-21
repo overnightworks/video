@@ -1,5 +1,5 @@
 // The page of `watch_live.py`: it shows the session through `watch` and sends the buttons to the command.
-import { watch } from "/dist/index.js";
+import { watch } from "./dist/index.js";
 
 const WORDS = {
   idle: "Bereit",
