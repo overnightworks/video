@@ -12,7 +12,7 @@ updates:
     schedule:
       interval: weekly
     ignore:
-      # The base image's Python moves with .python-version and the provider's requires-python, which its locked wheels hold below 3.15
+      # Python moves only with .python-version, every requires-python and both locks; the provider's locked torch wheels are cp314 only
       - dependency-name: "python"
         versions: [">=3.15"]
   - package-ecosystem: uv
