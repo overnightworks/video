@@ -3,6 +3,6 @@ agent = "Claude 08995c7c-c9e2-445a-ad5b-63926da5891d"
 role = "builder"
 base = "3af1e4fe31331b7c12ee783fbc3b346b2fca0bf4"
 branch = "claude/issue-83-bring-video-s-documents-into-the-fleet-d"
-scope = ["AGENTS.md", "README.md", "docs/ARCHITECTURE.md", "docs/configuration.md", "docs/runbooks/card-proof.md", "docs/wire.md", "tests"]
+scope = ["AGENTS.md", "README.md", "docs/ARCHITECTURE.md", "docs/configuration.md", "docs/runbooks/card-proof.md", "docs/runbooks/watch-live.md", "docs/wire.md", "tests"]
 opened_commit = "142aabfcc2853827b919badde82329dc5980b09b"
 whole_reason = "The document set moves facts between README, ARCHITECTURE and two new documents, and the tests that prove the moved rules cite their IDs; split, each half leaves a fact in two places or none."
