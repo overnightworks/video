@@ -280,21 +280,21 @@ that session `unavailable` and no other.
 CI runs lint, format and the tests with branch coverage over the service, the
 client, the port, the fake provider and the release script, the browser package's type check and
 pack-and-install proof, the browser layer, and then the quality gate, which reads the
-Python coverage and the browser layer's lcov, to which the browser package's two scripts add theirs. The release publishes the client
-distribution at a tag by Git pin and the browser package as a tarball beside it
-([README](../README.md#release)).
+Python coverage and the browser layer's lcov, to which the browser package's two scripts add theirs. The distributions release publishes the client
+distribution at a `vX.Y.Z` tag by Git pin and the browser package as a tarball beside it; the
+app release builds and tests the image ([README](../README.md#release)).
 
-The image `ghcr.io/overnightworks/video:X.Y.Z` is one private package: the service's
+The image `ghcr.io/overnightworks/video:YYYY.MM.DD.N` is one private package: the service's
 environment, the FlashHead lite provider's own environment at the place the service looks
 for it, and the pinned weights, which only the build fetches. The `Dockerfile` builds it
 from wheels only, in stages whose uv, git and build backend the final stage does not
 carry; it holds gcc and libc6-dev, which Triton needs on the card at first use. It
 declares no health check, because readiness is `provider.ready` in `GET /health`, and
 sets neither a token nor `VIDEO_PROVIDER`, which the deployment owns. The image does
-not fit a standard runner's disk, so the release builds it on the organisation's larger
+not fit a standard runner's disk, so the app release builds it on the organisation's larger
 runner through quality's image workflow, with reproducible layers so that an unchanged
 weights layer keeps its digest, pushes it and attests it; a job on the same kind of
-runner then pulls the pushed digest and runs the image test before the tag. A pull request
+runner then pulls the pushed digest and runs the image test before the `vYYYY.MM.DD.N` tag. A pull request
 that changes the `Dockerfile`, the `.dockerignore` or a path its allowlist lets into the
 build context builds the image without a push and runs the same test on that runner;
 every other pull request starts no larger runner.
