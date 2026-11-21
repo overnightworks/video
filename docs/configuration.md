@@ -22,9 +22,6 @@ setting stops the start, naming the setting and never its value.
 | `VIDEO_LOOK_MAX_BYTES` | `8388608` | The most bytes an image may have, at least 1. |
 | `VIDEO_LOOK_MAX_PIXELS` | `16777216` | The most pixels (width times height) an image may have, at least 1. |
 
-The `fake` provider is a development dependency: `uv sync --all-groups` installs it and
-the image does not.
-
 ## Provider and card
 
 **CONFIG-2** The provider runs as `<VIDEO_PROVIDER_ROOT>/<provider>/.venv/bin/video-<provider>-worker`;
@@ -34,7 +31,7 @@ other location is searched.
 **CONFIG-3** `VIDEO_CARD_MEMORY_MB` is an integer of at least 1. It is required for
 `flashhead-lite` and optional for `fake`. It binds torch's allocator, not the card's
 context; whether the card holds it is the worker's judgement at start, and a cap too large
-leaves the provider failed. The child receives this value and no other.
+leaves the provider failed. The child's cap is this value, never one inherited from the service's environment.
 
 ## Look file
 

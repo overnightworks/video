@@ -64,8 +64,7 @@ sequenceDiagram
 ```
 
 The frame clock is one grid of frame periods: a sentence's audio sets it while it plays
-and the face at rest runs on it between sentences, so the stream never stops. A frame that
-leaves more than `VIDEO_MAX_LAG_MS` after its time ends the session `unavailable`.
+and the face at rest runs on it between sentences, so the stream never stops.
 
 The player draws ahead of the clock, bounded by `VIDEO_MAX_LAG_MS` of frames, so that a
 provider that renders in chunks serves a session without late frames or stalls, and the
@@ -152,17 +151,16 @@ records figures; the calls that need a card live in one module that coverage exc
 
 ## Constraints and reasons
 
-- A provider runs in a child process started from its own executable, so a model may pin a
-  Python and libraries the service does not. A child that dies, hangs past a bound or
-  breaks the frame protocol makes the provider failed until the service restarts, with no
-  restart; a killed service closes the child's pipe,
-  and the child ends.
+- The child process runs from the provider's own executable, so a model may pin a Python and
+  libraries the service does not; a killed service closes the child's pipe, and the child
+  ends.
 - The service alone fetches, checks and decodes every image, so a provider never touches the
   network or an untrusted file; a look's readiness is fixed when the start ends and nothing
   is fetched during a session.
 - The service paces the frames, so a provider never keeps time.
-- The player's draw-ahead is bounded by `VIDEO_MAX_LAG_MS`, which bounds each session's
-  frame memory; a chunked provider needs a value of at least two renders and a frame period.
+- A frame later than `VIDEO_MAX_LAG_MS` ends the session `unavailable`, so a stalled stream
+  never drifts from real time; the same bound caps each session's frame memory, and a
+  chunked provider needs a value of at least two renders and a frame period.
 - The answer offers only Opus and VP8, and a viewer's peer is built with exactly the
   session's ICE servers, none by default.
 - The FlashHead lite weights are configurations and safetensors files, each checked against
