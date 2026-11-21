@@ -73,14 +73,10 @@ class BuildContext:
         for rule in self._rules:
             if any(rule.expression.fullmatch(parent) for parent in parents):
                 held = rule.included
-        return held or self._holds_beneath(path)
-
-    def _holds_beneath(self, path: str) -> bool:
-        """Whether an allowlisted pattern lies under the path, as under a submodule."""
-        return any(
-            rule.included and rule.pattern.startswith(f"{path}/")
-            for rule in self._rules
-        )
+            elif rule.included and rule.pattern.startswith(f"{path}/"):
+                # An allowlisted pattern under the path, as under a submodule.
+                held = True
+        return held
 
 
 def main(argv: list[str]) -> int:

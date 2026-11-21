@@ -74,6 +74,8 @@ def test_the_shipped_allowlist_leaves_out_what_the_image_is_not_built_from(
         ("!/a.txt\n*\n", "a.txt", False),
         ("*\n!a.txt\n", "Dockerfile", True),
         ("", "a.txt", False),
+        ("*\n!sub/tree/**\nsub/**\n", "sub/tree", False),
+        ("*\n!sub/tree/**\n", "sub/tree", True),
     ],
 )
 def test_the_last_matching_pattern_decides_whether_the_context_holds_a_path(
