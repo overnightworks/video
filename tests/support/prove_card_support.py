@@ -140,8 +140,6 @@ run_worker(
 )
 """
 CAP_MB: Final = 4000
-# Beyond what a test holds a sentence for.
-HELD_SENTENCE_LAG_MS: Final = 600_000
 # Long enough that the cells never finish before the watchdog has sampled.
 LOAD_SECONDS: Final = 30
 USED_MB: Final = 2000
@@ -298,13 +296,11 @@ class Run:
     def hold_sentences_until(self, gate: Path) -> None:
         """Have the provider hold the end of each sentence until `gate` exists.
 
-        The service ends a session whose provider call outlasts its lag bound, so the
-        bound is raised beyond what a test waits.
+        The service ends a session whose provider call outlasts its lag bound, which
+        the drive fixes at `MAX_LAG_MS`: a test releases the gate within that bound of
+        the held call starting, so it holds only what it sends in between.
         """
-        self.environment = self.environment | {
-            "WORKER_GATE_FILE": str(gate),
-            "VIDEO_MAX_LAG_MS": str(HELD_SENTENCE_LAG_MS),
-        }
+        self.environment = self.environment | {"WORKER_GATE_FILE": str(gate)}
 
     def fail_the_load_of(self, group: str) -> None:
         """Have the provider's load fail in `group`, which the group's process names."""
