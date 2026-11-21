@@ -1,0 +1,100 @@
+name: image test
+
+# The image does not fit a standard runner's disk, so the runner arrives as an input; the
+# fleet's workflow lint knows only GitHub's hosted labels, and a literal `runs-on` of the
+# larger runner's label is refused. Three cases, by the inputs: `image` names a pushed
+# image, which is pulled by digest; `build` builds the image from the checked-out commit
+# without a push; neither says so and does nothing, on a standard runner.
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: The runner the test runs on, a larger one when an image is pulled or built
+        type: string
+        required: true
+      image:
+        description: The pushed image to pull, by digest; empty to build instead or do nothing
+        type: string
+        default: ''
+      build:
+        description: Whether to build the image from the commit, without a push
+        type: boolean
+        default: false
+
+permissions: {}
+
+jobs:
+  test:
+    name: Test
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: read
+    env:
+      VIDEO_IMAGE: ${{ inputs.image || 'video-image-under-test' }}
+    steps:
+      - name: Say which case runs
+        id: case
+        env:
+          IMAGE: ${{ inputs.image }}
+          BUILD: ${{ inputs.build }}
+          RUNNER: ${{ inputs.runner }}
+        run: |
+          if [ -n "$IMAGE" ]; then
+            echo "Testing the pushed image ${IMAGE} on ${RUNNER}."
+          elif [ "$BUILD" = true ]; then
+            echo "Building the image and testing it on ${RUNNER}."
+          else
+            echo "Nothing the image is built from changed: no build, no test."
+            echo "work=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "work=true" >> "$GITHUB_OUTPUT"
+
+      - name: Check out the event commit
+        if: steps.case.outputs.work == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          # the test reads upstream's licence text, and a build packs upstream's tree
+          submodules: true
+
+      - name: Log in to the registry
+        if: inputs.image != ''
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Pull the pushed image
+        if: inputs.image != ''
+        run: docker pull "$VIDEO_IMAGE"
+
+      - name: Build the image without a push
+        if: inputs.image == '' && inputs.build
+        run: docker build --tag "$VIDEO_IMAGE" .
+
+      - name: Report the image size
+        if: steps.case.outputs.work == 'true'
+        run: |
+          bytes=$(docker image inspect --format '{{.Size}}' "$VIDEO_IMAGE")
+          echo "The image is ${bytes} bytes unpacked." | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Install uv
+        if: steps.case.outputs.work == 'true'
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+          version: "0.10.9"
+
+      - name: Install locked dependencies
+        if: steps.case.outputs.work == 'true'
+        run: uv sync --locked --all-groups --no-build
+
+      - name: Run the image test
+        if: steps.case.outputs.work == 'true'
+        # pytest-workers: one image, and the cases start containers one after the other
+        run: uv run --locked --no-build pytest -q -m image tests/test_image.py

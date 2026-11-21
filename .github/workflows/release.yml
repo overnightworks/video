@@ -1,10 +1,10 @@
 name: Release
 
-# The release of the client distribution and the browser package: one X.Y.Z, every
-# project and package of the repository at that version, the client proven
-# installable by Git pin at the gated commit and the browser package packed as a
-# tarball release file and proven installable, then the git tag. Every quality call
-# below is pinned at a quality release.
+# The release of the client distribution, the browser package and the image: one
+# X.Y.Z, every project and package of the repository at that version, the client proven
+# installable by Git pin at the gated commit, the browser package packed as a tarball
+# release file and proven installable, and the image pushed private, attested and proven
+# by its test, then the git tag. Every quality call below is pinned at a quality release.
 on:
   workflow_dispatch:
     inputs:
@@ -136,11 +136,46 @@ jobs:
           path: ${{ runner.temp }}/release-files
           if-no-files-found: error
 
+  # The image is larger than the standard runner's disk holds, so it builds on the paid
+  # larger runner `speech-gpu-build`; only the image jobs use it. It waits for the build
+  # job, the cheaper and likelier to fail, so a failure there pushes nothing.
+  image:
+    name: Image
+    needs:
+      - gate
+      - build
+    uses: overnightworks/quality/.github/workflows/image.yml@1d66f90569946cf182634a3372e1e183cec8353b # v0.22.0
+    permissions:
+      attestations: write
+      contents: read
+      id-token: write
+      packages: write
+    with:
+      version: ${{ inputs.version }}
+      push: true
+      submodules: true
+      reproducible-layers: true
+      runner: speech-gpu-build
+
+  # quality's image workflow has no test step: the pushed digest is pulled and tested
+  # here, and the tag waits for it, so a failed test leaves a private version untagged.
+  image-test:
+    name: Image test
+    needs: image
+    uses: $/.github/workflows/image-test.yml
+    permissions:
+      contents: read
+      packages: read
+    with:
+      runner: speech-gpu-build
+      image: ${{ needs.image.outputs.ref }}
+
   tag:
     name: Tag
     needs:
       - gate
       - build
+      - image-test
     permissions:
       contents: write
     uses: overnightworks/quality/.github/workflows/release-tag.yml@1d66f90569946cf182634a3372e1e183cec8353b # v0.22.0

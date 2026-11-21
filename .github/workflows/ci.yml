@@ -251,6 +251,55 @@ jobs:
           path: packages/browser/coverage-scripts/coverage-browser-report.lcov
           if-no-files-found: error
 
+  # The image is larger than the standard runner's disk holds, so its build runs on
+  # the paid larger runner `speech-gpu-build`; a pull request starts that runner only
+  # when it changes what the image is built from. The two jobs are: decide on the
+  # standard runner, then call the build and test. The call always runs, because the
+  # quality gate and the landing path read a skipped mandatory job as red; with nothing
+  # changed it only says so, on the standard runner. It waits for the fast jobs: when
+  # one of them fails, it is skipped and reads red at the gate, and the paid runner is
+  # never started.
+  image-paths:
+    name: "Video: image paths"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      changed: ${{ steps.diff.outputs.changed }}
+    steps:
+      # The merge commit has the pull request's base tip as its first parent.
+      - name: Check out the merge commit with its base
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Decide whether the pull request changes what the image is built from
+        id: diff
+        run: |
+          changed=false
+          if [ "$GITHUB_EVENT_NAME" = pull_request ] \
+            && ! git diff --quiet HEAD^1 HEAD -- Dockerfile .dockerignore ':(glob)**/uv.lock' providers/; then
+            changed=true
+          fi
+          echo "changed=$changed" >> "$GITHUB_OUTPUT"
+
+  image:
+    name: "Video: image"
+    needs:
+      - image-paths
+      - video
+      - flashhead-lite-provider
+      - browser-package
+      - browser-layer
+    uses: $/.github/workflows/image-test.yml
+    permissions:
+      contents: read
+      packages: read
+    with:
+      build: ${{ needs.image-paths.outputs.changed == 'true' }}
+      runner: ${{ needs.image-paths.outputs.changed == 'true' && 'speech-gpu-build' || 'ubuntu-24.04' }}
+
   coverage:
     name: coverage
     needs:
@@ -286,6 +335,8 @@ jobs:
       - flashhead-lite-provider
       - browser-package
       - browser-layer
+      - image-paths
+      - image
       - coverage
     if: always()
     uses: overnightworks/quality/.github/workflows/gate.yml@1d66f90569946cf182634a3372e1e183cec8353b # v0.22.0
