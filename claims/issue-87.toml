@@ -1,8 +1,0 @@
-claim_id = "a6831d817bf6428cbbb0fecf846ac011"
-agent = "Claude 08995c7c-c9e2-445a-ad5b-63926da5891d"
-role = "builder"
-base = "3af1e4fe31331b7c12ee783fbc3b346b2fca0bf4"
-branch = "claude/issue-87-the-card-memory-guard-knows-a-group-s-se"
-scope = ["scripts/card_drive.py", "scripts/card_supervision.py", "scripts/prove_card.py", "scripts/watch_live.py", "tests/scripts/test_card_drive.py", "tests/scripts/test_card_supervision.py", "tests/scripts/test_prove_card.py"]
-opened_commit = "ad80beb8b73408d4f3efff0bcb2c01ee570ecc20"
-whole_reason = "One rule (which child is the service) with its one writer, its two callers and its test; split, a caller would keep the old rule."
