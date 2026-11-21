@@ -295,9 +295,9 @@ not fit a standard runner's disk, so the release builds it on the organisation's
 runner through quality's image workflow, with reproducible layers so that an unchanged
 weights layer keeps its digest, pushes it and attests it; a job on the same kind of
 runner then pulls the pushed digest and runs the image test before the tag. A pull request
-that changes the `Dockerfile`, `.dockerignore`, a lock or `providers/` builds the image
-without a push and runs the same test on that runner; every other pull request starts no
-larger runner.
+that changes the `Dockerfile`, the `.dockerignore` or a path its allowlist lets into the
+build context builds the image without a push and runs the same test on that runner;
+every other pull request starts no larger runner.
 
 ## Proofs
 

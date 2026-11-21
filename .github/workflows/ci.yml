@@ -274,13 +274,17 @@ jobs:
           fetch-depth: 2
           persist-credentials: false
 
+      # The build context's allowlist, `.dockerignore`, owns what the image is built from.
       - name: Decide whether the pull request changes what the image is built from
         id: diff
         run: |
           changed=false
-          if [ "$GITHUB_EVENT_NAME" = pull_request ] \
-            && ! git diff --quiet HEAD^1 HEAD -- Dockerfile .dockerignore ':(glob)**/uv.lock' providers/; then
-            changed=true
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            git diff -z --name-only --no-renames HEAD^1 HEAD > "$RUNNER_TEMP/changed-paths"
+            image_inputs=$(python3 scripts/image_paths.py < "$RUNNER_TEMP/changed-paths")
+            if [ -n "$image_inputs" ]; then
+              changed=true
+            fi
           fi
           echo "changed=$changed" >> "$GITHUB_OUTPUT"
 
