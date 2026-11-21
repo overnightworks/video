@@ -69,7 +69,8 @@ def test_the_process_the_service_file_names_is_the_service_when_it_is_the_groups
     assert service_exists(group.fragment, KERNEL)
 
 
-def _gone_pid() -> str:
+@pytest.fixture
+def gone_pid() -> str:
     process = subprocess.Popen([sys.executable, "-c", "pass"])
     process.wait()
     return str(process.pid)
@@ -78,16 +79,21 @@ def _gone_pid() -> str:
 @pytest.mark.parametrize(
     "content",
     [
-        pytest.param(
-            lambda _group: str(os.getpid()), id="a_live_process_that_is_not_its_child"
-        ),
-        pytest.param(lambda _group: _gone_pid(), id="a_gone_process"),
-        pytest.param(lambda _group: "not a number", id="no_number"),
+        pytest.param(str(os.getpid()), id="a_live_process_that_is_not_its_child"),
+        pytest.param("not a number", id="no_number"),
     ],
 )
 def test_a_service_file_that_does_not_name_a_child_of_the_group_leaves_no_service(
-    group: _Group, content: object
+    group: _Group, content: str
 ) -> None:
-    group.name_in_service_file(content(group))  # type: ignore[operator]
+    group.name_in_service_file(content)
+
+    assert not service_exists(group.fragment, KERNEL)
+
+
+def test_a_service_file_that_names_a_gone_process_leaves_no_service(
+    group: _Group, gone_pid: str
+) -> None:
+    group.name_in_service_file(gone_pid)
 
     assert not service_exists(group.fragment, KERNEL)

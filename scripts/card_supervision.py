@@ -128,8 +128,12 @@ def ending(stops: Stops, control: ProcessControl, spare: int | None) -> Ender:
 
 def named_pid(fragment: Path) -> int | None:
     """The id the group's process wrote, or none while it has written none."""
+    return _recorded_pid(pid_file(fragment))
+
+
+def _recorded_pid(path: Path) -> int | None:
     try:
-        return int(pid_file(fragment).read_text())
+        return int(path.read_text())
     except OSError, ValueError:
         return None
 
@@ -182,12 +186,11 @@ def settled_at_group(
 def service_exists(fragment: Path, control: ProcessControl) -> bool:
     """Whether the process the service file names is alive under the group's process."""
     group_pid = named_pid(fragment)
-    try:
-        service_pid = int(service_pid_file(fragment).read_text())
-    except OSError, ValueError:
+    service_pid = _recorded_pid(service_pid_file(fragment))
+    if group_pid is None or service_pid is None:
         return False
     service = read_process(service_pid, control)
-    return group_pid is not None and service is not None and service.parent == group_pid
+    return service is not None and service.parent == group_pid
 
 
 def run_child(
