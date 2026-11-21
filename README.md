@@ -59,8 +59,7 @@ gh workflow run release.yml -f version=YYYY.MM.DD.N
 
 `X.Y.Z` is the version every `pyproject.toml` and `packages/*/package.json` stands at
 (`uv run --locked python scripts/check_release.py X.Y.Z` checks it); `YYYY.MM.DD.N` counts
-the day's releases from 1. `VIDEO_IMAGE=<image> uv run --locked pytest -q -m image tests/test_image.py`
-tests an image you have pulled or built; it needs Docker.
+the day's releases from 1.
 
 ## Documentation
 

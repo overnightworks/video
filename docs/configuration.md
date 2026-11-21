@@ -31,7 +31,8 @@ other location is searched.
 **CONFIG-3** `VIDEO_CARD_MEMORY_MB` is an integer of at least 1. It is required for
 `flashhead-lite` and optional for `fake`. It binds torch's allocator, not the card's
 context; whether the card holds it is the worker's judgement at start, and a cap too large
-leaves the provider failed. The child's cap is this value, never one inherited from the service's environment.
+leaves the provider failed. The child's cap is this value, never one inherited from the
+service's environment.
 
 ## Look file
 
