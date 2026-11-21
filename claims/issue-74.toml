@@ -1,5 +1,5 @@
 claim_id = "b3665ccf425b430da3a82cb29c08931f"
-agent = "Claude 76251661-cb30-4447-a3ad-32a83a396daa"
+agent = "Claude 96f52b2d-d9f6-4ad8-a5ea-2d4090292ae7"
 role = "builder"
 base = "aefe77292d6e99ea75b86b29c2eadfe45d29336a"
 branch = "claude/issue-74-watch-live"
