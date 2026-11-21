@@ -63,6 +63,7 @@ from card_supervision import (
     become_subreaper,
     begun_child,
     ended_below,
+    service_pid_file,
     started_under_probe_run,
 )
 from prove_card import card_provider, checked_look_image, checked_record
@@ -424,6 +425,7 @@ def _child(arguments: argparse.Namespace) -> int:
             arguments.log,
             max_lag_ms=MAX_LAG_MS,
             compiler_home=arguments.fragment.parent / "compiler-home",
+            service_pid_file=service_pid_file(arguments.fragment),
             provider=_provider_of(arguments),
         ) as service,
     ):

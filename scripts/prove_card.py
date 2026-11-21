@@ -72,6 +72,7 @@ from card_supervision import (
     become_subreaper,
     begun_child,
     ended_below,
+    service_pid_file,
     started_under_probe_run,
 )
 from video_service.card import read_card_memory
@@ -360,6 +361,7 @@ def _run_group(
             log,
             max_lag_ms=group.lag_ms,
             compiler_home=compiler_home,
+            service_pid_file=service_pid_file(arguments.fragment),
             provider=_provider_of(arguments),
         ) as service,
     ):

@@ -302,12 +302,6 @@ def _lineage(
     return tuple(chain)
 
 
-def has_child(parent: int, control: ProcessControl = KERNEL) -> bool:
-    """Whether any process shows `parent` as its parent now."""
-    processes, _ = _all_processes(control)
-    return any(process.parent == parent for process in processes.values())
-
-
 @dataclass(frozen=True)
 class Below:
     """The lineages of the processes below the top, deepest first, from one read."""
@@ -559,16 +553,47 @@ def _stop_first(service: Service) -> Callable[[int, object], None]:
     return stop
 
 
+def _service_environment(
+    identity: Identity,
+    port: int,
+    max_lag_ms: int,
+    compiler_home: Path,
+    provider: Mapping[str, str],
+) -> dict[str, str]:
+    """The service's environment: the caller's without `VIDEO_` ones, then its own."""
+    return {
+        key: value
+        for key, value in os.environ.items()
+        if not key.startswith(ENVIRONMENT_PREFIX)
+    } | {
+        "HOME": str(compiler_home),
+        "TMPDIR": str(compiler_home),
+        "PYTHONUNBUFFERED": "1",
+        "SSL_CERT_FILE": str(identity.ca_file),
+        f"{ENVIRONMENT_PREFIX}PORT": str(port),
+        f"{ENVIRONMENT_PREFIX}CONFIG_FILE": str(identity.config_file),
+        f"{ENVIRONMENT_PREFIX}LOOKS_FILE": str(identity.looks_file),
+        f"{ENVIRONMENT_PREFIX}LOOK_SOURCES": identity.look_sources,
+        f"{ENVIRONMENT_PREFIX}MAX_LAG_MS": str(max_lag_ms),
+        f"{ENVIRONMENT_PREFIX}DRAIN_SECONDS": str(DRAIN_SECONDS),
+        **provider,
+    }
+
+
 @contextmanager
-def running_service(
+def running_service(  # noqa: PLR0913 - each argument is a distinct input of the one start
     identity: Identity,
     log: Path,
     *,
     max_lag_ms: int,
     compiler_home: Path,
+    service_pid_file: Path,
     provider: Mapping[str, str] = FAKE_PROVIDER,
 ) -> Iterator[Service]:
     """Start the service, logging to `log`; the block's end stops it.
+
+    Its pid goes to `service_pid_file` right after the start, before the wait for
+    readiness, so the group's supervisor knows the service from any other child.
 
     `provider` holds the `VIDEO_` variables that choose the provider and its settings:
     the `fake` provider unless the caller gives the operator's. `compiler_home` is both
@@ -578,23 +603,9 @@ def running_service(
     The parent-death signal follows the thread that starts the service, so the
     caller is the main thread, which lives until the process ends.
     """
-    environment = {
-        key: value
-        for key, value in os.environ.items()
-        if not key.startswith(ENVIRONMENT_PREFIX)
-    } | {
-        "HOME": str(compiler_home),
-        "TMPDIR": str(compiler_home),
-        "PYTHONUNBUFFERED": "1",
-        "SSL_CERT_FILE": str(identity.ca_file),
-        f"{ENVIRONMENT_PREFIX}PORT": str(port := _free_port()),
-        f"{ENVIRONMENT_PREFIX}CONFIG_FILE": str(identity.config_file),
-        f"{ENVIRONMENT_PREFIX}LOOKS_FILE": str(identity.looks_file),
-        f"{ENVIRONMENT_PREFIX}LOOK_SOURCES": identity.look_sources,
-        f"{ENVIRONMENT_PREFIX}MAX_LAG_MS": str(max_lag_ms),
-        f"{ENVIRONMENT_PREFIX}DRAIN_SECONDS": str(DRAIN_SECONDS),
-        **provider,
-    }
+    environment = _service_environment(
+        identity, port := _free_port(), max_lag_ms, compiler_home, provider
+    )
     with log.open("wb") as output:
         started = time.monotonic()
         process = subprocess.Popen(  # noqa: S603 - fixed tools and this interpreter
@@ -604,6 +615,7 @@ def running_service(
             stderr=subprocess.STDOUT,
             start_new_session=True,
         )
+        service_pid_file.write_text(str(process.pid))
         service = Service(process, port, log)
         previous = [
             signal.signal(stopping, _stop_first(service)) for stopping in STOP_SIGNALS

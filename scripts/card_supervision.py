@@ -22,7 +22,6 @@ from card_drive import (
     STOP_SIGNALS,
     end_processes_below,
     exit_on_stop,
-    has_child,
     read_process,
     signal_if_unchanged,
 )
@@ -42,6 +41,11 @@ CAP_SECONDS: Final = 1800
 def pid_file(fragment: Path) -> Path:
     """Where the group's process names itself to the command that started it."""
     return fragment.with_suffix(".pid")
+
+
+def service_pid_file(fragment: Path) -> Path:
+    """Where the group's process records the pid of the service it started."""
+    return fragment.with_suffix(".service")
 
 
 def begun_child(fragment: Path) -> Path:
@@ -124,8 +128,12 @@ def ending(stops: Stops, control: ProcessControl, spare: int | None) -> Ender:
 
 def named_pid(fragment: Path) -> int | None:
     """The id the group's process wrote, or none while it has written none."""
+    return _recorded_pid(pid_file(fragment))
+
+
+def _recorded_pid(path: Path) -> int | None:
     try:
-        return int(pid_file(fragment).read_text())
+        return int(path.read_text())
     except OSError, ValueError:
         return None
 
@@ -176,9 +184,13 @@ def settled_at_group(
 
 
 def service_exists(fragment: Path, control: ProcessControl) -> bool:
-    """Whether the group's process has started a child, which is its service."""
+    """Whether the process the service file names is alive under the group's process."""
     group_pid = named_pid(fragment)
-    return group_pid is not None and has_child(group_pid, control)
+    service_pid = _recorded_pid(service_pid_file(fragment))
+    if group_pid is None or service_pid is None:
+        return False
+    service = read_process(service_pid, control)
+    return service is not None and service.parent == group_pid
 
 
 def run_child(
