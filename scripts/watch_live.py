@@ -33,6 +33,9 @@ import httpx2
 import uvicorn
 from logline import Outcome
 from starlette.applications import Starlette
+from starlette.datastructures import Headers
+from starlette.middleware import Middleware
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
@@ -77,6 +80,7 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
 
     from starlette.requests import Request
+    from starlette.types import ASGIApp, Receive, Scope, Send
 
     from card_drive import Audio, Service, Session
     from card_identity import Identity
@@ -252,6 +256,37 @@ async def _end_with_session(session: Session, over: Over) -> None:
     over("the session's connection closed", failed=True)
 
 
+class _SameOrigin:
+    """Refuses a request from another origin than the page's own.
+
+    No other site's page may press the buttons or attach a viewer: the relay holds the
+    session's tokens and would let it through.
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        self._app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] == "http":
+            headers = Headers(scope=scope)
+            origin = headers.get("origin")
+            if origin is not None and origin != f"http://{headers.get('host')}":
+                await Response(status_code=HTTPStatus.FORBIDDEN)(scope, receive, send)
+                return
+        await self._app(scope, receive, send)
+
+
+def _application(page: LivePage, package: Path) -> Starlette:
+    """The page's routes, answered only for the loopback host and the page's origin."""
+    return Starlette(
+        routes=page.routes(package),
+        middleware=[
+            Middleware(TrustedHostMiddleware, allowed_hosts=[HOST]),
+            Middleware(_SameOrigin),
+        ],
+    )
+
+
 class _Server(uvicorn.Server):
     """A server that leaves the command's own stop signals in place."""
 
@@ -281,9 +316,7 @@ async def _show(
     ):
         page = LivePage(client, identity, session, audio, over)
         server = _Server(
-            uvicorn.Config(
-                Starlette(routes=page.routes(arguments.package)), log_level="warning"
-            )
+            uvicorn.Config(_application(page, arguments.package), log_level="warning")
         )
         # Bound and listening first: a connection never waits for the server to start.
         with socket.create_server((HOST, 0)) as bound:

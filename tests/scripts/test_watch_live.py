@@ -158,6 +158,40 @@ def test_a_service_that_dies_ends_the_command_with_a_failure(
     assert "ended: the session's connection closed" in command.run.printed()
 
 
+@pytest.mark.parametrize(
+    ("header", "value", "refused"),
+    [
+        ("Origin", "http://other.example", httpx2.codes.FORBIDDEN),
+        ("Origin", "http://127.0.0.1:1", httpx2.codes.FORBIDDEN),
+        ("Host", "other.example", httpx2.codes.BAD_REQUEST),
+    ],
+)
+def test_a_request_for_another_host_or_from_another_origin_is_refused(
+    live: Callable[..., Live], header: str, value: str, refused: int
+) -> None:
+    command = live()
+
+    foreign = httpx2.post(command.address + "end", headers={header: value})
+
+    assert foreign.status_code == refused
+    assert command.post("/end") == httpx2.codes.NO_CONTENT
+    status, _ = command.ended()
+    assert status == 0
+    assert "ended: the end button" in command.run.printed()
+
+
+def test_a_request_from_the_pages_own_origin_is_answered(
+    live: Callable[..., Live],
+) -> None:
+    command = live()
+    origin = command.address.rstrip("/")
+
+    own = httpx2.post(command.address + "end", headers={"Origin": origin})
+
+    assert own.status_code == httpx2.codes.NO_CONTENT
+    command.ended()
+
+
 def test_a_page_nobody_watches_ends_after_its_idle_time(
     live: Callable[..., Live],
 ) -> None:
