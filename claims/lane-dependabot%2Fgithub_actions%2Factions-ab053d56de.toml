@@ -1,7 +1,0 @@
-claim_id = "3609910f7f764bc185020adcaca7043f"
-agent = "Claude 96f52b2d-d9f6-4ad8-a5ea-2d4090292ae7"
-role = "builder"
-base = "41e1f3e20b2f3ab13ddb13f470e345c12d30190b"
-branch = "dependabot/github_actions/actions-ab053d56de"
-scope = [".github/workflows/ci.yml", ".github/workflows/image-test.yml", ".github/workflows/release.yml"]
-opened_commit = "f3c32a1139abe319c053be59a10b6e99832ca069"
