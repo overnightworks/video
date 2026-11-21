@@ -96,6 +96,8 @@ CARD_MEMORY_MB: Final = 7168
 MAX_LAG_MS: Final = 2400
 IDLE_SECONDS: Final = 60.0
 IDLE_POLL_SECONDS: Final = 1.0
+# How long the page server waits for a request that is still open when the command ends.
+PAGE_CLOSE_SECONDS: Final = 2
 # `timeout`'s status for a command it ended at the cap.
 CAP_STATUS: Final = 124
 GROUP_NAME: Final = "watch"
@@ -316,7 +318,11 @@ async def _show(
     ):
         page = LivePage(client, identity, session, audio, over)
         server = _Server(
-            uvicorn.Config(_application(page, arguments.package), log_level="warning")
+            uvicorn.Config(
+                _application(page, arguments.package),
+                log_level="warning",
+                timeout_graceful_shutdown=PAGE_CLOSE_SECONDS,
+            )
         )
         # Bound and listening first: a connection never waits for the server to start.
         with socket.create_server((HOST, 0)) as bound:

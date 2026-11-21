@@ -7,8 +7,10 @@ import json
 import os
 import re
 import signal
+import socket
 import sys
 from typing import TYPE_CHECKING
+from urllib.parse import urlsplit
 
 import httpx2
 import pytest
@@ -35,6 +37,7 @@ IDLE_SECONDS = 2
 # Shorter than the run's own audio, so the log tells which file was spoken.
 SECOND_SECONDS = 1
 SENTENCE_WITHIN_SECONDS = 30
+ENDED_WITHIN_SECONDS = 30
 # Free memory that leaves less than the floor beside the cap a live test gives.
 NO_ROOM_FOR_THE_CAP = f"{USED_MB}, {watch_live.CARD_MEMORY_MB + FLOOR_MB - 1}, 24576"
 
@@ -130,6 +133,25 @@ def test_the_end_button_ends_the_service_and_the_command(
     status, _ = command.ended()
     assert status == 0
     assert "ended: the end button" in command.run.printed()
+
+
+def test_a_viewer_request_that_never_finishes_does_not_keep_the_command_running(
+    live: Callable[..., Live],
+) -> None:
+    command = live()
+    page = urlsplit(command.address)
+    with socket.create_connection((page.hostname, page.port)) as unfinished:
+        unfinished.sendall(
+            f"POST /viewers HTTP/1.1\r\nHost: {page.netloc}\r\n"
+            "Content-Length: 1000\r\n\r\nv=0".encode()
+        )
+
+        assert command.post("/end") == httpx2.codes.NO_CONTENT
+
+        assert command.run.wait_until(
+            lambda: command.command.poll() is not None, ENDED_WITHIN_SECONDS
+        )
+    assert command.command.returncode == 0
 
 
 def test_a_stop_signal_ends_the_service_and_the_command(
