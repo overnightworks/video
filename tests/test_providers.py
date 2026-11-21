@@ -1,4 +1,4 @@
-"""Where a provider's worker is: under the provider root, or beside the interpreter."""
+"""Where a provider's worker is: under the root or beside the interpreter (CONFIG-2)."""
 
 from __future__ import annotations
 

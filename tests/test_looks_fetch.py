@@ -1,4 +1,4 @@
-"""The start checks of a look's image: its source, size, digest, format and pixels."""
+"""The start checks of a look's image: source, size, digest, format (CONFIG-5)."""
 
 from __future__ import annotations
 
