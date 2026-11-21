@@ -22,8 +22,9 @@ RUN apt-get update \
 # The service without development dependencies, so without the fake provider.
 # Third-party packages are wheel-only: --no-build refuses a source distribution,
 # whose build script would run third-party code during the image build. The
-# repository's own distributions and the git-pinned webauth and logline are sources and
-# build in the next step, with the exact build tools their pyprojects pin.
+# repository's own distributions and the git-pinned webauth and logline are the
+# pyproject's no-binary-package entries, which --no-build still builds from source in
+# the next step, with the exact build tools their pyprojects pin.
 FROM build-base AS service-environment
 ENV UV_PROJECT_ENVIRONMENT=/opt/venv
 WORKDIR /build
@@ -40,7 +41,7 @@ COPY LICENSE LICENSE
 COPY packages/client/src packages/client/src
 COPY providers/provider-contract/src providers/provider-contract/src
 COPY src src
-RUN uv sync --locked --no-dev --no-editable \
+RUN uv sync --locked --no-dev --no-editable --no-build \
  && python -m compileall -q -j 0 --invalidation-mode checked-hash /opt/venv/lib
 
 # The provider is its own project on its own lock, in the environment the service
@@ -62,8 +63,9 @@ COPY providers/flashhead-lite/LICENSE LICENSE
 COPY providers/flashhead-lite/soulx-flashhead/LICENSE soulx-flashhead/LICENSE
 COPY providers/flashhead-lite/soulx-flashhead/flash_head soulx-flashhead/flash_head
 COPY providers/flashhead-lite/src src
-RUN uv sync --locked --no-dev --no-editable \
- && /opt/providers/flashhead-lite/.venv/bin/python -m compileall -q -j 0 --invalidation-mode checked-hash /opt/providers/flashhead-lite/.venv/lib \
+RUN uv sync --locked --no-dev --no-editable --no-build \
+ && /opt/providers/flashhead-lite/.venv/bin/python -m compileall -q -j 0 \
+    --invalidation-mode checked-hash /opt/providers/flashhead-lite/.venv/lib \
  && mv /opt/providers/flashhead-lite/.venv/lib/python3.14/site-packages/nvidia /opt/flashhead-nvidia
 
 # The pinned weights and notices, fetched next to the environment as the provider
