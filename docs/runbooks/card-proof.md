@@ -39,23 +39,6 @@ VIDEO_PROVIDER_ROOT=$PWD/providers VIDEO_CARD_MEMORY_MB=7168 \
 - The command ends with one line naming the argument or setting it refuses, before any
   service starts.
 
-## Run the released image on the card
-
-Proves the image `VIDEO_IMAGE` names reaches READY on the card as the deployment runs it
-(read-only root, `/tmp` writable, no network), and that a cap too small for the model ends
-in the worker's `provider.failed`. It needs the operator's free card: the run refuses
-before any container starts when the card's free memory minus the cap is below the floor.
-
-```sh
-gh auth token | docker login ghcr.io -u <login> --password-stdin
-docker pull <image>
-VIDEO_IMAGE=<image> VIDEO_CARD_MEMORY_MB=7168 \
-  probe-run uv run --locked pytest -q -m image_card tests/test_image_card.py
-```
-
-The login needs the `read:packages` scope. A missing `VIDEO_IMAGE` or cap fails the run
-naming it. Every container the run starts is removed when its test ends.
-
 ## See it worked
 
 The command exits 0 and prints the paths below. It exits non-zero when a cell, a group,
@@ -69,3 +52,24 @@ that was not measured marked `not_measured` and its reason.
 
 A dry run's figures are the fake's (a 256x256 picture on any host): only a run on the
 card shows timing, memory and the picture.
+
+## Run the released image on the card
+
+Proves the image `VIDEO_IMAGE` names reaches READY on the card as the deployment runs it
+(read-only root, `/tmp` writable, no network), and that a cap too small for the model ends
+in the worker's `provider.failed`. It needs `docker` (without sudo, with the card's runtime),
+a gh login with the `read:packages` scope, and the operator's free card: the run refuses
+before any container starts when the card's free memory minus the cap is below the floor.
+
+```sh
+gh auth token | docker login ghcr.io -u <login> --password-stdin
+docker pull <image>
+VIDEO_IMAGE=<image> VIDEO_CARD_MEMORY_MB=7168 \
+  probe-run uv run --locked pytest -q -m image_card tests/test_image_card.py
+```
+
+A missing `VIDEO_IMAGE` fails the run naming it first; with that set, a missing cap fails
+naming the cap. Every container the run starts is removed when its test ends.
+
+It worked when pytest passes both tests and `docker ps -a` lists no container the run
+started.
