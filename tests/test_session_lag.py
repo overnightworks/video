@@ -28,6 +28,7 @@ from video_client.session_wire import (
 )
 from video_client.wire import RefusalCode
 from video_service.runtime import REAL_TIME
+from video_service.session import EndedBy, _FailureError
 
 if TYPE_CHECKING:
     from support.scripted_socket import ScriptedSocket
@@ -210,3 +211,14 @@ def test_a_late_frame_within_the_limit_is_logged_as_the_most_a_frame_fell_behind
     assert "ended_by" not in line
     assert 0 < line["max_behind_ms"] <= _SLOW_CLIENT_MAX_LAG_MS
 
+
+@pytest.mark.parametrize(
+    ("code", "ended_by"),
+    [(RefusalCode.UNAVAILABLE, None), (RefusalCode.TOO_LARGE, EndedBy.LATE_FRAME)],
+    ids=["unavailable-without-a-path", "a-refusal-with-a-path"],
+)
+def test_a_failure_names_its_ending_path_exactly_when_it_is_unavailable(
+    code: RefusalCode, ended_by: EndedBy | None
+) -> None:
+    with pytest.raises(ValueError, match="names its path"):
+        _FailureError(code, ended_by=ended_by)

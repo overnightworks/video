@@ -90,6 +90,9 @@ class _FailureError(Exception):
         ended_by: EndedBy | None = None,
     ) -> None:
         super().__init__(code.value)
+        if (code is RefusalCode.UNAVAILABLE) is (ended_by is None):
+            message = "an unavailable end names its path and no other end does"
+            raise ValueError(message)
         self.code = code
         self.param = param
         self.event_id = event_id
@@ -341,7 +344,7 @@ class Session:
             step.add(close_code=end.close_code)
         if failure is not None:
             if failure.code is RefusalCode.UNAVAILABLE:
-                step.add(ended_by=cast("EndedBy", failure.ended_by).value)
+                step.add(ended_by=failure.ended_by.value)
                 step.fail(failure.code.value)
             else:
                 step.refuse(failure.code.value)
