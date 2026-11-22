@@ -3,6 +3,6 @@ agent = "Claude 758535a5-6a7d-4e06-9060-7ea71f2ea121"
 role = "builder"
 base = "eb6bb73979163a31164107c7acdacf270e9400d6"
 branch = "claude/issue-94-p3d4-the-released-image-reaches-ready-on"
-scope = ["docs/ARCHITECTURE.md", "docs/runbooks/card-proof.md", "pyproject.toml", "tests/support/image_support.py", "tests/test_image.py", "tests/test_image_card.py"]
+scope = ["docs/ARCHITECTURE.md", "docs/runbooks/card-proof.md", "pyproject.toml", "quality/config.toml", "tests/support/image_support.py", "tests/test_image.py", "tests/test_image_card.py"]
 opened_commit = "84df9340a5072a7f5182e7f38abf2cb465fb52ea"
 whole_reason = "One card-only proof of the image, its shared container start moved out of the image test, its marker and its runbook; split, the move would land without its caller."
