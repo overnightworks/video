@@ -42,6 +42,7 @@ class _SessionRoute:
         )
         if isinstance(placed, RefusalCode):
             with refused:
+                refused.add(max_behind_ms=0, max_idle_call_ms=0)
                 refused.refuse(placed.value)
             param = LOOK_PARAM if placed is RefusalCode.INVALID_REQUEST else None
             await websocket.send_denial_response(refusal_response(placed, param))

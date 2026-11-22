@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import time
 from typing import TYPE_CHECKING
 
 import pytest
+from logline.testing import configured
 from video_provider_fake import FakeProvider
 
 from support.chunk_support import (
@@ -18,12 +20,14 @@ from support.scripted_session import played
 from support.session_support import (
     pcm,
     sentence_events,
+    written,
 )
 from video_client.session_wire import (
     ErrorEvent,
     OutputAudioBufferStopped,
 )
 from video_client.wire import RefusalCode
+from video_service.runtime import REAL_TIME
 
 if TYPE_CHECKING:
     from support.scripted_socket import ScriptedSocket
@@ -34,6 +38,8 @@ _MAX_LAG_MS = 150
 _PARTIAL_FRAME_MS = 50
 _END_DURING_FRAME_SECONDS = 0.09
 _SLOW_CLIENT_MAX_LAG_MS = 1000
+_CALL_SECONDS = 0.3
+_CALL_LAG_MS = 100
 _CLEAR = {"type": "output_audio_buffer.clear"}
 _CHUNK_AUDIO_MS = 1920
 # The audio arrives while the provider draws no chunk and between two frames of
@@ -140,3 +146,43 @@ def test_a_clear_that_waits_for_two_renders_ends_the_session_only_below_the_wors
 
     failed = isinstance(events[-1], ErrorEvent)
     assert failed is ends_unavailable
+
+
+@pytest.mark.parametrize(
+    ("render_seconds", "fails_to_draw", "max_lag_ms", "ended_by"),
+    [
+        (_RENDER_SECONDS, False, _MAX_LAG_MS, "late_frame"),
+        (_CALL_SECONDS, False, _CALL_LAG_MS, "call_timeout"),
+        (0.0, True, _MAX_LAG_MS, "provider_failed"),
+    ],
+    ids=["a-frame-past-the-limit", "a-call-past-the-limit", "the-provider-failing"],
+)
+def test_a_session_ended_unavailable_names_the_path_that_ended_it(
+    render_seconds: float,
+    max_lag_ms: int,
+    capsys: pytest.CaptureFixture[str],
+    *,
+    fails_to_draw: bool,
+    ended_by: str,
+) -> None:
+    clock = FakeClock()
+    # Only a frame's lateness runs on the fake clock; a call's timeout is real time.
+    on_fake_clock = ended_by == "late_frame"
+    provider = FakeProvider(
+        render_seconds=render_seconds,
+        fails_to_draw=fails_to_draw,
+        sleep=clock.render if on_fake_clock else time.sleep,
+    )
+
+    with configured("video"):
+        played(
+            _sentences("a", "b"),
+            sentences=2,
+            provider=provider,
+            pacing=clock.pacing if on_fake_clock else REAL_TIME,
+            worker=clock.worker() if on_fake_clock else None,
+            max_lag_ms=max_lag_ms,
+        )
+
+    (line,) = written(capsys.readouterr().out, "session.ended")
+    assert line["ended_by"] == ended_by

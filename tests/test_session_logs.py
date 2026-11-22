@@ -8,7 +8,10 @@ from logline import Outcome
 from logline.testing import configured
 from video_provider_fake import FakeProvider
 
+from support.chunk_support import waiting
+from support.clock_support import FakeClock
 from support.identity_support import valid_headers
+from support.scripted_session import played
 from support.session_support import (
     ICE_SERVERS,
     close_code,
@@ -35,6 +38,10 @@ if TYPE_CHECKING:
     from video_service.runtime import Runtime
 
 _SENTENCE_MS = 80
+_IDLE_WAIT_SECONDS = 0.2
+_IDLE_RENDER_SECONDS = 0.03
+_FEED_RENDER_SECONDS = 0.2
+_MAX_LAG_MS = 1000
 _SESSION_TRACE = "0af7651916cd43dd8448eb211c80319c"
 _SENTENCE_TRACE = "4bf92f3577b34da6a3ce929d0e0e4736"
 
@@ -164,6 +171,53 @@ def test_a_session_ended_by_the_client_s_fault_is_refused_and_by_the_provider_fa
         (Outcome.REFUSED, "invalid_request"),
         (Outcome.FAILED, "unavailable"),
     ]
+
+
+def test_a_session_not_ended_unavailable_names_no_path_and_none_behind_before_its_clock(
+    started: Callable[..., Runtime],
+    wire: Callable[[Runtime], TestClient],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    runtime = started()
+    draining, refusing = wire(runtime), wire(started())
+
+    with configured("video"):
+        _play_one_sentence_then_drain(draining, runtime)
+        denial(refusing, session_url("no-such-look"), valid_headers())
+        with opened(refusing) as session:
+            session.send_json({"type": "no.such.event"})
+            failure_of(receive(session))
+
+    ended, refused_upgrade, refused_event = _written(capsys, "session.ended")
+    assert "ended_by" not in ended
+    assert "ended_by" not in refused_upgrade
+    assert "ended_by" not in refused_event
+    assert refused_upgrade["max_behind_ms"] == 0
+    assert refused_event["max_behind_ms"] == 0
+
+
+def test_the_longest_idle_call_is_logged_and_a_longer_feed_call_is_not(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    clock = FakeClock()
+    start, end = sentence_events("s1")
+
+    with configured("video"):
+        played(
+            [waiting(clock, _IDLE_WAIT_SECONDS), start, pcm(_SENTENCE_MS), end],
+            sentences=1,
+            provider=FakeProvider(
+                render_seconds=_FEED_RENDER_SECONDS,
+                idle_render_seconds=_IDLE_RENDER_SECONDS,
+                sleep=clock.render,
+            ),
+            pacing=clock.pacing,
+            worker=clock.worker(),
+            max_lag_ms=_MAX_LAG_MS,
+        )
+
+    (line,) = _written(capsys, "session.ended")
+    assert line["max_idle_call_ms"] == round(_IDLE_RENDER_SECONDS * 1000)
 
 
 def test_no_credential_reaches_a_line_even_when_the_update_is_refused(
