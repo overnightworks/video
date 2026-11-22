@@ -7,6 +7,7 @@ privilege and no network; `container` removes what it starts when its block ends
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import time
 import uuid
@@ -43,6 +44,16 @@ from video_client.health import fetch_health
 outcome = fetch_health("http://127.0.0.1:{PORT}", deadline_seconds=5, cap_bytes=65536)
 print(outcome.model_dump_json())
 """
+
+
+def image_under_test() -> str:
+    """The image `VIDEO_IMAGE` names; fail the test naming it when unset."""
+    named = os.environ.get("VIDEO_IMAGE")
+    if not named:
+        pytest.fail(
+            "VIDEO_IMAGE must name the image under test: build or pull it first"
+        )
+    return named
 
 
 def caller_file_in(directory: Path) -> Path:

@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 from contextlib import contextmanager
 from http import HTTPStatus
 from pathlib import Path
@@ -27,6 +26,7 @@ from support.image_support import (
     container,
     docker,
     events,
+    image_under_test,
     logs_of,
     wait_for_event,
 )
@@ -209,12 +209,7 @@ class _Answer(_Model):
 @pytest.fixture(scope="module")
 def image() -> str:
     """The image under test, which `VIDEO_IMAGE` names."""
-    named = os.environ.get("VIDEO_IMAGE")
-    if not named:
-        pytest.fail(
-            "VIDEO_IMAGE must name the image under test: build or pull it first"
-        )
-    return named
+    return image_under_test()
 
 
 @pytest.fixture(scope="module")

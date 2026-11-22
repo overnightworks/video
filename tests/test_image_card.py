@@ -9,11 +9,13 @@ below the card proof's floor.
 from __future__ import annotations
 
 import os
+import signal
 import time
 from contextlib import ExitStack
 from typing import TYPE_CHECKING
 
 import pytest
+from video_provider_contract.worker import CARD_MEMORY_MB_ENV
 
 from card_drive import Kill
 from card_memory import GroupWatch
@@ -24,6 +26,7 @@ from support.image_support import (
     caller_file_in,
     container,
     docker,
+    image_under_test,
     logs_of,
     wait_for_event,
 )
@@ -38,7 +41,6 @@ if TYPE_CHECKING:
 
 pytestmark = pytest.mark.image_card
 
-_CAP_ENVIRONMENT = "VIDEO_CARD_MEMORY_MB"
 _START_WITHIN_SECONDS = ProcessBounds().start_seconds
 # Scenario data: far below what the model needs, as the card proof's cap 1 was.
 _TOO_SMALL_CAP_MB = 1
@@ -55,24 +57,35 @@ def _required(name: str, purpose: str) -> str:
 @pytest.fixture(scope="module")
 def image() -> str:
     """The image under test, which `VIDEO_IMAGE` names."""
-    return _required("VIDEO_IMAGE", "the image under test: pull it first")
+    return image_under_test()
 
 
 @pytest.fixture(scope="module")
 def cap_mb() -> int:
     """The provider's cap this run gives, in MiB."""
-    return int(_required(_CAP_ENVIRONMENT, "the provider's cap in MiB"))
+    return int(_required(CARD_MEMORY_MB_ENV, "the provider's cap in MiB"))
 
 
 @pytest.fixture(scope="module", autouse=True)
-def room_on_the_card(request: pytest.FixtureRequest, cap_mb: int) -> None:
+def room_on_the_card(image: str, cap_mb: int) -> None:  # noqa: ARG001 - resolves first, so an unset image fails naming it
     """Refuse the run, before any container starts, when the card has no room."""
-    request.getfixturevalue("image")
     watch = GroupWatch(read_card_memory, cap_mb, int(FREE_MEMORY_LINE.limit))
     refused = watch.refuse_first(lambda _stop: _NOTHING_LEFT)
     if refused:
         assert watch.stop is not None
         pytest.fail(f"the card has no room: {watch.stop.line()}")
+
+
+def _interrupt(_signal: int, _frame: object) -> None:
+    raise KeyboardInterrupt
+
+
+@pytest.fixture(scope="module", autouse=True)
+def terminate_as_interrupt() -> Iterator[None]:
+    """Turn TERM into an interrupt, so each started container is removed on it too."""
+    previous = signal.signal(signal.SIGTERM, _interrupt)
+    yield
+    signal.signal(signal.SIGTERM, previous)
 
 
 @pytest.fixture(scope="module")
@@ -102,6 +115,12 @@ def _health(name: str) -> Health:
     return Health.model_validate_json(ran.stdout)
 
 
+def _ready(name: str) -> bool:
+    """Whether health says ready; a service not yet listening is not ready yet."""
+    ran = docker("exec", name, "python", "-c", HEALTH)
+    return ran.returncode == 0 and Health.model_validate_json(ran.stdout).ready
+
+
 def _is_running(name: str) -> bool:
     inspected = docker("inspect", "--format", "{{.State.Running}}", name)
     return inspected.stdout.strip() == "true"
@@ -114,7 +133,7 @@ def test_the_image_reaches_ready_on_the_card_within_the_start_bound(
 
     deadline = time.monotonic() + _START_WITHIN_SECONDS
     while _is_running(name) and time.monotonic() < deadline:
-        if _health(name).ready:
+        if _ready(name):
             break
         time.sleep(POLL_SECONDS)
 
