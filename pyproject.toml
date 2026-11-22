@@ -67,11 +67,12 @@ overnightworks-video-provider-contract = { workspace = true }
 overnightworks-video-provider-fake = { workspace = true }
 
 [tool.pytest.ini_options]
-addopts = "--strict-config --strict-markers --import-mode=importlib -m 'not browser and not flashhead_lite and not image'"
+addopts = "--strict-config --strict-markers --import-mode=importlib -m 'not browser and not flashhead_lite and not image and not image_card'"
 markers = [
     "browser: drives Chromium against the built browser package",
     "flashhead_lite: starts the real FlashHead lite worker from the provider's own environment",
     "image: drives the built image, which VIDEO_IMAGE names",
+    "image_card: starts the built image with the card, which only the operator's free card runs",
 ]
 pythonpath = [".", "scripts", "tests", "providers/flashhead-lite/src"]
 testpaths = [

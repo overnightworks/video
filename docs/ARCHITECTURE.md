@@ -146,7 +146,8 @@ over a runtime composed with the `fake` provider, a real look source on a loopba
 a throwaway issuer that signs real tokens; viewers are aiortc receive-only peers. The browser
 layer drives the browser package in headless Chromium against the service from source, and
 proves what only a browser shows. The image test starts the built image as the deployment
-does, with no network and no card. The card proof drives the same service on the card and
+does, with no network and no card; a card-only module starts it with the card, which only the
+operator's free card runs. The card proof drives the same service on the card and
 records figures; the calls that need a card live in one module that coverage excludes.
 
 ## Constraints and reasons
