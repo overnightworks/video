@@ -301,10 +301,14 @@ async def _hold(drive: Drive) -> object:
             attached(drive.service, drive.identity, session.created) as viewer,
         ):
             frame_rate = session.created.session.video.frame_rate
-            pids = [*service_pids, *worker_pids(service_pids[0])]
-            before = waits(pids)
+            provider_pids = worker_pids(service_pids[0])
+            pids = [*service_pids, *provider_pids]
+            service_before, provider_before = waits(service_pids), waits(provider_pids)
             window, _ = await timed(drive.service, _speaking_and_idle(drive, session))
-            delay = run_queue_delay_seconds(before, waits(pids))
+            service_delay = run_queue_delay_seconds(service_before, waits(service_pids))
+            provider_delay = run_queue_delay_seconds(
+                provider_before, waits(provider_pids)
+            )
             threads = thread_count(pids)
             frames = viewer.video_frames_in(window)
     line = await drive.service.line("session.ended")
@@ -318,7 +322,8 @@ async def _hold(drive: Drive) -> object:
         "threads": value_of(threads),
         "cpus": value_of(cpus),
         "busy_workers_per_cpu": value_of(drive.hold.busy_workers / len(cpus)),
-        "run_queue_delay_seconds": value_of(delay),
+        "service_run_queue_delay_seconds": value_of(service_delay),
+        "provider_run_queue_delay_seconds": value_of(provider_delay),
     }
 
 

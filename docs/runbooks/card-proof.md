@@ -41,7 +41,7 @@ VIDEO_PROVIDER_ROOT=$PWD/providers VIDEO_CARD_MEMORY_MB=7168 \
   pins the group to those CPUs and `--busy-workers` starts that many spinning processes
   on them, all ended with the group. It records fps, `ended_by`, `max_behind_ms`,
   `max_idle_call_ms`, the group's thread count, the busy workers per CPU and the
-  service's and provider's run-queue delay over the hold. A dry run's hold drives the
+  service's and the provider's run-queue delay over the hold, each its own figure. A dry run's hold drives the
   fake at the card's cost (512x512, 24 frames and 0.6 s a render), so give it a lag
   above one render.
 - `--memory-floor-mb` is the free card memory the run keeps beside the cap.

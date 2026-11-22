@@ -23,7 +23,8 @@ _FIGURES = (
     "threads",
     "cpus",
     "busy_workers_per_cpu",
-    "run_queue_delay_seconds",
+    "service_run_queue_delay_seconds",
+    "provider_run_queue_delay_seconds",
 )
 
 
