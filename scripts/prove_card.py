@@ -483,7 +483,7 @@ def _compiler_home_at_start(run_directory: Path) -> CompilerHome:
 def _child(name: str, arguments: argparse.Namespace) -> int:
     """Run one group where `probe-run` started it; non-zero when a cell failed."""
     identity_directory = begun_child(arguments.fragment)
-    if arguments.cpus:
+    if arguments.cpus and name == "hold":
         # Inherited by the service, its provider and the busy workers started below.
         os.sched_setaffinity(0, arguments.cpus)
     (group,) = (group for group in _groups(arguments) if group.name == name)

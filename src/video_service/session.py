@@ -86,16 +86,18 @@ class _FailureError(Exception):
         code: RefusalCode,
         param: str | None = None,
         event_id: str | None = None,
-        *,
-        ended_by: EndedBy | None = None,
     ) -> None:
         super().__init__(code.value)
-        if (code is RefusalCode.UNAVAILABLE) is (ended_by is None):
-            message = "an unavailable end names its path and no other end does"
-            raise ValueError(message)
         self.code = code
         self.param = param
         self.event_id = event_id
+
+
+class _UnavailableError(_FailureError):
+    """The session ends `unavailable`, by the path it names."""
+
+    def __init__(self, ended_by: EndedBy) -> None:
+        super().__init__(RefusalCode.UNAVAILABLE)
         self.ended_by = ended_by
 
 
@@ -327,9 +329,7 @@ class Session:
         except ProviderFailedError:
             return _End(
                 _NORMAL_CLOSE,
-                _FailureError(
-                    RefusalCode.UNAVAILABLE, ended_by=EndedBy.PROVIDER_FAILED
-                ),
+                _UnavailableError(EndedBy.PROVIDER_FAILED),
             )
 
     async def _finish(self, step: StepTimer, end: _End) -> None:
@@ -343,7 +343,7 @@ class Session:
         if end.close_code is not None:
             step.add(close_code=end.close_code)
         if failure is not None:
-            if failure.code is RefusalCode.UNAVAILABLE:
+            if isinstance(failure, _UnavailableError):
                 step.add(ended_by=failure.ended_by.value)
                 step.fail(failure.code.value)
             else:
@@ -618,7 +618,7 @@ class Session:
         lateness = self._schedule.release(self._place.pacing.now())
         self._max_behind = max(self._max_behind, lateness)
         if lateness > self._lag_limit:
-            raise _FailureError(RefusalCode.UNAVAILABLE, ended_by=EndedBy.LATE_FRAME)
+            raise _UnavailableError(EndedBy.LATE_FRAME)
         if lateness > 0:
             return True
         await self._place.pacing.sleep(-lateness)
@@ -694,9 +694,7 @@ class Session:
             async with asyncio.timeout(self._lag_limit):
                 return await asyncio.wrap_future(self._place.worker.submit(work))
         except TimeoutError:
-            raise _FailureError(
-                RefusalCode.UNAVAILABLE, ended_by=EndedBy.CALL_TIMEOUT
-            ) from None
+            raise _UnavailableError(EndedBy.CALL_TIMEOUT) from None
 
 
 def _milliseconds(seconds: float) -> int:
