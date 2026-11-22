@@ -186,3 +186,27 @@ def test_a_session_ended_unavailable_names_the_path_that_ended_it(
 
     (line,) = written(capsys.readouterr().out, "session.ended")
     assert line["ended_by"] == ended_by
+    if ended_by == "late_frame":
+        assert line["max_behind_ms"] > max_lag_ms
+
+
+def test_a_late_frame_within_the_limit_is_logged_as_the_most_a_frame_fell_behind(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    clock = FakeClock()
+    provider = FakeProvider(render_seconds=_RENDER_SECONDS, sleep=clock.render)
+
+    with configured("video"):
+        played(
+            _sentences("a", "b"),
+            sentences=2,
+            provider=provider,
+            pacing=clock.pacing,
+            worker=clock.worker(),
+            max_lag_ms=_SLOW_CLIENT_MAX_LAG_MS,
+        )
+
+    (line,) = written(capsys.readouterr().out, "session.ended")
+    assert "ended_by" not in line
+    assert 0 < line["max_behind_ms"] <= _SLOW_CLIENT_MAX_LAG_MS
+
