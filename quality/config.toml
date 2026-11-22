@@ -32,3 +32,8 @@ reason = "it drives packages/browser in Chromium against the service, which has 
 path = "tests/test_image.py"
 rule = "test-layout"
 reason = "it drives the built image, which has no module of that name"
+
+[[layout.allow]]
+path = "tests/test_image_card.py"
+rule = "test-layout"
+reason = "it drives the built image on the card, which has no module of that name"

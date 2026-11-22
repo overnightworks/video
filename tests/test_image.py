@@ -9,20 +9,27 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
-import subprocess
-import time
-import uuid
 from contextlib import contextmanager
 from http import HTTPStatus
 from pathlib import Path
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING
 
 import pytest
 from pydantic import BaseModel, ConfigDict, Field
 from video_provider_contract.worker import CARD_MEMORY_MB_ENV
 
-from support.identity_support import write_caller_config
+from support.image_support import (
+    HEALTH,
+    PORT,
+    RUN_AS_THE_DEPLOYMENT,
+    caller_file_in,
+    container,
+    docker,
+    events,
+    image_under_test,
+    logs_of,
+    wait_for_event,
+)
 from video_client.wire import (
     REFUSAL_STATUS,
     Health,
@@ -30,11 +37,11 @@ from video_client.wire import (
     RefusalCode,
     viewers_path,
 )
-from video_service.config import Settings
 from video_service.provider_process import ProcessFailure
 from video_service.providers import ProviderName, worker_executable
 
 if TYPE_CHECKING:
+    import subprocess
     from collections.abc import Iterator, Sequence
 
 pytestmark = pytest.mark.image
@@ -47,22 +54,8 @@ _DEPLOYMENT_SETTINGS = (
     "VIDEO_CONFIG_FILE",
     "VIDEO_HOST",
 )
-_RUN_AS_THE_DEPLOYMENT: Final = (
-    "--read-only",
-    "--tmpfs",
-    "/tmp",  # noqa: S108 - the container's own memory-backed directory
-    "--cap-drop",
-    "ALL",
-    "--security-opt",
-    "no-new-privileges",
-    "--network",
-    "none",
-)
-_CALLER_DIRECTORY = "/run/callers"
-_PORT = Settings.model_fields["port"].default
 _START_WITHIN_SECONDS = 240
 _STOP_WITHIN_SECONDS = 60
-_POLL_SECONDS = 1.0
 _COMMAND_SECONDS = 900
 _HASH_BASED = 0b1
 
@@ -148,14 +141,9 @@ _IMPORT_UPSTREAM = """
 from video_provider_flashhead_lite.upstream import import_inference
 import_inference()
 """
-_HEALTH = f"""
-from video_client.health import fetch_health
-outcome = fetch_health("http://127.0.0.1:{_PORT}", deadline_seconds=5, cap_bytes=65536)
-print(outcome.model_dump_json())
-"""
 _REQUEST = f"""
 import http.client, json, sys
-connection = http.client.HTTPConnection("127.0.0.1", {_PORT}, timeout=5)
+connection = http.client.HTTPConnection("127.0.0.1", {PORT}, timeout=5)
 connection.request(sys.argv[1], sys.argv[2])
 answer = connection.getresponse()
 print(json.dumps({{"status": answer.status, "body": answer.read().decode()}}))
@@ -218,35 +206,16 @@ class _Answer(_Model):
     body: str
 
 
-def _docker(*arguments: str, timeout: float = 60.0) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(  # noqa: S603 - docker, with the test's own arguments
-        ["docker", *arguments],  # noqa: S607 - the runner's docker
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-        check=False,
-    )
-
-
-def _events(logs: str) -> list[dict[str, object]]:
-    return [json.loads(line) for line in logs.splitlines() if line.startswith("{")]
-
-
 @pytest.fixture(scope="module")
 def image() -> str:
     """The image under test, which `VIDEO_IMAGE` names."""
-    named = os.environ.get("VIDEO_IMAGE")
-    if not named:
-        pytest.fail(
-            "VIDEO_IMAGE must name the image under test: build or pull it first"
-        )
-    return named
+    return image_under_test()
 
 
 @pytest.fixture(scope="module")
 def configuration(image: str) -> _ImageConfiguration:
     """What the image declares: its user, its environment, its health check."""
-    inspected = _docker("image", "inspect", image)
+    inspected = docker("image", "inspect", image)
     assert inspected.returncode == 0, inspected.stderr
     return _ImageConfiguration.model_validate(json.loads(inspected.stdout)[0]["Config"])
 
@@ -271,10 +240,10 @@ def _run(
     image: str, *command: str, variables: Sequence[str] = ()
 ) -> subprocess.CompletedProcess[str]:
     environment = [part for variable in variables for part in ("--env", variable)]
-    return _docker(
+    return docker(
         "run",
         "--rm",
-        *_RUN_AS_THE_DEPLOYMENT,
+        *RUN_AS_THE_DEPLOYMENT,
         *environment,
         image,
         *command,
@@ -293,53 +262,17 @@ def _probe[Found: BaseModel](
 @pytest.fixture(scope="module")
 def caller_file(tmp_path_factory: pytest.TempPathFactory) -> Path:
     """A valid caller file in a directory the image's user reads."""
-    directory = tmp_path_factory.mktemp("callers")
-    directory.chmod(0o755)
-    file = write_caller_config(directory)
-    file.chmod(0o644)
-    return file
-
-
-def _logs(name: str) -> str:
-    logged = _docker("logs", name)
-    return logged.stdout + logged.stderr
-
-
-def _wait_for_event(name: str, event: str) -> None:
-    deadline = time.monotonic() + _START_WITHIN_SECONDS
-    while time.monotonic() < deadline:
-        if any(record["event"] == event for record in _events(_logs(name))):
-            return
-        time.sleep(_POLL_SECONDS)
-    pytest.fail(f"the service wrote no {event} line:\n{_logs(name)}")
+    return caller_file_in(tmp_path_factory.mktemp("callers"))
 
 
 @contextmanager
 def _started(image: str, caller_file: Path) -> Iterator[str]:
     """A container of the service with `flashhead-lite`, once its provider refused."""
-    name = f"video-image-test-{uuid.uuid4().hex[:12]}"
-    variables = [
-        "VIDEO_PROVIDER=flashhead-lite",
-        f"{CARD_MEMORY_MB_ENV}=1024",
-        f"VIDEO_CONFIG_FILE={_CALLER_DIRECTORY}/{caller_file.name}",
-    ]
-    started = _docker(
-        "run",
-        "--detach",
-        "--name",
-        name,
-        *_RUN_AS_THE_DEPLOYMENT,
-        "--volume",
-        f"{caller_file.parent}:{_CALLER_DIRECTORY}:ro",
-        *(part for variable in variables for part in ("--env", variable)),
-        image,
-    )
-    assert started.returncode == 0, started.stderr
-    try:
-        _wait_for_event(name, "provider.failed")
+    with container(
+        image, caller_file, cap_mb=1024, name_prefix="video-image-test"
+    ) as name:
+        wait_for_event(name, "provider.failed", within_seconds=_START_WITHIN_SECONDS)
         yield name
-    finally:
-        _docker("rm", "--force", name)
 
 
 @pytest.fixture(scope="module")
@@ -350,7 +283,7 @@ def service(image: str, caller_file: Path) -> Iterator[str]:
 
 
 def _answer(service: str, method: str, path: str) -> _Answer:
-    ran = _docker("exec", service, "python", "-c", _REQUEST, method, path)
+    ran = docker("exec", service, "python", "-c", _REQUEST, method, path)
     assert ran.returncode == 0, ran.stderr
     return _Answer.model_validate_json(ran.stdout)
 
@@ -481,7 +414,7 @@ def test_without_the_card_memory_cap_the_start_stops_and_names_the_setting(
 
 
 def test_without_a_card_health_names_the_provider_not_ready(service: str) -> None:
-    ran = _docker("exec", service, "python", "-c", _HEALTH)
+    ran = docker("exec", service, "python", "-c", HEALTH)
     assert ran.returncode == 0, ran.stderr
     health = Health.model_validate_json(ran.stdout)
 
@@ -493,8 +426,8 @@ def test_without_a_card_health_names_the_provider_not_ready(service: str) -> Non
 def test_without_a_card_the_log_carries_the_refusal_as_reported_and_none_of_its_text(
     service: str,
 ) -> None:
-    logs = _logs(service)
-    records = _events(logs)
+    logs = logs_of(service)
+    records = events(logs)
     (failed,) = (record for record in records if record["event"] == "provider.failed")
     (started,) = (record for record in records if record["event"] == "process.started")
 
@@ -525,9 +458,9 @@ def test_a_stop_signal_drains_and_the_service_exits_zero(
     image: str, caller_file: Path
 ) -> None:
     with _started(image, caller_file) as name:
-        stopped = _docker("stop", "--timeout", str(_STOP_WITHIN_SECONDS), name)
-        inspected = _docker("inspect", name)
-        records = _events(_logs(name))
+        stopped = docker("stop", "--timeout", str(_STOP_WITHIN_SECONDS), name)
+        inspected = docker("inspect", name)
+        records = events(logs_of(name))
 
     state = _State.model_validate(json.loads(inspected.stdout)[0]["State"])
     assert stopped.returncode == 0, stopped.stderr
