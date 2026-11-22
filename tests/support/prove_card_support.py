@@ -14,6 +14,8 @@ import wave
 from pathlib import Path
 from typing import TYPE_CHECKING, Final
 
+from video_provider_fake import worker as fake_worker
+
 import card_cells
 from card_record import FREE_MEMORY_LINE, LagFigure, Verdict
 from video_service.config import Settings
@@ -72,7 +74,7 @@ esac
 # The `flashhead-lite` worker of a provider root: the fake provider with the steps a
 # case scripts through the environment, each writing a reading for the stand-in. It
 # fails its load for the group the case names, and fails the preparation of
-# the looks the case lists. It renders in chunks as the case's environment says, and
+# the looks the case lists. It renders as the fake worker's settings say, and
 # holds the end of every sentence until the file the case names exists. At its
 # start it writes the `HOME` and `TMPDIR` it sees to
 # the file the case names and puts one entry into its `HOME`, as a compiler would.
@@ -86,6 +88,7 @@ from pathlib import Path
 from video_provider_contract import ProviderFailedError
 from video_provider_contract.worker import run_worker
 from video_provider_fake import FakeProvider
+from video_provider_fake.worker import settings_from
 
 
 def write_reading(name):
@@ -118,10 +121,6 @@ class Scripted(FakeProvider):
         return super().open_session(look)
 
 
-def seconds(name):
-    return float(os.environ.get(name, 0))
-
-
 def gate_opened_by(name):
     if name not in os.environ:
         return None
@@ -140,9 +139,7 @@ run_worker(
     Scripted(
         finish_gate=gate_opened_by("WORKER_GATE_FILE"),
         refuses=os.environ.get("WORKER_REFUSES", "").split(),
-        render_seconds=seconds("WORKER_RENDER_SECONDS"),
-        idle_render_seconds=seconds("WORKER_IDLE_RENDER_SECONDS"),
-        chunk_frames=int(os.environ.get("WORKER_CHUNK_FRAMES", 1)),
+        **settings_from(os.environ),
     )
 )
 """
@@ -295,9 +292,9 @@ class Run:
     ) -> None:
         """Have the provider draw `chunk_frames` frames a render at a time."""
         self.environment = self.environment | {
-            "WORKER_CHUNK_FRAMES": str(chunk_frames),
-            "WORKER_RENDER_SECONDS": str(render_seconds),
-            "WORKER_IDLE_RENDER_SECONDS": str(idle_render_seconds),
+            fake_worker.CHUNK_FRAMES: str(chunk_frames),
+            fake_worker.RENDER_SECONDS: str(render_seconds),
+            fake_worker.IDLE_RENDER_SECONDS: str(idle_render_seconds),
         }
 
     def hold_sentences_until(self, gate: Path) -> None:
