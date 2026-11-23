@@ -95,7 +95,9 @@ browser package's checks, the browser layer, and then the quality gate.
   lite provider in its own environment at the place the service looks for it, and the
   pinned weights, which only the build fetches; the service downloads none.
 - The image runs as a numeric non-root user on a read-only root with `/tmp` as the one
-  writable place. Of the service's settings it sets only `VIDEO_PROVIDER_ROOT`, and it
+  writable place, mounted executable (`--tmpfs /tmp:exec`; Docker's default is `noexec`)
+  because the provider's compilers, Triton and Inductor, load the modules they build
+  there at first use. Of the service's settings it sets only `VIDEO_PROVIDER_ROOT`, and it
   points `HOME` and `TMPDIR` at `/tmp`; the deployment sets `VIDEO_PROVIDER`,
   `VIDEO_CARD_MEMORY_MB`, `VIDEO_CONFIG_FILE` and `VIDEO_HOST`, and reads readiness from
   `GET /health`, since the image declares no health check.
@@ -121,7 +123,9 @@ browser package's checks, the browser layer, and then the quality gate.
   Face offline. The child inherits the service's environment, which carries no secret: its
   settings are paths, URLs and numbers and the issuer's keys are public. A change that adds
   a secret setting keeps it from the child in that same change. In the image the child is
-  also confined by the non-root user and the read-only root.
+  also confined by the non-root user, the read-only root and the dropped capabilities; the
+  executable `/tmp` lets it run a native file it writes there, which the child's own
+  Python could already map without a file.
 - `GET /health` needs no token and reveals the look names, the provider's name and the
   card's memory in use.
 - Bounds on a caller's input: event JSON (closed types, at most 64 KiB), PCM at a rate from
