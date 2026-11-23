@@ -10,6 +10,56 @@ const SDP_TYPE = "application/sdp";
 const CREATED = 201;
 const OVER = new Set(["failed", "closed"]);
 
+function appendVideo(host: HTMLElement, stream: MediaStream): HTMLVideoElement {
+  const video = document.createElement("video");
+  video.playsInline = true;
+  video.srcObject = stream;
+  host.append(video);
+  return video;
+}
+
+// A closed DTLS transport is the service's close of the viewer; the connection's own
+// state follows it only after the ICE consent has lapsed.
+function onOver(connection: RTCPeerConnection, over: () => void): void {
+  const transport = connection.getReceivers()[0]!.transport!;
+  const check = (): void => {
+    if (OVER.has(connection.connectionState) || OVER.has(transport.state)) over();
+  };
+  connection.onconnectionstatechange = check;
+  transport.onstatechange = check;
+}
+
+/** A peer that only receives audio and video, whose tracks go to `stream`. */
+function receiveOnlyPeer(iceServers: RTCIceServer[], stream: MediaStream): RTCPeerConnection {
+  const connection = new RTCPeerConnection({ iceServers });
+  connection.addTransceiver("audio", { direction: "recvonly" });
+  connection.addTransceiver("video", { direction: "recvonly" });
+  connection.ontrack = ({ track }) => stream.addTrack(track);
+  return connection;
+}
+
+/** Gathers the peer's candidates, POSTs its offer to `path` and returns the viewer's location and the answer. */
+async function exchangeOffer(
+  connection: RTCPeerConnection,
+  path: string,
+): Promise<{ location: string; response: Response }> {
+  const gathered = new Promise<void>((resolve) => {
+    connection.onicecandidate = ({ candidate }) => {
+      if (candidate === null) resolve();
+    };
+  });
+  await connection.setLocalDescription(await connection.createOffer());
+  await gathered;
+  const response = await fetch(path, {
+    method: "POST",
+    headers: { "Content-Type": SDP_TYPE },
+    body: connection.localDescription!.sdp,
+  });
+  const location = response.headers.get("Location");
+  if (response.status !== CREATED || location === null) throw new Error(`the route answered ${response.status}`);
+  return { location, response };
+}
+
 /**
  * Watches a session through the app's own route: a receive-only peer, one POST of its
  * offer to `path`, a `<video>` in `host`. Every failure is `ended` and deletes the viewer
@@ -25,10 +75,7 @@ export function watch(
   let location: string | undefined;
   let peer: RTCPeerConnection | undefined;
   const stream = new MediaStream();
-  const video = document.createElement("video");
-  video.playsInline = true;
-  video.srcObject = stream;
-  host.append(video);
+  const video = appendVideo(host, stream);
 
   const report = (next: WatchState): void => {
     if (state === "ended" || state === next) return;
@@ -58,37 +105,14 @@ export function watch(
   };
 
   const begin = async (): Promise<void> => {
-    const connection = new RTCPeerConnection({ iceServers });
+    const connection = receiveOnlyPeer(iceServers, stream);
     peer = connection;
-    connection.addTransceiver("audio", { direction: "recvonly" });
-    connection.addTransceiver("video", { direction: "recvonly" });
-    connection.ontrack = ({ track }) => stream.addTrack(track);
-    // A closed DTLS transport is the service's close of the viewer; the connection's own
-    // state follows it only after the ICE consent has lapsed.
-    const check = (): void => {
-      const dtls = connection.getReceivers()[0]!.transport!.state;
-      if (OVER.has(connection.connectionState) || OVER.has(dtls)) finish();
-    };
-    const gathered = new Promise<void>((resolve) => {
-      connection.onicecandidate = ({ candidate }) => {
-        if (candidate === null) resolve();
-      };
-    });
-    await connection.setLocalDescription(await connection.createOffer());
-    await gathered;
-    const response = await fetch(path, {
-      method: "POST",
-      headers: { "Content-Type": SDP_TYPE },
-      body: connection.localDescription!.sdp,
-    });
-    const created = response.headers.get("Location");
-    if (response.status !== CREATED || created === null) throw new Error(`the route answered ${response.status}`);
-    location = created;
+    const exchange = await exchangeOffer(connection, path);
+    location = exchange.location;
     void release();
     if (state === "ended") return;
-    await connection.setRemoteDescription({ type: "answer", sdp: await response.text() });
-    connection.onconnectionstatechange = check;
-    connection.getReceivers()[0]!.transport!.onstatechange = check;
+    await connection.setRemoteDescription({ type: "answer", sdp: await exchange.response.text() });
+    onOver(connection, finish);
     video.requestVideoFrameCallback(() => report("drawn"));
     await video.play();
   };
