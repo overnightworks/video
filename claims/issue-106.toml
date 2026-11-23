@@ -1,0 +1,8 @@
+claim_id = "9f110d612fbe40439eeb219e18292b98"
+agent = "Claude 4ce2c9a4-6d87-4ed3-86f8-feb9b2cfb3a5"
+role = "builder"
+base = "3a73ffab2dd090eade2666b30a42b3d6fa970604"
+branch = "claude/issue-106-image-tmp-is-executable"
+scope = ["Dockerfile", "docs/ARCHITECTURE.md", "docs/runbooks/card-proof.md", "tests/support/image_support.py", "tests/test_image.py"]
+opened_commit = "bddb5e8525a929558df7e2b6b2e395ce19bd3455"
+whole_reason = "One run-contract sentence and its five copies must change together, or the test containers and the documents disagree."
