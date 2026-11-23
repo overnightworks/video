@@ -431,10 +431,11 @@ class Service:
         self.stop_to_exit_ms: int | None = None
 
     def lines(self, event: str) -> list[dict[str, object]]:
-        """The JSON lines of `event` written so far."""
+        """The JSON lines of `event` the service has ended; one still written waits."""
         text = self.log.read_text(encoding="utf-8")
+        ended = text[: text.rfind("\n") + 1]
         records = (
-            json.loads(line) for line in text.splitlines() if line.startswith("{")
+            json.loads(line) for line in ended.splitlines() if line.startswith("{")
         )
         return [record for record in records if record["event"] == event]
 

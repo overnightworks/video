@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Final
 
 import pytest
 
+import card_drive
 from support.prove_card_support import (
     APPEARS_WITHIN_SECONDS,
     GONE_WITHIN_SECONDS,
@@ -454,3 +455,20 @@ def test_the_kill_ends_the_spared_child_but_leaves_its_status_to_its_own_wait(
     assert result["spared"] == -signal.SIGKILL
     assert wait_until(lambda: ended(result["reaped"]), GONE_WITHIN_SECONDS)
     assert process_state(result["reaped"]) is None
+
+
+def test_a_line_the_service_has_not_ended_is_read_on_a_later_poll(
+    tmp_path: Path,
+) -> None:
+    log = tmp_path / "service.log"
+    log.write_text(
+        '{"event": "session.started", "id": 1}\n{"event": "session.started", "id',
+        encoding="utf-8",
+    )
+    service = card_drive.Service(None, 0, log)  # type: ignore[arg-type]
+
+    assert service.lines("session.started") == [{"event": "session.started", "id": 1}]
+
+    log.write_text(log.read_text(encoding="utf-8") + '": 2}\n', encoding="utf-8")
+
+    assert [record["id"] for record in service.lines("session.started")] == [1, 2]
