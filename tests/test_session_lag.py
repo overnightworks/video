@@ -190,6 +190,26 @@ def test_a_session_ended_unavailable_names_the_path_that_ended_it(
         assert line["max_behind_ms"] > max_lag_ms
 
 
+def test_an_idle_call_that_times_out_is_not_counted_in_the_longest_idle_call(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # A call's timeout is real time, so the call sleeps in real time too.
+    provider = FakeProvider(idle_render_seconds=_CALL_SECONDS, sleep=time.sleep)
+
+    with configured("video"):
+        played(
+            [],
+            sentences=0,
+            provider=provider,
+            pacing=REAL_TIME,
+            max_lag_ms=_CALL_LAG_MS,
+        )
+
+    (line,) = written(capsys.readouterr().out, "session.ended")
+    assert line["ended_by"] == "call_timeout"
+    assert line["max_idle_call_ms"] == 0
+
+
 def test_a_late_frame_within_the_limit_is_logged_as_the_most_a_frame_fell_behind(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
