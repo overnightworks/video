@@ -1,0 +1,8 @@
+claim_id = "9c0d390cf16c4743b92d439fc90d1b72"
+agent = "Claude 4ce2c9a4-6d87-4ed3-86f8-feb9b2cfb3a5"
+role = "builder"
+base = "68ccc111b50b61a10e9c4be6c9045b151d68217d"
+branch = "claude/issue-115-image-job-every-pull-request"
+scope = [".github/workflows/ci.yml", ".github/workflows/image-test.yml", "docs/ARCHITECTURE.md", "quality/baseline.toml", "scripts/image_paths.py", "tests/scripts/test_image_paths.py"]
+opened_commit = "b9d1402d412b5cef9aaed7d7071b32838b5abadd"
+whole_reason = "One gate change: the job, its timeout, its debt entry and the filter it no longer needs go together, or the gate reads a deleted script."
