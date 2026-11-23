@@ -29,9 +29,14 @@ function onOver(connection: RTCPeerConnection, over: () => void): void {
   transport.onstatechange = check;
 }
 
-/** A peer that only receives audio and video, whose tracks go to `stream`. */
-function receiveOnlyPeer(iceServers: RTCIceServer[], stream: MediaStream): RTCPeerConnection {
+/** A peer that only receives audio and video, whose tracks go to `stream`; `created` sees it before it is set up. */
+function receiveOnlyPeer(
+  iceServers: RTCIceServer[],
+  stream: MediaStream,
+  created: (connection: RTCPeerConnection) => void,
+): RTCPeerConnection {
   const connection = new RTCPeerConnection({ iceServers });
+  created(connection);
   connection.addTransceiver("audio", { direction: "recvonly" });
   connection.addTransceiver("video", { direction: "recvonly" });
   connection.ontrack = ({ track }) => stream.addTrack(track);
@@ -105,8 +110,9 @@ export function watch(
   };
 
   const begin = async (): Promise<void> => {
-    const connection = receiveOnlyPeer(iceServers, stream);
-    peer = connection;
+    const connection = receiveOnlyPeer(iceServers, stream, (created) => {
+      peer = created;
+    });
     const exchange = await exchangeOffer(connection, path);
     location = exchange.location;
     void release();
