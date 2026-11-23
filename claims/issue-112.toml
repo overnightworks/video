@@ -1,0 +1,8 @@
+claim_id = "4e5b9b16713d44c4ab08014e51681737"
+agent = "Claude 4ce2c9a4-6d87-4ed3-86f8-feb9b2cfb3a5"
+role = "builder"
+base = "a69c8e917ae8ec440f6f013b5ff6cd3ec669cfd7"
+branch = "claude/issue-112-video-pins-quality-v0-25-0"
+scope = [".github/workflows/ci.yml", ".github/workflows/code-scanning.yml", ".github/workflows/image-test.yml", ".github/workflows/release-distributions.yml", ".github/workflows/release.yml", "packages/browser/src/watch.ts"]
+opened_commit = "488763ee10dd489e25f96b438162cdc34234a6c7"
+whole_reason = "A release pin moves in every workflow at once, together with the fixes the release demands, so CI judges one consistent state."
