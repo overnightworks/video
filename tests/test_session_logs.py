@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import time
 from contextlib import suppress
 from typing import TYPE_CHECKING
 
 from logline import Outcome
 from logline.testing import configured
 from starlette.websockets import WebSocketDisconnect
-from video_provider_fake import FakeProvider
+from video_provider_fake import FakeProvider, FakeSession
 
 from support.identity_support import valid_headers
 from support.session_support import (
@@ -27,7 +28,6 @@ from support.session_support import (
 )
 from video_client.session_wire import OutputAudioBufferStarted, SessionCreated
 from video_client.wire import DRAIN_CLOSE_CODE
-from video_service.session import Session
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -35,6 +35,7 @@ if TYPE_CHECKING:
     import pytest
     from fastapi.testclient import TestClient
 
+    from video_provider_contract import Frame, ProviderSession
     from video_service.runtime import Runtime
 
 _SENTENCE_MS = 80
@@ -201,17 +202,25 @@ def test_no_credential_reaches_a_line_even_when_the_update_is_refused(
     assert "SENTINEL-CRED" not in capsys.readouterr().out
 
 
+class _DefectiveSession(FakeSession):
+    def idle_frame(self) -> Frame:
+        raise RuntimeError
+
+
+class _ProviderDefectOnIdleFrame(FakeProvider):
+    def open_session(self, look: str) -> ProviderSession:
+        del look
+        return _DefectiveSession(
+            25, 0.0, fails_to_draw=False, finish_gate=None, sleep=time.sleep
+        )
+
+
 def test_an_error_escaping_the_session_still_writes_one_failed_session_line(
     started: Callable[..., Runtime],
     wire: Callable[[Runtime], TestClient],
     capsys: pytest.CaptureFixture[str],
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def broken(*_arguments: object) -> None:
-        raise RuntimeError
-
-    monkeypatch.setattr(Session, "_first_idle_frame", broken)
-    client = wire(started())
+    client = wire(started(_ProviderDefectOnIdleFrame()))
 
     with (
         configured("video"),
