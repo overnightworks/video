@@ -34,8 +34,8 @@ if TYPE_CHECKING:
 
     import pytest
     from fastapi.testclient import TestClient
-
     from video_provider_contract import Frame, ProviderSession
+
     from video_service.runtime import Runtime
 
 _SENTENCE_MS = 80
