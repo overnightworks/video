@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from contextlib import suppress
 from typing import TYPE_CHECKING
 
 from logline import Outcome
 from logline.testing import configured
+from starlette.websockets import WebSocketDisconnect
 from video_provider_fake import FakeProvider
 
 from support.identity_support import valid_headers
@@ -25,6 +27,7 @@ from support.session_support import (
 )
 from video_client.session_wire import OutputAudioBufferStarted, SessionCreated
 from video_client.wire import DRAIN_CLOSE_CODE
+from video_service.session import Session
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -196,3 +199,28 @@ def test_no_credential_reaches_a_line_even_when_the_update_is_refused(
         failure_of(receive(session))
 
     assert "SENTINEL-CRED" not in capsys.readouterr().out
+
+
+def test_an_error_escaping_the_session_still_writes_one_failed_session_line(
+    started: Callable[..., Runtime],
+    wire: Callable[[Runtime], TestClient],
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def broken(*_arguments: object) -> None:
+        raise RuntimeError
+
+    monkeypatch.setattr(Session, "_first_idle_frame", broken)
+    client = wire(started())
+
+    with (
+        configured("video"),
+        suppress(RuntimeError, WebSocketDisconnect),
+        connect(client) as session,
+    ):
+        receive(session)
+        session.send_json(update_event(traceparent=_traceparent(_SESSION_TRACE)))
+        receive(session)
+
+    (line,) = _written(capsys, "session.ended")
+    assert (line["trace_id"], line["outcome"]) == (_SESSION_TRACE, Outcome.FAILED)
