@@ -271,13 +271,9 @@ class Session:
         """
         try:
             await self._socket.accept()
-            with (
-                contextlib.ExitStack() as trace,
-                StepTimer(
-                    "session.ended", logger, look=self._look, provider=self._provider
-                ) as step,
-            ):
-                end = await self._serve(trace)
+            accepted_at = time.perf_counter()
+            with contextlib.ExitStack() as scope:
+                step, end = await self._serve(scope, accepted_at)
                 if end.close_code is None:
                     # The client has left, so the session has ended: it counts open
                     # no more while its viewers wind down.
@@ -307,30 +303,57 @@ class Session:
         except TimeoutError:
             logger.warning("provider_session.close_stuck")
 
-    async def _serve(self, trace: contextlib.ExitStack) -> _End:
+    def _begin_step(self, scope: contextlib.ExitStack, accepted_at: float) -> StepTimer:
+        """Open the session's step on `scope`, under the trace entered so far.
+
+        A step's line carries the trace it was opened in, so it opens after the
+        update's trace is entered, or when the session ends without an update.
+        """
+        return scope.enter_context(
+            StepTimer(
+                "session.ended",
+                logger,
+                started_at=accepted_at,
+                look=self._look,
+                provider=self._provider,
+            )
+        )
+
+    async def _serve(
+        self, scope: contextlib.ExitStack, accepted_at: float
+    ) -> tuple[StepTimer, _End]:
+        """Serve the session to its end and open its step, which ends with `scope`.
+
+        An exception that escapes still finds the step open, so its line is written
+        with the outcome the exception maps to.
+        """
         try:
-            await self._send(
-                SessionCreated(
-                    session=SessionInfo(
-                        id=self._id, look=self._look, video=self._place.video
-                    )
+            end = await self._converse_from_update(scope)
+        except _FailureError as failure:
+            end = _End(_NORMAL_CLOSE, failure)
+        except ProviderFailedError:
+            end = _End(_NORMAL_CLOSE, _UnavailableError(EndedBy.PROVIDER_FAILED))
+        except BaseException:
+            self._begin_step(scope, accepted_at)
+            raise
+        return self._begin_step(scope, accepted_at), end
+
+    async def _converse_from_update(self, trace: contextlib.ExitStack) -> _End:
+        await self._send(
+            SessionCreated(
+                session=SessionInfo(
+                    id=self._id, look=self._look, video=self._place.video
                 )
             )
-            update = await self._first_to_end(self._first_update())
-            if isinstance(update, _End):
-                return update
-            trace.enter_context(unit_trace(update.traceparent))
-            self._media.configure(update.session)
-            await self._first_idle_frame()
-            await self._send(SessionUpdated())
-            return await self._converse()
-        except _FailureError as failure:
-            return _End(_NORMAL_CLOSE, failure)
-        except ProviderFailedError:
-            return _End(
-                _NORMAL_CLOSE,
-                _UnavailableError(EndedBy.PROVIDER_FAILED),
-            )
+        )
+        update = await self._first_to_end(self._first_update())
+        if isinstance(update, _End):
+            return update
+        trace.enter_context(unit_trace(update.traceparent))
+        self._media.configure(update.session)
+        await self._first_idle_frame()
+        await self._send(SessionUpdated())
+        return await self._converse()
 
     async def _finish(self, step: StepTimer, end: _End) -> None:
         failure = end.failure

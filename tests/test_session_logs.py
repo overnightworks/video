@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import time
+from contextlib import suppress
 from typing import TYPE_CHECKING
 
 from logline import Outcome
 from logline.testing import configured
-from video_provider_fake import FakeProvider
+from starlette.websockets import WebSocketDisconnect
+from video_provider_fake import FakeProvider, FakeSession
 
 from support.chunk_support import waiting
 from support.clock_support import FakeClock
@@ -34,6 +37,7 @@ if TYPE_CHECKING:
 
     import pytest
     from fastapi.testclient import TestClient
+    from video_provider_contract import Frame, ProviderSession
 
     from video_service.runtime import Runtime
 
@@ -146,6 +150,21 @@ def test_a_refused_upgrade_writes_a_refused_session_line_with_its_code(
     assert (line["outcome"], line["reason"]) == (Outcome.REFUSED, "invalid_request")
 
 
+def test_a_client_leaving_before_its_update_still_writes_one_session_line(
+    started: Callable[..., Runtime],
+    wire: Callable[[Runtime], TestClient],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    client = wire(started())
+
+    with configured("video"), connect(client) as session:
+        receive(session)
+        session.close()
+
+    (line,) = _written(capsys, "session.ended")
+    assert line["trace_id"] is not None
+
+
 def test_a_session_ended_by_the_client_s_fault_is_refused_and_by_the_provider_failed(
     started: Callable[..., Runtime],
     wire: Callable[[Runtime], TestClient],
@@ -235,3 +254,36 @@ def test_no_credential_reaches_a_line_even_when_the_update_is_refused(
         failure_of(receive(session))
 
     assert "SENTINEL-CRED" not in capsys.readouterr().out
+
+
+class _DefectiveSession(FakeSession):
+    def idle_frame(self) -> Frame:
+        raise RuntimeError
+
+
+class _ProviderDefectOnIdleFrame(FakeProvider):
+    def open_session(self, look: str) -> ProviderSession:
+        del look
+        return _DefectiveSession(
+            25, 0.0, fails_to_draw=False, finish_gate=None, sleep=time.sleep
+        )
+
+
+def test_an_error_escaping_the_session_still_writes_one_failed_session_line(
+    started: Callable[..., Runtime],
+    wire: Callable[[Runtime], TestClient],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    client = wire(started(_ProviderDefectOnIdleFrame()))
+
+    with (
+        configured("video"),
+        suppress(RuntimeError, WebSocketDisconnect),
+        connect(client) as session,
+    ):
+        receive(session)
+        session.send_json(update_event(traceparent=_traceparent(_SESSION_TRACE)))
+        receive(session)
+
+    (line,) = _written(capsys, "session.ended")
+    assert (line["trace_id"], line["outcome"]) == (_SESSION_TRACE, Outcome.FAILED)
