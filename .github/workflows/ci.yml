@@ -227,8 +227,7 @@ jobs:
         timeout-minutes: 8
         env:
           VIDEO_BROWSER_COVERAGE_DIR: ${{ runner.temp }}/browser-coverage-raw
-        # pytest-workers: one worker, the scenarios measure real-time audio and picture
-        # pytest-random: the scenarios run one after another against one real browser
+        # pytest-workers: one worker, the scenarios measure real-time audio and picture # pytest-random: the scenarios run one after another against one real browser
         run: uv run --locked --no-build pytest -q -m browser tests
 
       - name: Convert the page coverage to lcov
