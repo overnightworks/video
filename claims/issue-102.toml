@@ -3,5 +3,6 @@ agent = "Claude 4ce2c9a4-6d87-4ed3-86f8-feb9b2cfb3a5"
 role = "builder"
 base = "da0833ffd7dfcb9307f17cdaed3279b5e25bd42d"
 branch = "claude/issue-102-take-logline-v1-9-0-closing-lines-carry"
-scope = ["pyproject.toml", "src/video_service/session.py", "uv.lock"]
+scope = ["pyproject.toml", "src/video_service/session.py", "tests/test_session_logs.py", "uv.lock"]
 opened_commit = "a36042e1d777b51af1d668397566e45665893bbe"
+whole_reason = "One pin raise, its lock and the one session line the new pin moves out of its ruled trace."
