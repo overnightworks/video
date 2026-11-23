@@ -7,6 +7,9 @@ import os
 from typing import TYPE_CHECKING
 
 import pytest
+from video_provider_fake import worker as fake_worker
+
+import prove_card
 
 if TYPE_CHECKING:
     from support.prove_card_support import Run
@@ -54,7 +57,8 @@ def test_a_dry_run_hold_records_every_figure_and_leaves_no_busy_worker(
     assert set(_FIGURES) <= set(hold)
     assert hold["cpus"]["value"] == [cpu]
     assert hold["busy_workers_per_cpu"]["value"] == 1
-    assert hold["max_idle_call_ms"]["value"] > 0
+    one_render_ms = float(prove_card._CARD_COST[fake_worker.IDLE_RENDER_SECONDS]) * 1000  # noqa: SLF001
+    assert hold["max_idle_call_ms"]["value"] >= one_render_ms
     assert hold["ended_by"]["value"] == "none"
     assert run.processes() == []
 

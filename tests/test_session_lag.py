@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 import time
 from typing import TYPE_CHECKING
 
@@ -148,46 +149,60 @@ def test_a_clear_that_waits_for_two_renders_ends_the_session_only_below_the_wors
     assert failed is ends_unavailable
 
 
-@pytest.mark.parametrize(
-    ("render_seconds", "fails_to_draw", "max_lag_ms", "ended_by"),
-    [
-        (_RENDER_SECONDS, False, _MAX_LAG_MS, "late_frame"),
-        (_CALL_SECONDS, False, _CALL_LAG_MS, "call_timeout"),
-        (0.0, True, _MAX_LAG_MS, "provider_failed"),
-    ],
-    ids=["a-frame-past-the-limit", "a-call-past-the-limit", "the-provider-failing"],
-)
-def test_a_session_ended_unavailable_names_the_path_that_ended_it(
-    render_seconds: float,
-    max_lag_ms: int,
+def test_a_session_ended_unavailable_by_a_late_frame_names_it(
     capsys: pytest.CaptureFixture[str],
-    *,
-    fails_to_draw: bool,
-    ended_by: str,
 ) -> None:
     clock = FakeClock()
-    # Only a frame's lateness runs on the fake clock; a call's timeout is real time.
-    on_fake_clock = ended_by == "late_frame"
-    provider = FakeProvider(
-        render_seconds=render_seconds,
-        fails_to_draw=fails_to_draw,
-        sleep=clock.render if on_fake_clock else time.sleep,
-    )
+    provider = FakeProvider(render_seconds=_RENDER_SECONDS, sleep=clock.render)
 
     with configured("video"):
         played(
             _sentences("a", "b"),
             sentences=2,
             provider=provider,
-            pacing=clock.pacing if on_fake_clock else REAL_TIME,
-            worker=clock.worker() if on_fake_clock else None,
-            max_lag_ms=max_lag_ms,
+            pacing=clock.pacing,
+            worker=clock.worker(),
+            max_lag_ms=_MAX_LAG_MS,
         )
 
     (line,) = written(capsys.readouterr().out, "session.ended")
+    assert line["ended_by"] == "late_frame"
+    assert line["max_behind_ms"] > _MAX_LAG_MS
+
+
+@pytest.mark.parametrize(
+    ("fails_to_draw", "ended_by"),
+    [(False, "call_timeout"), (True, "provider_failed")],
+    ids=["a-call-past-the-limit", "the-provider-failing"],
+)
+def test_a_session_ended_unavailable_by_its_provider_names_the_path(
+    capsys: pytest.CaptureFixture[str],
+    *,
+    fails_to_draw: bool,
+    ended_by: str,
+) -> None:
+    released = threading.Event()
+    # A render that blocks until released is a call that never comes back in time.
+    provider = FakeProvider(
+        render_seconds=1.0,
+        fails_to_draw=fails_to_draw,
+        sleep=lambda _seconds: released.wait(),
+    )
+
+    try:
+        with configured("video"):
+            played(
+                _sentences("a", "b"),
+                sentences=2,
+                provider=provider,
+                pacing=REAL_TIME,
+                max_lag_ms=_CALL_LAG_MS,
+            )
+    finally:
+        released.set()
+
+    (line,) = written(capsys.readouterr().out, "session.ended")
     assert line["ended_by"] == ended_by
-    if ended_by == "late_frame":
-        assert line["max_behind_ms"] > max_lag_ms
 
 
 def test_an_idle_call_that_times_out_is_not_counted_in_the_longest_idle_call(

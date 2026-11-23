@@ -43,7 +43,9 @@ VIDEO_PROVIDER_ROOT=$PWD/providers VIDEO_CARD_MEMORY_MB=7168 \
   `max_idle_call_ms`, the group's thread count, the busy workers per CPU and the
   service's and the provider's run-queue delay over the hold, each its own figure. A
   dry run's hold drives the fake at the card's cost (512x512, 24 frames and 0.6 s a
-  render), so give it a lag above one render.
+  render), so give it a lag above one render. A session that ends early (`late_frame`
+  after a few seconds) is the hold's measured figure in the record (`ended_by`,
+  `max_behind_ms`), not a failed cell: the command still exits 0.
 - A hold runs at the lag the live page runs with (`MAX_LAG_MS` in
   `scripts/watch_live.py`); a smaller lag ends the record within seconds:
 
