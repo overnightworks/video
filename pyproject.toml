@@ -12,7 +12,7 @@ requires-python = ">=3.14"
 dependencies = [
     "aiortc==1.16.0",
     "fastapi==0.164.0",
-    "overnightworks-logline @ git+https://github.com/overnightworks/logline@v0.8.0",
+    "overnightworks-logline @ git+https://github.com/overnightworks/logline@v1.9.0",
     "overnightworks-video-client",
     "overnightworks-video-provider-contract",
     "overnightworks-webauth @ git+https://github.com/overnightworks/webauth@v0.42.0",
