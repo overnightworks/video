@@ -139,6 +139,21 @@ def test_a_refused_upgrade_writes_a_refused_session_line_with_its_code(
     assert (line["outcome"], line["reason"]) == (Outcome.REFUSED, "invalid_request")
 
 
+def test_a_client_leaving_before_its_update_still_writes_one_session_line(
+    started: Callable[..., Runtime],
+    wire: Callable[[Runtime], TestClient],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    client = wire(started())
+
+    with configured("video"), connect(client) as session:
+        receive(session)
+        session.close()
+
+    (line,) = _written(capsys, "session.ended")
+    assert line["trace_id"] is not None
+
+
 def test_a_session_ended_by_the_client_s_fault_is_refused_and_by_the_provider_failed(
     started: Callable[..., Runtime],
     wire: Callable[[Runtime], TestClient],

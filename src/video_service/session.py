@@ -235,6 +235,7 @@ class Session:
         self._drawn = asyncio.Event()
         self._fed_generation: int | None = None
         self._sentence_count = 0
+        self._step: StepTimer | None = None
         self._media = Media(place.video, place.limits.max_viewers, place.peers)
         self.opener = opener
 
@@ -252,13 +253,10 @@ class Session:
         """
         try:
             await self._socket.accept()
-            with (
-                contextlib.ExitStack() as trace,
-                StepTimer(
-                    "session.ended", logger, look=self._look, provider=self._provider
-                ) as step,
-            ):
-                end = await self._serve(trace)
+            accepted_at = time.perf_counter()
+            with contextlib.ExitStack() as scope:
+                end = await self._serve(scope, accepted_at)
+                step = self._begin_step(scope, accepted_at)
                 if end.close_code is None:
                     # The client has left, so the session has ended: it counts open
                     # no more while its viewers wind down.
@@ -288,7 +286,25 @@ class Session:
         except TimeoutError:
             logger.warning("provider_session.close_stuck")
 
-    async def _serve(self, trace: contextlib.ExitStack) -> _End:
+    def _begin_step(self, scope: contextlib.ExitStack, accepted_at: float) -> StepTimer:
+        """Open the session's step on `scope` once, under the trace entered so far.
+
+        A step's line carries the trace it was opened in, so it opens after the
+        update's trace is entered, or when the session ends without an update.
+        """
+        if self._step is None:
+            self._step = scope.enter_context(
+                StepTimer(
+                    "session.ended",
+                    logger,
+                    started_at=accepted_at,
+                    look=self._look,
+                    provider=self._provider,
+                )
+            )
+        return self._step
+
+    async def _serve(self, trace: contextlib.ExitStack, accepted_at: float) -> _End:
         try:
             await self._send(
                 SessionCreated(
@@ -309,6 +325,8 @@ class Session:
             return _End(_NORMAL_CLOSE, failure)
         except ProviderFailedError:
             return _End(_NORMAL_CLOSE, _FailureError(RefusalCode.UNAVAILABLE))
+        finally:
+            self._begin_step(trace, accepted_at)
 
     async def _finish(self, step: StepTimer, end: _End) -> None:
         failure = end.failure
