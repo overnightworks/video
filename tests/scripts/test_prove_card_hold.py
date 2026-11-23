@@ -61,7 +61,13 @@ def test_a_dry_run_hold_records_every_figure_and_leaves_no_busy_worker(
 
 @pytest.mark.parametrize(
     "arguments",
-    [["--hold-seconds", "0"], ["--cpus", "9999"], ["--busy-workers", "-1"]],
+    [
+        ["--hold-seconds", "0"],
+        ["--cpus", "9999"],
+        ["--busy-workers", "-1"],
+        ["--busy-workers", "2"],
+    ],
+    ids=["no-seconds", "no-such-cpu", "negative-workers", "workers-without-cpus"],
 )
 def test_a_hold_setting_that_is_refused_ends_the_command_before_any_service(
     run: Run, arguments: list[str]

@@ -38,8 +38,8 @@ VIDEO_PROVIDER_ROOT=$PWD/providers VIDEO_CARD_MEMORY_MB=7168 \
   `hold`); the default leaves out `hold`.
 - `hold` runs one session alternating speech and idle for `--hold-seconds` (default 300)
   in a group of its own at the largest `--lag-ms`. `--cpus` (such as `0,1` or `0-1`)
-  pins the group to those CPUs and `--busy-workers` starts that many spinning processes
-  on them, all ended with the group. It records fps, `ended_by`, `max_behind_ms`,
+  pins the group to those CPUs and `--busy-workers` (which needs `--cpus`) starts that
+  many spinning processes on them, all ended with the group. It records fps, `ended_by`, `max_behind_ms`,
   `max_idle_call_ms`, the group's thread count, the busy workers per CPU and the
   service's and the provider's run-queue delay over the hold, each its own figure. A
   dry run's hold drives the fake at the card's cost (512x512, 24 frames and 0.6 s a

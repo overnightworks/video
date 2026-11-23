@@ -210,6 +210,8 @@ def _arguments(argv: Sequence[str]) -> argparse.Namespace:
     )
     parser.add_argument("--fragment", type=Path, help=argparse.SUPPRESS)
     arguments = parser.parse_args(argv)
+    if arguments.busy_workers and not arguments.cpus:
+        parser.error("--busy-workers needs --cpus, or the workers spin on every CPU")
     arguments.look_image_bytes = None
     arguments.lag_ms = _lags(arguments.lag_ms)
     return arguments
