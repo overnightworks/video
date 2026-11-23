@@ -96,5 +96,6 @@ jobs:
 
       - name: Run the image test
         if: steps.case.outputs.work == 'true'
-        # pytest-workers: one image, and the cases start containers one after the other # pytest-random: the cases run one after another against one real image
+        # pytest-workers: one image, and the cases start containers one after the other
+        # pytest-random: the cases run one after another against one real image
         run: uv run --locked --no-build pytest -q -m image tests/test_image.py
