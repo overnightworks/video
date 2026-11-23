@@ -1,0 +1,7 @@
+claim_id = "7b274538f4bc4f0ebc7c7eaea01ac499"
+agent = "Claude 4ce2c9a4-6d87-4ed3-86f8-feb9b2cfb3a5"
+role = "builder"
+base = "3c6591ebe9358afa4626dc3211aa6f7a89b7fa64"
+branch = "claude/issue-110-card-proof-reads-finished-log-lines"
+scope = ["scripts/card_drive.py", "tests/scripts/test_card_drive.py"]
+opened_commit = "b88be7e0da9f054ae7fd970536c56b65e5e40048"
