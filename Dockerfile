@@ -85,8 +85,9 @@ COPY --from=provider-environment /opt/flashhead-nvidia /opt/providers/flashhead-
 COPY --from=provider-environment /opt/providers/flashhead-lite/.venv /opt/providers/flashhead-lite/.venv
 COPY --from=service-environment /opt/venv /opt/venv
 # The root is read-only at run time: the home and temporary directories are /tmp, where
-# the compilers write their caches. The deployment sets the rest: the provider, the
-# card memory cap, the caller file and the host.
+# the compilers write their caches and load what they build, so the deployment mounts
+# /tmp executable. The deployment sets the rest: the provider, the card memory cap, the
+# caller file and the host.
 ENV VIDEO_PROVIDER_ROOT=/opt/providers \
     HOME=/tmp \
     TMPDIR=/tmp

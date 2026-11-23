@@ -1,7 +1,8 @@
 """Starting the built image as the deployment starts it, for the image tests.
 
-Every container runs with a read-only root, `/tmp` writable, no capability, no new
-privilege and no network; `container` removes what it starts when its block ends.
+Every container runs with a read-only root, `/tmp` writable and executable, no
+capability, no new privilege and no network; `container` removes what it starts when
+its block ends.
 """
 
 from __future__ import annotations
@@ -28,7 +29,7 @@ if TYPE_CHECKING:
 RUN_AS_THE_DEPLOYMENT: Final = (
     "--read-only",
     "--tmpfs",
-    "/tmp",  # noqa: S108 - the container's own memory-backed directory
+    "/tmp:exec",  # noqa: S108 - the container's own memory-backed directory
     "--cap-drop",
     "ALL",
     "--security-opt",

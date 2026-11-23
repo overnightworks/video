@@ -75,7 +75,7 @@ card's cost): only a run on the card shows timing, memory and the picture.
 ## Run the released image on the card
 
 Proves the image `VIDEO_IMAGE` names reaches READY on the card as the deployment runs it
-(read-only root, `/tmp` writable, no network), and that a cap too small for the model ends
+(read-only root, `/tmp` writable and executable, no network), and that a cap too small for the model ends
 in the worker's `provider.failed`. It needs `docker` (without sudo, with the card's runtime),
 a gh login with the `read:packages` scope, and the operator's free card: the run refuses
 before any container starts when the card's free memory minus the cap is below the floor.

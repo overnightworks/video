@@ -2,7 +2,8 @@
 
 `VIDEO_IMAGE` names the image under test; `-m image` selects this module, which the
 default run leaves out. Every container is started as the deployment starts one:
-a read-only root, `/tmp` writable, no capability, no new privilege, no network.
+a read-only root, `/tmp` writable and executable, no capability, no new privilege,
+no network.
 """
 
 from __future__ import annotations
