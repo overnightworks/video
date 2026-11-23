@@ -3,17 +3,25 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Final, NamedTuple
 
+from card_contention import (
+    busy_workers,
+    run_queue_delay_seconds,
+    thread_count,
+    waits,
+)
 from card_drive import (
     Audio,
     SessionEndedError,
     Window,
     opened_session,
     timed,
+    worker_pids,
 )
 from card_identity import LOOK_NAMES
 from card_record import (
@@ -46,6 +54,14 @@ FIVE_VIEWERS: Final = 5
 # loud frame ends well inside the sentence's playing time.
 CLEAR_WAIT_SHARE: Final = 0.5
 _SENTENCE_COLUMNS: Final = ("audio_ms", "frame_count", "late_frame_count", "outcome")
+HOLD_SECONDS: Final = 300.0
+
+
+class Hold(NamedTuple):
+    """What the hold cell runs: how long, and beside how many busy workers."""
+
+    seconds: float
+    busy_workers: int
 
 
 @dataclass(frozen=True)
@@ -57,6 +73,7 @@ class Drive:
     audio: Audio
     dry_run: bool
     record: Path
+    hold: Hold
     written: list[Path] = field(default_factory=list)
 
     def beside(self, suffix: str) -> Path:
@@ -253,6 +270,63 @@ async def _lag(drive: Drive) -> object:
     return {"starved": value_of(starved), "sentences": spoken}
 
 
+async def _speaking_and_idle(drive: Drive, session: Session) -> None:
+    """Alternate a sentence and idle for the hold's seconds.
+
+    A session the service ends `unavailable` ends the hold at that time.
+    """
+    begun = time.monotonic()
+    try:
+        while time.monotonic() - begun < drive.hold.seconds:
+            await session.speak("held", drive.audio)
+            await session.until(OutputAudioBufferStopped)
+            await asyncio.sleep(IDLE_SECONDS)
+    except SessionEndedError as ended:
+        if ended.code != RefusalCode.UNAVAILABLE:
+            raise
+
+
+async def _hold(drive: Drive) -> object:
+    """One session alternating speech and idle, beside busy workers on the group's CPUs.
+
+    The group's CPU set is the one its process was pinned to; the busy workers, the
+    service and its provider all run on it. The service's line gives how the session
+    ended and how far it fell behind.
+    """
+    cpus = sorted(os.sched_getaffinity(0))
+    service_pids = [drive.service.process.pid]
+    with busy_workers(drive.hold.busy_workers):
+        async with (
+            drive.session(LOOK_NAMES[0]) as session,
+            attached(drive.service, drive.identity, session.created) as viewer,
+        ):
+            frame_rate = session.created.session.video.frame_rate
+            provider_pids = worker_pids(service_pids[0])
+            pids = [*service_pids, *provider_pids]
+            service_before, provider_before = waits(service_pids), waits(provider_pids)
+            window, _ = await timed(drive.service, _speaking_and_idle(drive, session))
+            service_delay = run_queue_delay_seconds(service_before, waits(service_pids))
+            provider_delay = run_queue_delay_seconds(
+                provider_before, waits(provider_pids)
+            )
+            threads = thread_count(pids)
+            frames = viewer.video_frames_in(window)
+    line = await drive.service.line("session.ended")
+    return {
+        "held_seconds": value_of(window.seconds),
+        "frame_rate": value_of(frame_rate),
+        "fps": value_of(frames / window.seconds),
+        "ended_by": value_of(line.get("ended_by", "none")),
+        "max_behind_ms": value_of(line["max_behind_ms"]),
+        "max_idle_call_ms": value_of(line["max_idle_call_ms"]),
+        "threads": value_of(threads),
+        "cpus": value_of(cpus),
+        "busy_workers_per_cpu": value_of(drive.hold.busy_workers / len(cpus)),
+        "service_run_queue_delay_seconds": value_of(service_delay),
+        "provider_run_queue_delay_seconds": value_of(provider_delay),
+    }
+
+
 # A group is one service; each value of the lag sweep runs in a service of its own.
 GROUPS: Final = {
     "wire": {
@@ -263,5 +337,8 @@ GROUPS: Final = {
         "viewers": _viewers,
     },
     "lag": {"lag": _lag},
+    "hold": {"hold": _hold},
 }
 CELLS: Final = tuple(cell for group in GROUPS.values() for cell in group)
+# The hold runs for minutes, so a run names it.
+DEFAULT_CELLS: Final = tuple(cell for cell in CELLS if cell != "hold")

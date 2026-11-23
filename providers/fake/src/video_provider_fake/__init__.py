@@ -28,8 +28,7 @@ from video_provider_contract import (
 if TYPE_CHECKING:
     from collections.abc import Callable, Collection, Iterator
 
-_WIDTH = 256
-_HEIGHT = 256
+_DEFAULT_SIZE = 256
 _BYTES_PER_PIXEL = 3
 _BYTES_PER_SAMPLE = 2
 _LOUD_SAMPLE = 8192
@@ -45,6 +44,7 @@ class FakeSession:
         *,
         idle_render_seconds: float = 0.0,
         chunk_frames: int = 1,
+        size: tuple[int, int] = (_DEFAULT_SIZE, _DEFAULT_SIZE),
         fails_to_draw: bool,
         finish_gate: threading.Event | None,
         sleep: Callable[[float], None],
@@ -66,8 +66,9 @@ class FakeSession:
         self._fails_to_draw = fails_to_draw
         self._finish_gate = finish_gate
         self._sleep = sleep
-        self._dark = Frame(bytes(_WIDTH * _HEIGHT * _BYTES_PER_PIXEL))
-        self._bright = Frame(b"\xff" * (_WIDTH * _HEIGHT * _BYTES_PER_PIXEL))
+        picture_bytes = size[0] * size[1] * _BYTES_PER_PIXEL
+        self._dark = Frame(bytes(picture_bytes))
+        self._bright = Frame(b"\xff" * picture_bytes)
         self._audio = bytearray()
         self._samples = 0
         self._taken = 0
@@ -160,6 +161,8 @@ class FakeProvider:
         render_seconds: float = 0.0,
         idle_render_seconds: float = 0.0,
         chunk_frames: int = 1,
+        width: int = _DEFAULT_SIZE,
+        height: int = _DEFAULT_SIZE,
         fails_to_open: bool = False,
         fails_to_draw: bool = False,
         finish_gate: threading.Event | None = None,
@@ -176,6 +179,7 @@ class FakeProvider:
         self._render_seconds = render_seconds
         self._idle_render_seconds = idle_render_seconds
         self._chunk_frames = chunk_frames
+        self._size = (width, height)
         self._fails_to_open = fails_to_open
         self._fails_to_draw = fails_to_draw
         self._finish_gate = finish_gate
@@ -192,7 +196,7 @@ class FakeProvider:
         return ProviderInfo(
             plays=(ProviderVerb.SPEAK, ProviderVerb.CLEAR),
             video=ProviderVideoFormat(
-                width=_WIDTH, height=_HEIGHT, frame_rate=self._frame_rate
+                width=self._size[0], height=self._size[1], frame_rate=self._frame_rate
             ),
         )
 
@@ -214,6 +218,7 @@ class FakeProvider:
             self._render_seconds,
             idle_render_seconds=self._idle_render_seconds,
             chunk_frames=self._chunk_frames,
+            size=self._size,
             fails_to_draw=self._fails_to_draw,
             finish_gate=self._finish_gate,
             sleep=self._sleep,

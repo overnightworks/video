@@ -29,13 +29,18 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Final, NamedTuple
 
 from pydantic import ValidationError
+from video_provider_fake import worker as fake_worker
 
 from card_cells import (
     CELLS,
+    DEFAULT_CELLS,
     GROUPS,
+    HOLD_SECONDS,
     Drive,
+    Hold,
     beside,
 )
+from card_contention import cpu_set
 from card_drive import (
     ENVIRONMENT_PREFIX,
     FAKE_PROVIDER,
@@ -86,7 +91,8 @@ if TYPE_CHECKING:
 
     from pydantic_settings import PydanticBaseSettingsSource
 
-    from card_drive import Service
+    from card_drive import Audio, Service
+    from card_identity import Identity
 
 
 class GroupOutcome(StrEnum):
@@ -111,6 +117,14 @@ def _group_log(record: Path, group: str) -> Path:
 
 
 _PROVIDER_FIELDS: Final = ("provider_root", "card_memory_mb")
+# The `fake` provider at the card's cost: its picture, frames and seconds a render.
+_CARD_COST: Final = {
+    fake_worker.WIDTH: "512",
+    fake_worker.HEIGHT: "512",
+    fake_worker.CHUNK_FRAMES: "24",
+    fake_worker.RENDER_SECONDS: "0.6",
+    fake_worker.IDLE_RENDER_SECONDS: "0.6",
+}
 # The lag the service runs at when the command names none.
 _DEFAULT_LAG_MS: Final = Settings.model_fields["max_lag_ms"].default
 
@@ -128,6 +142,27 @@ def _non_negative(text: str) -> int:
     return number
 
 
+def _positive(text: str) -> float:
+    """A number of seconds above 0, as an argument."""
+    try:
+        number = float(text)
+    except ValueError:
+        message = f"{text!r} is not a number"
+        raise argparse.ArgumentTypeError(message) from None
+    if number <= 0:
+        message = f"{number} is not above 0"
+        raise argparse.ArgumentTypeError(message)
+    return number
+
+
+def _cpus(text: str) -> frozenset[int]:
+    """The CPUs the hold's group is pinned to, as an argument."""
+    try:
+        return cpu_set(text)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(str(error)) from None
+
+
 def _arguments(argv: Sequence[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--record", type=Path, required=True, help="the record's path")
@@ -135,7 +170,9 @@ def _arguments(argv: Sequence[str]) -> argparse.Namespace:
     parser.add_argument(
         "--dry-run", action="store_true", help="drive the fake provider"
     )
-    parser.add_argument("--cells", nargs="+", choices=CELLS, default=list(CELLS))
+    parser.add_argument(
+        "--cells", nargs="+", choices=CELLS, default=list(DEFAULT_CELLS)
+    )
     parser.add_argument(
         "--memory-floor-mb",
         type=_non_negative,
@@ -150,12 +187,31 @@ def _arguments(argv: Sequence[str]) -> argparse.Namespace:
         help="the lags in ms the lag cell sweeps; the wire group runs at the largest",
     )
     parser.add_argument(
+        "--hold-seconds",
+        type=_positive,
+        default=HOLD_SECONDS,
+        help="how long the hold cell's one session runs",
+    )
+    parser.add_argument(
+        "--cpus",
+        type=_cpus,
+        help="the CPUs the hold's group is pinned to, such as 0,1 or 0-1",
+    )
+    parser.add_argument(
+        "--busy-workers",
+        type=_non_negative,
+        default=0,
+        help="the processes that spin on the hold's CPUs beside its group",
+    )
+    parser.add_argument(
         "--look-image",
         type=Path,
         help="a face image the service takes, served as the look alpha",
     )
     parser.add_argument("--fragment", type=Path, help=argparse.SUPPRESS)
     arguments = parser.parse_args(argv)
+    if arguments.busy_workers and not arguments.cpus:
+        parser.error("--busy-workers needs --cpus, or the workers spin on every CPU")
     arguments.look_image_bytes = None
     arguments.lag_ms = _lags(arguments.lag_ms)
     return arguments
@@ -271,10 +327,13 @@ def card_provider(environ: Mapping[str, str]) -> CardProvider:
     return CardProvider(environment, settings.card_memory_mb)
 
 
-def _provider_of(arguments: argparse.Namespace) -> Mapping[str, str]:
-    """The `VIDEO_` variables that choose the provider the service runs."""
+def _provider_of(arguments: argparse.Namespace, group: _Group) -> Mapping[str, str]:
+    """The variables that choose the provider the service runs and set the fake.
+
+    A dry run's hold drives the fake at the card's cost.
+    """
     if arguments.dry_run:
-        return FAKE_PROVIDER
+        return FAKE_PROVIDER | (_CARD_COST if group.kind == "hold" else {})
     return card_provider(os.environ).environment
 
 
@@ -297,6 +356,8 @@ def _groups(arguments: argparse.Namespace) -> list[_Group]:
     ]
     if set(GROUPS["wire"]) & set(arguments.cells):
         groups.append(_Group("wire", "wire", lags[-1]))
+    if "hold" in arguments.cells:
+        groups.append(_Group("hold", "hold", lags[-1]))
     return groups
 
 
@@ -334,6 +395,23 @@ async def _drive_cells(
     return GroupOutcome.DONE
 
 
+def _drive_of(
+    service: Service,
+    identity: Identity,
+    audio: Audio,
+    arguments: argparse.Namespace,
+) -> Drive:
+    """What a group's cells drive: the service, the audio and the hold's settings."""
+    return Drive(
+        service,
+        identity,
+        audio,
+        dry_run=arguments.dry_run,
+        record=arguments.record,
+        hold=Hold(arguments.hold_seconds, arguments.busy_workers),
+    )
+
+
 def _run_group(
     group: _Group,
     arguments: argparse.Namespace,
@@ -362,12 +440,10 @@ def _run_group(
             max_lag_ms=group.lag_ms,
             compiler_home=compiler_home,
             service_pid_file=service_pid_file(arguments.fragment),
-            provider=_provider_of(arguments),
+            provider=_provider_of(arguments, group),
         ) as service,
     ):
-        drive = Drive(
-            service, identity, audio, dry_run=arguments.dry_run, record=arguments.record
-        )
+        drive = _drive_of(service, identity, audio, arguments)
         figures = service_figures(service, log, group.lag_ms, dry_run=arguments.dry_run)
 
         def save(outcome: GroupOutcome) -> None:
@@ -409,6 +485,9 @@ def _compiler_home_at_start(run_directory: Path) -> CompilerHome:
 def _child(name: str, arguments: argparse.Namespace) -> int:
     """Run one group where `probe-run` started it; non-zero when a cell failed."""
     identity_directory = begun_child(arguments.fragment)
+    if arguments.cpus and name == "hold":
+        # Inherited by the service, its provider and the busy workers started below.
+        os.sched_setaffinity(0, arguments.cpus)
     (group,) = (group for group in _groups(arguments) if group.name == name)
     outcome = _run_group(
         group, arguments, identity_directory, _compiler_home(arguments.fragment.parent)
@@ -436,6 +515,15 @@ def _under_probe_run(
         *_chosen(group, arguments),
         "--lag-ms",
         str(group.lag_ms),
+        "--hold-seconds",
+        str(arguments.hold_seconds),
+        "--busy-workers",
+        str(arguments.busy_workers),
+        *(
+            ["--cpus", ",".join(map(str, sorted(arguments.cpus)))]
+            if arguments.cpus
+            else []
+        ),
         *(["--dry-run"] if arguments.dry_run else []),
         *(["--look-image", str(arguments.look_image)] if arguments.look_image else []),
     ]

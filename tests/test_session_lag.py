@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import threading
 from typing import TYPE_CHECKING
 
 import pytest
+from logline.testing import configured
 from video_provider_fake import FakeProvider
 
 from support.chunk_support import (
@@ -18,12 +20,14 @@ from support.scripted_session import played
 from support.session_support import (
     pcm,
     sentence_events,
+    written,
 )
 from video_client.session_wire import (
     ErrorEvent,
     OutputAudioBufferStopped,
 )
 from video_client.wire import RefusalCode
+from video_service.runtime import REAL_TIME
 
 if TYPE_CHECKING:
     from support.scripted_socket import ScriptedSocket
@@ -34,6 +38,7 @@ _MAX_LAG_MS = 150
 _PARTIAL_FRAME_MS = 50
 _END_DURING_FRAME_SECONDS = 0.09
 _SLOW_CLIENT_MAX_LAG_MS = 1000
+_CALL_LAG_MS = 100
 _CLEAR = {"type": "output_audio_buffer.clear"}
 _CHUNK_AUDIO_MS = 1920
 # The audio arrives while the provider draws no chunk and between two frames of
@@ -140,3 +145,107 @@ def test_a_clear_that_waits_for_two_renders_ends_the_session_only_below_the_wors
 
     failed = isinstance(events[-1], ErrorEvent)
     assert failed is ends_unavailable
+
+
+def test_a_session_ended_unavailable_by_a_late_frame_names_it(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    clock = FakeClock()
+    provider = FakeProvider(render_seconds=_RENDER_SECONDS, sleep=clock.render)
+
+    with configured("video"):
+        played(
+            _sentences("a", "b"),
+            sentences=2,
+            provider=provider,
+            pacing=clock.pacing,
+            worker=clock.worker(),
+            max_lag_ms=_MAX_LAG_MS,
+        )
+
+    (line,) = written(capsys.readouterr().out, "session.ended")
+    assert line["ended_by"] == "late_frame"
+    assert line["max_behind_ms"] > _MAX_LAG_MS
+
+
+@pytest.mark.parametrize(
+    ("fails_to_draw", "ended_by"),
+    [(False, "call_timeout"), (True, "provider_failed")],
+    ids=["a-call-past-the-limit", "the-provider-failing"],
+)
+def test_a_session_ended_unavailable_by_its_provider_names_the_path(
+    capsys: pytest.CaptureFixture[str],
+    *,
+    fails_to_draw: bool,
+    ended_by: str,
+) -> None:
+    released = threading.Event()
+    # A render that blocks until released is a call that never comes back in time.
+    provider = FakeProvider(
+        render_seconds=1.0,
+        fails_to_draw=fails_to_draw,
+        sleep=lambda _seconds: released.wait(),
+    )
+
+    try:
+        with configured("video"):
+            played(
+                _sentences("a", "b"),
+                sentences=2,
+                provider=provider,
+                pacing=REAL_TIME,
+                max_lag_ms=_CALL_LAG_MS,
+            )
+    finally:
+        released.set()
+
+    (line,) = written(capsys.readouterr().out, "session.ended")
+    assert line["ended_by"] == ended_by
+
+
+def test_an_idle_call_that_times_out_is_not_counted_in_the_longest_idle_call(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    released = threading.Event()
+    # An idle render that blocks until released is a call that never comes back in time.
+    provider = FakeProvider(
+        idle_render_seconds=1.0,
+        sleep=lambda _seconds: released.wait(),
+    )
+
+    try:
+        with configured("video"):
+            played(
+                [],
+                sentences=0,
+                provider=provider,
+                pacing=REAL_TIME,
+                max_lag_ms=_CALL_LAG_MS,
+            )
+    finally:
+        released.set()
+
+    (line,) = written(capsys.readouterr().out, "session.ended")
+    assert line["ended_by"] == "call_timeout"
+    assert line["max_idle_call_ms"] == 0
+
+
+def test_a_late_frame_within_the_limit_is_logged_as_the_most_a_frame_fell_behind(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    clock = FakeClock()
+    provider = FakeProvider(render_seconds=_RENDER_SECONDS, sleep=clock.render)
+
+    with configured("video"):
+        played(
+            _sentences("a", "b"),
+            sentences=2,
+            provider=provider,
+            pacing=clock.pacing,
+            worker=clock.worker(),
+            max_lag_ms=_SLOW_CLIENT_MAX_LAG_MS,
+        )
+
+    (line,) = written(capsys.readouterr().out, "session.ended")
+    assert "ended_by" not in line
+    assert 0 < line["max_behind_ms"] <= _SLOW_CLIENT_MAX_LAG_MS

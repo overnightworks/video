@@ -19,6 +19,7 @@ import logging
 import time
 from collections import deque
 from dataclasses import dataclass, field
+from enum import StrEnum
 from functools import partial
 from typing import TYPE_CHECKING, Final, Never, cast
 
@@ -69,6 +70,14 @@ _PARAM_SENTENCE: Final = "sentence"
 _PARAM_AUDIO: Final = "audio"
 
 
+class EndedBy(StrEnum):
+    """The path that ended a session `unavailable`, named in its line."""
+
+    LATE_FRAME = "late_frame"
+    CALL_TIMEOUT = "call_timeout"
+    PROVIDER_FAILED = "provider_failed"
+
+
 class _FailureError(Exception):
     """The session ends with an `error` event."""
 
@@ -82,6 +91,14 @@ class _FailureError(Exception):
         self.code = code
         self.param = param
         self.event_id = event_id
+
+
+class _UnavailableError(_FailureError):
+    """The session ends `unavailable`, by the path it names."""
+
+    def __init__(self, ended_by: EndedBy) -> None:
+        super().__init__(RefusalCode.UNAVAILABLE)
+        self.ended_by = ended_by
 
 
 @dataclass(frozen=True, slots=True)
@@ -235,6 +252,8 @@ class Session:
         self._drawn = asyncio.Event()
         self._fed_generation: int | None = None
         self._sentence_count = 0
+        self._max_behind = 0.0
+        self._max_idle_call = 0.0
         self._media = Media(place.video, place.limits.max_viewers, place.peers)
         self.opener = opener
 
@@ -313,7 +332,7 @@ class Session:
         except _FailureError as failure:
             end = _End(_NORMAL_CLOSE, failure)
         except ProviderFailedError:
-            end = _End(_NORMAL_CLOSE, _FailureError(RefusalCode.UNAVAILABLE))
+            end = _End(_NORMAL_CLOSE, _UnavailableError(EndedBy.PROVIDER_FAILED))
         except BaseException:
             self._begin_step(scope, accepted_at)
             raise
@@ -338,11 +357,17 @@ class Session:
 
     async def _finish(self, step: StepTimer, end: _End) -> None:
         failure = end.failure
-        step.add(sentence_count=self._sentence_count, viewer_count=self._media.admitted)
+        step.add(
+            sentence_count=self._sentence_count,
+            viewer_count=self._media.admitted,
+            max_behind_ms=_milliseconds(self._max_behind),
+            max_idle_call_ms=_milliseconds(self._max_idle_call),
+        )
         if end.close_code is not None:
             step.add(close_code=end.close_code)
         if failure is not None:
-            if failure.code is RefusalCode.UNAVAILABLE:
+            if isinstance(failure, _UnavailableError):
+                step.add(ended_by=failure.ended_by.value)
                 step.fail(failure.code.value)
             else:
                 step.refuse(failure.code.value)
@@ -491,10 +516,23 @@ class Session:
 
         Its render is no lag, which the call's own bound holds to `VIDEO_MAX_LAG_MS`.
         """
-        frame = await self._call(self._place.session.idle_frame)
+        frame = await self._idle_frame()
         self._schedule.input_arrived(self._place.pacing.now())
         await self._hold_to_due()
         self._media.send_idle(frame)
+
+    async def _idle_frame(self) -> Frame:
+        """Call the provider for a frame of the face at rest, timing the call.
+
+        Most idle calls are served from frames already drawn, so the longest one
+        is the render that fell on the session.
+        """
+        started = self._place.pacing.now()
+        frame = await self._call(self._place.session.idle_frame)
+        self._max_idle_call = max(
+            self._max_idle_call, self._place.pacing.now() - started
+        )
+        return frame
 
     async def _wait(self) -> None:
         await self._woken.wait()
@@ -542,7 +580,7 @@ class Session:
 
     async def _draw_idle(self) -> None:
         generation, arrived_at = self._generation, self._input_at
-        frame = await self._call(self._place.session.idle_frame)
+        frame = await self._idle_frame()
         if self._is_current(generation):
             self._buffer.append(_Drawn(generation, frame, None, arrived_at))
             self._drawn.set()
@@ -601,8 +639,9 @@ class Session:
     async def _hold_to_due(self) -> bool:
         """Hold the frame until it is due; whether it was late, too late fails."""
         lateness = self._schedule.release(self._place.pacing.now())
+        self._max_behind = max(self._max_behind, lateness)
         if lateness > self._lag_limit:
-            raise _FailureError(RefusalCode.UNAVAILABLE)
+            raise _UnavailableError(EndedBy.LATE_FRAME)
         if lateness > 0:
             return True
         await self._place.pacing.sleep(-lateness)
@@ -678,7 +717,11 @@ class Session:
             async with asyncio.timeout(self._lag_limit):
                 return await asyncio.wrap_future(self._place.worker.submit(work))
         except TimeoutError:
-            raise _FailureError(RefusalCode.UNAVAILABLE) from None
+            raise _UnavailableError(EndedBy.CALL_TIMEOUT) from None
+
+
+def _milliseconds(seconds: float) -> int:
+    return round(seconds * _MS_PER_SECOND)
 
 
 def _drawn_by(draw: Callable[..., Iterable[Frame]], *arguments: object) -> list[Frame]:

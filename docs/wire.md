@@ -144,7 +144,10 @@ and is not a lag, while audio already queued keeps the lag the frames before it 
 up, and the time a client takes to end a sentence is none either. A provider call that has not returned
 within `VIDEO_MAX_LAG_MS` ends the session with `unavailable` too. A client that disconnects gets no event.
 
-**Trace.** The session's lines (`session.ended`) are written in the trace of
+**Trace.** The session's lines (`session.ended`, with `max_behind_ms`, the most a frame
+fell behind its clock and 0 before the clock starts, `max_idle_call_ms`, the longest idle
+provider call that returned, and for an `unavailable` end `ended_by`, one of
+`late_frame`, `call_timeout` and `provider_failed`) are written in the trace of
 `session.update`'s `traceparent`, and a sentence's line (`sentence.ended`, with
 `audio_ms`, `frame_count`, `late_frame_count` and `first_output_ms`, the time from
 its first audio to its first frame) in the trace of its `sentence.start`'s

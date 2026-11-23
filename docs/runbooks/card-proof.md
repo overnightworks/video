@@ -34,7 +34,26 @@ VIDEO_PROVIDER_ROOT=$PWD/providers VIDEO_CARD_MEMORY_MB=7168 \
 
 - `--look-image` serves a head-and-shoulders, centred, square PNG, JPEG or WebP as the
   look `alpha`; without it the cells use a stand-in square.
-- `--cells` picks cells (`sentences`, `clear`, `looks`, `viewer`, `viewers`, `lag`).
+- `--cells` picks cells (`sentences`, `clear`, `looks`, `viewer`, `viewers`, `lag`,
+  `hold`); the default leaves out `hold`.
+- `hold` runs one session alternating speech and idle for `--hold-seconds` (default 300)
+  in a group of its own at the largest `--lag-ms`. `--cpus` (such as `0,1` or `0-1`)
+  pins the group to those CPUs and `--busy-workers` (which needs `--cpus`) starts that
+  many spinning processes on them, all ended with the group. It records fps, `ended_by`, `max_behind_ms`,
+  `max_idle_call_ms`, the group's thread count, the busy workers per CPU and the
+  service's and the provider's run-queue delay over the hold, each its own figure. A
+  dry run's hold drives the fake at the card's cost (512x512, 24 frames and 0.6 s a
+  render), so give it a lag above one render. A session that ends early (`late_frame`
+  after a few seconds) is the hold's measured figure in the record (`ended_by`,
+  `max_behind_ms`), not a failed cell: the command still exits 0.
+- A hold runs at the lag the live page runs with (`MAX_LAG_MS` in
+  `scripts/watch_live.py`); a smaller lag ends the record within seconds:
+
+  ```sh
+  VIDEO_PROVIDER_ROOT=$PWD/providers VIDEO_CARD_MEMORY_MB=7168 \
+    uv run --locked python scripts/prove_card.py --audio speech.wav --record record.json \
+    --cells hold --lag-ms 2400
+  ```
 - `--memory-floor-mb` is the free card memory the run keeps beside the cap.
 - The command ends with one line naming the argument or setting it refuses, before any
   service starts.
@@ -50,8 +69,8 @@ that was not measured marked `not_measured` and its reason.
   video, and contact sheets of it; judge the picture by eye.
 - `record.<group>.log`: each group's service log.
 
-A dry run's figures are the fake's (a 256x256 picture on any host): only a run on the
-card shows timing, memory and the picture.
+A dry run's figures are the fake's (a 256x256 picture on any host, the hold's at the
+card's cost): only a run on the card shows timing, memory and the picture.
 
 ## Run the released image on the card
 
