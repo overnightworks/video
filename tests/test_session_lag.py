@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import threading
-import time
 from typing import TYPE_CHECKING
 
 import pytest
@@ -39,7 +38,6 @@ _MAX_LAG_MS = 150
 _PARTIAL_FRAME_MS = 50
 _END_DURING_FRAME_SECONDS = 0.09
 _SLOW_CLIENT_MAX_LAG_MS = 1000
-_CALL_SECONDS = 0.3
 _CALL_LAG_MS = 100
 _CLEAR = {"type": "output_audio_buffer.clear"}
 _CHUNK_AUDIO_MS = 1920
@@ -208,17 +206,24 @@ def test_a_session_ended_unavailable_by_its_provider_names_the_path(
 def test_an_idle_call_that_times_out_is_not_counted_in_the_longest_idle_call(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    # A call's timeout is real time, so the call sleeps in real time too.
-    provider = FakeProvider(idle_render_seconds=_CALL_SECONDS, sleep=time.sleep)
+    released = threading.Event()
+    # An idle render that blocks until released is a call that never comes back in time.
+    provider = FakeProvider(
+        idle_render_seconds=1.0,
+        sleep=lambda _seconds: released.wait(),
+    )
 
-    with configured("video"):
-        played(
-            [],
-            sentences=0,
-            provider=provider,
-            pacing=REAL_TIME,
-            max_lag_ms=_CALL_LAG_MS,
-        )
+    try:
+        with configured("video"):
+            played(
+                [],
+                sentences=0,
+                provider=provider,
+                pacing=REAL_TIME,
+                max_lag_ms=_CALL_LAG_MS,
+            )
+    finally:
+        released.set()
 
     (line,) = written(capsys.readouterr().out, "session.ended")
     assert line["ended_by"] == "call_timeout"
