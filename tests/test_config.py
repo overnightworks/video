@@ -283,13 +283,13 @@ def test_the_caller_file_names_the_issuer_and_the_apps(tmp_path: Path) -> None:
         ),
         (
             caller_config_text(
-                apps='[apps."SENTINEL\\u0007"]\nworkload_client = \'x\'\n'
+                apps="[apps.\"SENTINEL\\u0007\"]\nworkload_client = 'x'\n"
             ),
             "apps",
         ),
         (
             caller_config_text(
-                apps='[apps."SENTINEL\\u200b"]\nworkload_client = \'x\'\n'
+                apps="[apps.\"SENTINEL\\u200b\"]\nworkload_client = 'x'\n"
             ),
             "apps",
         ),
@@ -300,7 +300,9 @@ def test_the_caller_file_names_the_issuer_and_the_apps(tmp_path: Path) -> None:
             "service_group",
         ),
         (
-            caller_config_text().replace("/services/video-service", "/services/ SENTINEL"),
+            caller_config_text().replace(
+                "/services/video-service", "/services/ SENTINEL"
+            ),
             "service_group",
         ),
         (
