@@ -277,10 +277,36 @@ def test_the_caller_file_names_the_issuer_and_the_apps(tmp_path: Path) -> None:
             "workload_client",
         ),
         (caller_config_text(apps="[apps.'a/b']\nworkload_client = 'x'\n"), "apps"),
+        (
+            caller_config_text(apps="[apps.' SENTINEL']\nworkload_client = 'x'\n"),
+            "apps",
+        ),
+        (
+            caller_config_text(
+                apps='[apps."SENTINEL\\u0007"]\nworkload_client = \'x\'\n'
+            ),
+            "apps",
+        ),
+        (
+            caller_config_text(
+                apps='[apps."SENTINEL\\u200b"]\nworkload_client = \'x\'\n'
+            ),
+            "apps",
+        ),
         (caller_config_text().replace("https://", "http://"), "jwks_url"),
         (caller_config_text().replace("/services/", "services/"), "service_group"),
         (
             caller_config_text().replace("/services/video-service", "/services//x"),
+            "service_group",
+        ),
+        (
+            caller_config_text().replace("/services/video-service", "/services/ SENTINEL"),
+            "service_group",
+        ),
+        (
+            caller_config_text().replace(
+                "/services/video-service", "/services/SENTINEL\\u0007"
+            ),
             "service_group",
         ),
     ],
@@ -289,9 +315,14 @@ def test_the_caller_file_names_the_issuer_and_the_apps(tmp_path: Path) -> None:
         "no-app",
         "shared-client",
         "app-name",
+        "app-name-with-whitespace",
+        "app-name-with-control-character",
+        "app-name-with-format-character",
         "jwks-not-https",
         "group-not-a-path",
         "group-empty-segment",
+        "group-with-whitespace",
+        "group-with-control-character",
     ],
 )
 def test_a_caller_file_that_breaks_the_form_names_the_field_and_echoes_no_value(
