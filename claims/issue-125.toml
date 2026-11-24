@@ -1,8 +1,0 @@
-claim_id = "149467e55dca4c66819d5bbde383fadf"
-agent = "Claude 935e04ab-5243-4567-a43b-a7b4826faace"
-role = "builder"
-base = "5c5f660762bcbef1bf723f104de1b8a861ef75fa"
-branch = "claude/issue-125-caller-file-builds-group-paths"
-scope = ["docs/configuration.md", "src/video_service/callers.py", "src/video_service/config.py", "tests/test_config.py"]
-opened_commit = "4d87705522108c3038e4d111fadcd25c12600809"
-whole_reason = "One rule moves to one owner: the validators, the caller that takes the built value, the ruled sentence and its proof go together."
