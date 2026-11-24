@@ -8,7 +8,7 @@ import textwrap
 from typing import TYPE_CHECKING
 
 import pytest
-from video_provider_contract import DecodedImage, ProviderVerb
+from video_provider_contract import DecodedImage, ProviderFailedError, ProviderVerb
 from video_provider_contract.protocol import (
     ANSWER_KINDS,
     NO_SESSION,
@@ -16,6 +16,7 @@ from video_provider_contract.protocol import (
     FailureCode,
     FrameKind,
     FrameLimits,
+    ProtocolError,
     ProtocolFrame,
     decode_failed,
     decode_frames,
@@ -254,29 +255,39 @@ def test_a_request_the_provider_refuses_is_answered_failed_and_the_worker_serves
 @pytest.mark.parametrize(
     ("mode", "ask", "answered", "error_type"),
     [
-        ("fails-to-start", None, None, "ProviderFailedError"),
-        ("fails-to-start-on-a-cause", None, None, "OSError"),
-        ("breaks", encode_pcm(_SESSION, 16_000, bytes(4)), _SESSION, "RuntimeError"),
+        ("fails-to-start", None, None, ProviderFailedError.__name__),
+        ("fails-to-start-on-a-cause", None, None, OSError.__name__),
+        (
+            "breaks",
+            encode_pcm(_SESSION, 16_000, bytes(4)),
+            _SESSION,
+            RuntimeError.__name__,
+        ),
         (
             "draws-wrong-size",
             encode_pcm(_SESSION, 16_000, bytes(4)),
             _SESSION,
-            "ProtocolError",
+            ProtocolError.__name__,
         ),
-        ("serves", encode_session(FrameKind.IDLE, 99), None, "ProtocolError"),
-        ("serves", encode_open(NO_SESSION, "mozart"), None, "ProtocolError"),
+        ("serves", encode_session(FrameKind.IDLE, 99), None, ProtocolError.__name__),
+        ("serves", encode_open(NO_SESSION, "mozart"), None, ProtocolError.__name__),
         (
             "serves",
             encode_prepare("mozart", DecodedImage(11, 10, bytes(330))),
             None,
-            "ProtocolError",
+            ProtocolError.__name__,
         ),
-        ("serves", ProtocolFrame(FrameKind.PREPARE, b"\x00"), None, "ProtocolError"),
+        (
+            "serves",
+            ProtocolFrame(FrameKind.PREPARE, b"\x00"),
+            None,
+            ProtocolError.__name__,
+        ),
         (
             "serves",
             ProtocolFrame(FrameKind.PREPARE, bytes(1_000)),
             None,
-            "ProtocolError",
+            ProtocolError.__name__,
         ),
     ],
     ids=[

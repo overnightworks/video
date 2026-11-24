@@ -163,7 +163,7 @@ def _chained(*names: str) -> BaseException:
 
 
 def test_the_root_of_a_failure_is_named_by_its_class_alone() -> None:
-    assert error_type_of(ValueError("a path /secret and words")) == "ValueError"
+    assert error_type_of(ValueError("a path /secret and words")) == ValueError.__name__
 
 
 def test_a_failure_without_a_cause_is_its_own_root() -> None:
@@ -189,7 +189,7 @@ def test_a_handled_exception_in_the_context_is_not_the_root(*, cut_cause: bool) 
         _raise_handled_key_error_as_value_error(cut_cause=cut_cause)
 
     assert raised.value.__context__ is not None
-    assert error_type_of(raised.value) == "ValueError"
+    assert error_type_of(raised.value) == ValueError.__name__
 
 
 def test_a_class_defined_in_a_function_is_named_by_its_own_name() -> None:
@@ -210,7 +210,7 @@ def test_a_cycle_of_causes_ends_the_walk() -> None:
     assert first.__cause__ is not None
     first.__cause__.__cause__ = first
 
-    assert error_type_of(first) in {"First", "Second"}
+    assert error_type_of(first) == "First"
 
 
 @pytest.mark.parametrize(

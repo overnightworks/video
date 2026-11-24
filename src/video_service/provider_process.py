@@ -105,7 +105,7 @@ class ProviderLaunch:
 class _ReportedFailureError(Exception):
     """The process answered FAILED for the whole provider."""
 
-    def __init__(self, error_type: str | None) -> None:
+    def __init__(self, error_type: str) -> None:
         super().__init__()
         self.error_type = error_type
 
