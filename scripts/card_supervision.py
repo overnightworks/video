@@ -242,8 +242,10 @@ def run_child(
             return
         # The group's process may not end after a stop: a thread of a library that is
         # no daemon keeps it from exiting, and nothing else would end it.
+        # A second stop that lands inside `start()` may find the timer started already.
         if grace.ident is None:
-            grace.start()
+            with suppress(RuntimeError):
+                grace.start()
         # `timeout` kills its command at once on a signal, so the stop goes to the
         # group's process itself, which stops the service first and then exits.
         if not settled_at_group(probe_run, fragment, signum, control):
