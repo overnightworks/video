@@ -1,8 +1,0 @@
-claim_id = "0b11f920641f4fc09a25155c498c737d"
-agent = "Claude 935e04ab-5243-4567-a43b-a7b4826faace"
-role = "builder"
-base = "8fb0fdb99d08744cd834808c3dcfc732e2f1bfec"
-branch = "claude/issue-117-release-0-4-0"
-scope = ["packages/browser/package.json", "packages/client/pyproject.toml", "providers/fake/pyproject.toml", "providers/flashhead-lite/pyproject.toml", "providers/flashhead-lite/uv.lock", "providers/provider-contract/pyproject.toml", "pyproject.toml", "uv.lock"]
-opened_commit = "adfb4733a46a006833df40b84670d1d568f187d1"
-whole_reason = "One version: check_release.py refuses a tree whose manifests disagree, so every manifest and both locks move in one change."
