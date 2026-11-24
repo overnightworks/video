@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "overnightworks-video-provider-flashhead-lite"
-version = "0.3.0"
+version = "0.4.0"
 description = "The FlashHead lite provider: the port's calls turned into slice renders, bound to the unchanged upstream model."
 license = "MIT AND Apache-2.0"
 license-files = ["LICENSE", "soulx-flashhead/LICENSE"]

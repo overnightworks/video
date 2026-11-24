@@ -86,7 +86,9 @@ if every place is held by a session that has not. Every refusal writes a
 exchange starts like this:
 
 - The service sends `session.created` `{session: {id, look, video: {width, height,
-  frame_rate}}}` first.
+  frame_rate}, max_queued_audio_seconds}}` first. `max_queued_audio_seconds` is
+  the number of seconds `VIDEO_MAX_QUEUED_AUDIO_SECONDS` sets, the limit WIRE-5
+  enforces for the session; a client holds no copy of it.
 - The client's first event must be `session.update`
   `{session: {ice_servers, ice_transport_policy}, traceparent?}`, with both
   members in the shape of W3C `RTCConfiguration` (https://www.w3.org/TR/webrtc/):

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from functools import cached_property
 from pathlib import Path
 from typing import Annotated, Final, Self
 
@@ -17,6 +18,7 @@ from pydantic import (
     model_validator,
 )
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+from webauth.admission import GroupPath
 from webauth.https_client import is_https_url
 
 from video_service.looks import SourcePrefix
@@ -28,9 +30,6 @@ _SOURCES_ERROR: Final = "must be a JSON list of source prefixes"
 _PROVIDER_ROOT_ERROR: Final = "VIDEO_PROVIDER_ROOT must be an absolute path"
 _CONFIG_FILE_ERROR: Final = "VIDEO_CONFIG_FILE must be an absolute path"
 _KEY_SET_URL_ERROR: Final = "jwks_url must be an https URL"
-_SERVICE_GROUP_ERROR: Final = (
-    "service_group must be a group path such as /services/name"
-)
 _APP_NAME_ERROR: Final = "an app name must be one group path segment"
 _SHARED_CLIENT_ERROR: Final = "workload_client must belong to one app"
 _CARD_MEMORY_ERROR: Final = "is required by the provider"
@@ -128,7 +127,7 @@ class IdentityConfig(_FileModel):
     audience: str
     workload_role: str
     group_claim: str
-    service_group: str
+    service_group: GroupPath
 
     @field_validator("jwks_url")
     @classmethod
@@ -137,12 +136,10 @@ class IdentityConfig(_FileModel):
             raise ValueError(_KEY_SET_URL_ERROR)
         return url
 
-    @field_validator("service_group")
+    @field_validator("service_group", mode="before")
     @classmethod
-    def _service_group_is_a_group_path(cls, group: str) -> str:
-        if not group.startswith("/") or "" in group[1:].split("/"):
-            raise ValueError(_SERVICE_GROUP_ERROR)
-        return group
+    def _service_group_is_built_as_a_group_path(cls, group: object) -> object:
+        return GroupPath(group) if isinstance(group, str) else group
 
 
 class AppConfig(_FileModel):
@@ -159,12 +156,16 @@ class CallerConfig(_FileModel):
 
     @field_validator("apps")
     @classmethod
-    def _app_names_are_one_segment(
+    def _app_names_make_login_groups(
         cls, apps: dict[str, AppConfig]
     ) -> dict[str, AppConfig]:
-        if any(not name or "/" in name for name in apps):
-            raise ValueError(_APP_NAME_ERROR)
+        _login_groups(apps)
         return apps
+
+    @cached_property
+    def login_groups(self) -> dict[str, GroupPath]:
+        """The group of each app's people, by the app's name."""
+        return _login_groups(self.apps)
 
     @model_validator(mode="after")
     def _each_client_belongs_to_one_app(self) -> Self:
@@ -172,6 +173,12 @@ class CallerConfig(_FileModel):
         if len(set(clients)) != len(clients):
             raise ValueError(_SHARED_CLIENT_ERROR)
         return self
+
+
+def _login_groups(apps: dict[str, AppConfig]) -> dict[str, GroupPath]:
+    if any("/" in name for name in apps):
+        raise ValueError(_APP_NAME_ERROR)
+    return {name: GroupPath(f"/apps/{name}") for name in apps}
 
 
 _CALLER_CONFIG = TypeAdapter(CallerConfig)

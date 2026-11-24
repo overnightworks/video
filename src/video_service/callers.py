@@ -55,10 +55,10 @@ class Opener:
 class VideoCallers:
     """The one check of a process, over the configured issuer and apps."""
 
-    def __init__(self, check: ServiceCallerCheck, service_group: str) -> None:
+    def __init__(self, check: ServiceCallerCheck, service_group: GroupPath) -> None:
         """Hold `check` and the person's group."""
         self._check = check
-        self._service_group = service_group
+        self._service_group = str(service_group)
 
     @classmethod
     def from_config(
@@ -76,7 +76,7 @@ class VideoCallers:
                 app=name,
                 admission=AdmissionConfig(
                     bound_issuer=identity.issuer,
-                    login_group=GroupPath(f"/apps/{name}"),
+                    login_group=config.login_groups[name],
                     admin_group=NoAdmins.IN_THIS_APP,
                 ),
             )

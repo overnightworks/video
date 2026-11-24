@@ -21,6 +21,18 @@ class RenderError(Exception):
     """The renderer could not start, prepare a look, open a session or render."""
 
 
+class CapExceedsCardError(RenderError):
+    """The memory cap is bigger than the card's total or free memory."""
+
+
+class NoCardError(RenderError):
+    """No card is visible."""
+
+
+class WeightsMissingError(RenderError):
+    """The weights directory is missing."""
+
+
 @dataclass(frozen=True, slots=True)
 class RenderShape:
     """What a started renderer hears and draws: `frames_per_slice` frames a slice."""
