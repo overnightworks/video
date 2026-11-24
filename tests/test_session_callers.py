@@ -10,6 +10,7 @@ import pytest
 from video_provider_fake import FakeProvider
 
 from support.identity_support import (
+    APP,
     SERVICE_GROUP,
     person_token,
     valid_headers,
@@ -83,6 +84,11 @@ def client(
             ),
             _FORBIDDEN,
         ),
+        (_headers(person=person_token(groups=(SERVICE_GROUP,))), _FORBIDDEN),
+        (
+            _headers(person=person_token(groups=(f"/apps/{APP}x", SERVICE_GROUP))),
+            _FORBIDDEN,
+        ),
         (
             _headers(
                 workload=workload_token(azp="other-client", client_id="other-client"),
@@ -103,6 +109,8 @@ def client(
         "not-a-workload",
         "not-in-the-service-group",
         "only-in-a-subgroup",
+        "in-the-service-group-but-no-app-group",
+        "in-a-sibling-apps-group",
         "unregistered-app",
         "the-person-is-the-workload",
     ],
