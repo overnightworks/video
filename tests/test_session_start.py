@@ -54,6 +54,19 @@ def test_the_first_event_names_the_session_its_look_and_the_picture(
     assert created.session.id
 
 
+def test_the_first_event_names_the_queued_audio_limit_the_service_enforces(
+    provider: FakeProvider,
+    started: Callable[..., Runtime],
+    wire: Callable[[Runtime], TestClient],
+) -> None:
+    client = wire(started(provider, max_queued_audio_seconds=7.5))
+    with connect(client) as session:
+        created = receive(session)
+
+    assert isinstance(created, SessionCreated)
+    assert created.session.max_queued_audio_seconds == 7.5
+
+
 def test_every_server_event_and_session_gets_a_fresh_id(client: TestClient) -> None:
     with connect(client) as first, connect(client) as second:
         events = [receive(first), receive(second)]

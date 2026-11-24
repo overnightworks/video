@@ -342,7 +342,12 @@ class Session:
         await self._send(
             SessionCreated(
                 session=SessionInfo(
-                    id=self._id, look=self._look, video=self._place.video
+                    id=self._id,
+                    look=self._look,
+                    video=self._place.video,
+                    max_queued_audio_seconds=(
+                        self._place.limits.max_queued_audio_seconds
+                    ),
                 )
             )
         )
