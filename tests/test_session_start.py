@@ -59,12 +59,13 @@ def test_the_first_event_names_the_queued_audio_limit_the_service_enforces(
     started: Callable[..., Runtime],
     wire: Callable[[Runtime], TestClient],
 ) -> None:
-    client = wire(started(provider, max_queued_audio_seconds=7.5))
+    limit = 7.5
+    client = wire(started(provider, max_queued_audio_seconds=limit))
     with connect(client) as session:
         created = receive(session)
 
     assert isinstance(created, SessionCreated)
-    assert created.session.max_queued_audio_seconds == 7.5
+    assert created.session.max_queued_audio_seconds == limit
 
 
 def test_every_server_event_and_session_gets_a_fresh_id(client: TestClient) -> None:
