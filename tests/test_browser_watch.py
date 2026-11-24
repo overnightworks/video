@@ -1,4 +1,4 @@
-"""A browser page watches a session through its app's route in Chromium (WIRE-14)."""
+"""A browser page watches a session through its app's route in Chromium."""
 
 from __future__ import annotations
 
@@ -36,6 +36,8 @@ _NOT_AN_ANSWER = b"v=0\r\nthis is not an answer\r\n"
 def test_show_reports_loading_then_drawn_while_frames_advance_and_sound_arrives(
     live_in_browser: Callable[..., None], tmp_path: Path
 ) -> None:
+    """WIRE-14."""
+
     async def scenario(service: Service) -> None:
         session = await service.open_session()
         async with stage(service, session, tmp_path / "profile") as page:
@@ -57,6 +59,8 @@ def test_show_reports_loading_then_drawn_while_frames_advance_and_sound_arrives(
 def test_a_refused_play_reports_ended_and_never_a_muted_picture(
     live_in_browser: Callable[..., None], tmp_path: Path
 ) -> None:
+    """WIRE-14."""
+
     async def scenario(service: Service) -> None:
         session = await service.open_session()
         async with stage(
@@ -127,6 +131,8 @@ def test_a_route_that_does_not_give_a_viewer_reports_ended_and_throws_nothing(
     tmp_path: Path,
     arrange: Callable[[Stage], str],
 ) -> None:
+    """WIRE-14."""
+
     async def scenario(service: Service) -> None:
         session = await service.open_session()
         async with stage(service, session, tmp_path / "profile") as page:
@@ -143,6 +149,8 @@ def test_a_route_that_does_not_give_a_viewer_reports_ended_and_throws_nothing(
 def test_the_services_viewer_cap_reaches_the_page_through_the_route_as_its_refusal(
     live_in_browser: Callable[..., None], tmp_path: Path
 ) -> None:
+    """WIRE-14."""
+
     async def scenario(service: Service) -> None:
         session = await service.open_session()
         await service.watch(session)
@@ -165,6 +173,8 @@ def test_the_services_viewer_cap_reaches_the_page_through_the_route_as_its_refus
 def test_an_answer_that_does_not_set_deletes_the_viewer_and_a_later_stop_shows_nothing(
     live_in_browser: Callable[..., None], tmp_path: Path
 ) -> None:
+    """WIRE-14."""
+
     async def scenario(service: Service) -> None:
         session = await service.open_session()
         async with stage(service, session, tmp_path / "profile") as page:
@@ -184,6 +194,8 @@ def test_an_answer_that_does_not_set_deletes_the_viewer_and_a_later_stop_shows_n
 def test_stop_sends_the_delete_to_the_routes_location_and_the_service_ends_the_viewer(
     live_in_browser: Callable[..., None], tmp_path: Path
 ) -> None:
+    """WIRE-14."""
+
     async def scenario(service: Service) -> None:
         session = await service.open_session()
         async with stage(service, session, tmp_path / "profile") as page:
@@ -202,6 +214,8 @@ def test_stop_sends_the_delete_to_the_routes_location_and_the_service_ends_the_v
 def test_two_stops_in_one_tick_delete_the_viewer_before_its_peer_closes(
     live_in_browser: Callable[..., None], tmp_path: Path
 ) -> None:
+    """WIRE-14."""
+
     async def scenario(service: Service) -> None:
         session = await service.open_session()
         async with stage(service, session, tmp_path / "profile") as page:
@@ -222,6 +236,8 @@ def test_two_stops_in_one_tick_delete_the_viewer_before_its_peer_closes(
 def test_a_stop_before_the_post_has_answered_ends_at_once_and_deletes_after_the_answer(
     live_in_browser: Callable[..., None], tmp_path: Path
 ) -> None:
+    """WIRE-14."""
+
     async def scenario(service: Service) -> None:
         session = await service.open_session()
         async with stage(service, session, tmp_path / "profile") as page:
@@ -246,6 +262,8 @@ def test_a_stop_before_the_post_has_answered_ends_at_once_and_deletes_after_the_
 def test_the_end_of_the_session_ends_the_viewer(
     live_in_browser: Callable[..., None], tmp_path: Path
 ) -> None:
+    """WIRE-14."""
+
     async def scenario(service: Service) -> None:
         session = await service.open_session()
         async with stage(service, session, tmp_path / "profile") as page:
@@ -264,6 +282,8 @@ def test_the_end_of_the_session_ends_the_viewer(
 def test_no_request_from_the_page_carries_a_token(
     live_in_browser: Callable[..., None], tmp_path: Path
 ) -> None:
+    """WIRE-14."""
+
     async def scenario(service: Service) -> None:
         opening = valid_headers()
         session = await service.open_session(opening)

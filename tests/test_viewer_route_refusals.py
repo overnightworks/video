@@ -1,4 +1,4 @@
-"""A viewer's POST is refused in the wire's order, and the first fault wins (WIRE-9)."""
+"""A viewer's POST is refused in the wire's order, and the first fault wins."""
 
 from __future__ import annotations
 
@@ -54,6 +54,8 @@ def _refused(response: httpx2.Response) -> tuple[int, RefusalCode]:
 def test_bad_tokens_are_refused_before_the_offer_is_looked_at(
     live: Callable[..., None],
 ) -> None:
+    """WIRE-9."""
+
     async def scenario(service: Service) -> None:
         session = await service.open_session()
 
@@ -69,6 +71,8 @@ def test_bad_tokens_are_refused_before_the_offer_is_looked_at(
 def test_an_unknown_and_an_ended_session_are_not_found_for_any_caller(
     live: Callable[..., None],
 ) -> None:
+    """WIRE-9."""
+
     async def scenario(service: Service) -> None:
         stranger = headers_of(app=OTHER_APP, client=OTHER_CLIENT)
         ended = await service.open_session()
@@ -99,6 +103,8 @@ def test_an_unknown_and_an_ended_session_are_not_found_for_any_caller(
 def test_a_caller_who_did_not_open_the_session_is_forbidden_whatever_else_is_wrong(
     live: Callable[..., None], stranger: dict[str, str]
 ) -> None:
+    """WIRE-9."""
+
     async def scenario(service: Service) -> None:
         session = await service.open_session()
 
@@ -114,6 +120,8 @@ def test_a_caller_who_did_not_open_the_session_is_forbidden_whatever_else_is_wro
 def test_a_session_without_its_ice_configuration_is_unavailable(
     live: Callable[..., None],
 ) -> None:
+    """WIRE-9."""
+
     async def scenario(service: Service) -> None:
         session = await service.open_session(update=False)
 
@@ -130,6 +138,8 @@ def test_a_session_without_its_ice_configuration_is_unavailable(
 def test_a_draining_service_is_unavailable_before_the_content_type_is_looked_at(
     live: Callable[..., None],
 ) -> None:
+    """WIRE-9."""
+
     async def scenario(service: Service) -> None:
         session = await service.open_session()
         await session.speak("playing", beep(_SPEAKING_MS))
@@ -149,6 +159,8 @@ def test_a_draining_service_is_unavailable_before_the_content_type_is_looked_at(
 def test_another_content_type_is_invalid_before_the_size_is_looked_at(
     live: Callable[..., None],
 ) -> None:
+    """WIRE-9."""
+
     async def scenario(service: Service) -> None:
         session = await service.open_session()
 
@@ -165,6 +177,8 @@ def test_another_content_type_is_invalid_before_the_size_is_looked_at(
 def test_a_body_over_the_cap_is_too_large_even_though_it_does_not_parse(
     live: Callable[..., None],
 ) -> None:
+    """WIRE-9."""
+
     async def scenario(service: Service) -> None:
         session = await service.open_session()
 
@@ -185,6 +199,8 @@ def test_a_body_over_the_cap_is_too_large_even_though_it_does_not_parse(
 def test_an_offer_that_is_not_acceptable_is_invalid_even_at_the_viewer_limit(
     live: Callable[..., None], kind: str
 ) -> None:
+    """WIRE-9."""
+
     async def scenario(service: Service) -> None:
         session = await service.open_session()
         first = await service.post(session, await offer_of())
@@ -211,6 +227,8 @@ def test_an_offer_that_is_not_acceptable_is_invalid_even_at_the_viewer_limit(
 def test_the_viewer_above_the_limit_is_busy_and_told_when_to_retry(
     live: Callable[..., None],
 ) -> None:
+    """WIRE-9."""
+
     async def scenario(service: Service) -> None:
         session = await service.open_session()
         first = await service.post(session, await offer_of())
@@ -227,6 +245,8 @@ def test_the_viewer_above_the_limit_is_busy_and_told_when_to_retry(
 def test_a_viewer_is_ended_by_its_opener_once_and_other_methods_are_not_found(
     live: Callable[..., None],
 ) -> None:
+    """WIRE-9."""
+
     async def scenario(service: Service) -> None:
         session = await service.open_session()
         created = await service.post(session, await offer_of())
@@ -255,6 +275,8 @@ def test_a_viewer_is_ended_by_its_opener_once_and_other_methods_are_not_found(
 def test_an_ice_server_the_peer_cannot_parse_is_unavailable_before_the_content_type(
     live: Callable[..., None],
 ) -> None:
+    """WIRE-9."""
+
     async def scenario(service: Service) -> None:
         session = await service.open_session(update=False)
         await session.update([{"urls": "not-an-ice-server"}], "all")
@@ -273,6 +295,8 @@ def test_an_ice_server_the_peer_cannot_parse_is_unavailable_before_the_content_t
 def test_an_offer_the_peer_cannot_take_is_invalid_at_the_viewer_limit_and_admits_none(
     live: Callable[..., None], missing: str
 ) -> None:
+    """WIRE-9."""
+
     async def scenario(service: Service) -> None:
         session = await service.open_session()
         first = await service.post(session, await offer_of())
@@ -291,6 +315,8 @@ def test_an_offer_the_peer_cannot_take_is_invalid_at_the_viewer_limit_and_admits
 
 
 def test_a_body_sent_in_chunks_is_cut_off_at_the_cap(live: Callable[..., None]) -> None:
+    """WIRE-9."""
+
     async def scenario(service: Service) -> None:
         session = await service.open_session()
 
@@ -311,6 +337,7 @@ def test_a_body_sent_in_chunks_is_cut_off_at_the_cap(live: Callable[..., None]) 
 def test_a_chunk_past_the_cap_is_refused_before_it_is_copied_into_the_offer(
     live: Callable[..., None],
 ) -> None:
+    """WIRE-9."""
     oversized = b"v" * (64 * MAX_OFFER_BYTES)
     sent: list[Message] = []
 
@@ -363,6 +390,7 @@ def test_a_chunk_past_the_cap_is_refused_before_it_is_copied_into_the_offer(
 def test_a_viewer_whose_session_ends_while_its_offer_is_negotiated_is_not_found(
     live: Callable[..., None],
 ) -> None:
+    """WIRE-9."""
     reached = asyncio.Event()
     release = asyncio.Event()
 
