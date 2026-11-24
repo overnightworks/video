@@ -35,6 +35,7 @@ from video_provider_contract.protocol import (
     encode_frames,
     encode_ready,
     encode_session,
+    error_type_of,
     read_frame,
     session_of,
     write_frame,
@@ -127,10 +128,10 @@ def _serve(
     """Start the provider, answer READY, then serve; the exit status when it ends."""
     try:
         _answer_until_failure(provider, limits, output, requests)
-    except Exception:  # noqa: BLE001 - the one way out: FAILED for the whole provider
+    except Exception as error:  # noqa: BLE001 - the one way out: FAILED for the whole provider
         # Before READY the service reads stderr bounded and never logs it as text.
         traceback.print_exc()
-        _write_failure(output)
+        _write_failure(output, error)
     return _PROTOCOL_FAILED
 
 
@@ -153,9 +154,10 @@ def _answer_until_failure(
             write_frame(output, answer)
 
 
-def _write_failure(output: BinaryIO) -> None:
+def _write_failure(output: BinaryIO, error: Exception) -> None:
     with contextlib.suppress(OSError):
-        write_frame(output, encode_failed(FailureCode.PROVIDER))
+        frame = encode_failed(FailureCode.PROVIDER, error_type=error_type_of(error))
+        write_frame(output, frame)
 
 
 class _Worker:

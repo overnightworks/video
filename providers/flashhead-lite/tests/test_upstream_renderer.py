@@ -12,7 +12,13 @@ import pytest
 import torch
 from stand_in_upstream import StandInCard, StandInModelError, StandInPipeline
 from video_provider_contract import DecodedImage
-from video_provider_flashhead_lite.renderer import RenderError, RenderShape
+from video_provider_flashhead_lite.renderer import (
+    CapExceedsCardError,
+    NoCardError,
+    RenderError,
+    RenderShape,
+    WeightsMissingError,
+)
 from video_provider_flashhead_lite.upstream import locate_weights
 from video_provider_flashhead_lite.upstream_renderer import (
     CardMemory,
@@ -157,7 +163,7 @@ def test_a_cap_the_card_cannot_hold_is_refused(
         free=free_mebibytes * _MEBIBYTE, total=total_mebibytes * _MEBIBYTE
     )
 
-    with pytest.raises(RenderError):
+    with pytest.raises(CapExceedsCardError):
         allocator_fraction(cap_mebibytes, memory)
 
 
@@ -236,20 +242,25 @@ def test_the_warm_up_look_can_never_be_opened(make_rig: Callable[..., _Rig]) -> 
 
 
 @pytest.mark.parametrize(
-    "card_options",
+    ("card_options", "refusal"),
     [
-        {"visible": False},
-        {"free_bytes": 1 * _MEBIBYTE},
-        {"total_bytes": 1 * _MEBIBYTE, "free_bytes": 1 * _MEBIBYTE},
+        ({"visible": False}, NoCardError),
+        ({"free_bytes": 1 * _MEBIBYTE}, CapExceedsCardError),
+        (
+            {"total_bytes": 1 * _MEBIBYTE, "free_bytes": 1 * _MEBIBYTE},
+            CapExceedsCardError,
+        ),
     ],
     ids=["no card", "above the free memory", "above the total"],
 )
 def test_start_refuses_before_it_caps_or_loads_when_the_card_cannot_serve(
-    make_rig: Callable[..., _Rig], card_options: dict[str, object]
+    make_rig: Callable[..., _Rig],
+    card_options: dict[str, object],
+    refusal: type[RenderError],
 ) -> None:
     rig = make_rig(**card_options)
 
-    with pytest.raises(RenderError):
+    with pytest.raises(refusal):
         rig.start()
 
     assert "limit" not in rig.card.events
@@ -261,7 +272,7 @@ def test_start_refuses_a_missing_weights_directory_before_it_loads(
 ) -> None:
     rig = make_rig(with_weights=False)
 
-    with pytest.raises(RenderError):
+    with pytest.raises(WeightsMissingError):
         rig.start()
 
     assert "load" not in rig.card.events

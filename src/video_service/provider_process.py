@@ -105,6 +105,10 @@ class ProviderLaunch:
 class _ReportedFailureError(Exception):
     """The process answered FAILED for the whole provider."""
 
+    def __init__(self, error_type: str | None) -> None:
+        super().__init__()
+        self.error_type = error_type
+
 
 class _Request:
     """One request that waits for its answer; `None` is an answer fenced out."""
@@ -324,8 +328,8 @@ class ProcessProvider:
                 limits = self._dispatch(
                     read_frame(stdout, limits, ANSWER_KINDS), limits
                 )
-        except _ReportedFailureError:
-            self._fail(ProcessFailure.REPORTED)
+        except _ReportedFailureError as reported:
+            self._fail(ProcessFailure.REPORTED, reported.error_type)
         except ProtocolError:
             self._fail(ProcessFailure.PROTOCOL)
         except EOFError, OSError, ValueError:
@@ -368,8 +372,10 @@ class ProcessProvider:
                     self._fail(ProcessFailure.STDERR_OVERSIZED)
                     return
 
-    def _fail(self, reason: ProcessFailure) -> None:
+    def _fail(self, reason: ProcessFailure, error_type: str | None = None) -> None:
         """Fail the provider for good: kill the process and fail every request.
+
+        `error_type` is the root cause's class name the provider reported, if it did.
 
         Every caller returns once the failure is complete and logged, so one that
         sees it can rely on the line.
@@ -386,7 +392,7 @@ class ProcessProvider:
         with self._lock:
             closing = self._closing
         if not closing:
-            self._log_failure(reason, child)
+            self._log_failure(reason, error_type, child)
         with self._lock:
             self._failure = reason
         self._reject_waiting()
@@ -416,7 +422,10 @@ class ProcessProvider:
             _stream(child.stdin).close()
 
     def _log_failure(
-        self, reason: ProcessFailure, child: subprocess.Popen[bytes] | None
+        self,
+        reason: ProcessFailure,
+        error_type: str | None,
+        child: subprocess.Popen[bytes] | None,
     ) -> None:
         with self._lock:
             phase = "after_ready" if self._info is not None else "before_ready"
@@ -425,6 +434,7 @@ class ProcessProvider:
             extra={
                 "reason": reason.value,
                 "phase": phase,
+                "error_type": error_type,
                 "exit_status": None if child is None else child.returncode,
             },
         )
@@ -482,10 +492,10 @@ def _addressee(frame: ProtocolFrame) -> int:
     """
     kind, payload = frame.kind, frame.payload
     if kind is FrameKind.FAILED:
-        code, session = decode_failed(payload)
-        if code is FailureCode.PROVIDER:
-            raise _ReportedFailureError
-        return session
+        failure = decode_failed(payload)
+        if failure.code is FailureCode.PROVIDER:
+            raise _ReportedFailureError(failure.error_type)
+        return failure.session
     if kind is FrameKind.FRAMES:
         return session_of(payload)
     if kind is FrameKind.PREPARED and payload:
