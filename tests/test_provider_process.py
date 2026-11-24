@@ -235,19 +235,26 @@ def _exercise(provider: ProcessProvider) -> None:
 
 
 def _failure(
-    body: str, reason: ProcessFailure, bounds: ProcessBounds | None = None
+    body: str,
+    reason: ProcessFailure,
+    bounds: ProcessBounds | None = None,
+    error_type: str | None = None,
 ) -> ParameterSet:
     if bounds is None:
         bounds = SHORT_BOUNDS if reason is ProcessFailure.TIMEOUT else ProcessBounds()
-    return pytest.param(body, reason, bounds, id=body)
+    return pytest.param(body, (reason.value, error_type), bounds, id=body)
 
 
 @pytest.mark.parametrize(
-    ("body", "reason", "bounds"),
+    ("body", "logged", "bounds"),
     [
         _failure("raise SystemExit(3)", ProcessFailure.EXITED),
         _failure("hang()", ProcessFailure.TIMEOUT),
-        _failure("send(encode_failed(FailureCode.PROVIDER))", ProcessFailure.REPORTED),
+        _failure(
+            "send(encode_failed(FailureCode.PROVIDER, error_type='NoCardError'))",
+            ProcessFailure.REPORTED,
+            error_type="NoCardError",
+        ),
         _failure(
             "sys.stderr.write('x' * (2 << 20)); sys.stderr.flush(); hang()",
             ProcessFailure.STDERR_OVERSIZED,
@@ -259,8 +266,22 @@ def _failure(
         _failure("ready(); serve(2); request(); hang()", ProcessFailure.TIMEOUT),
         _failure(
             "ready(); serve(2); asked = request(); "
-            "send(encode_failed(FailureCode.PROVIDER, session_of(asked.payload)))",
+            "send(encode_failed(FailureCode.PROVIDER, session_of(asked.payload), "
+            "'Boom'))",
             ProcessFailure.REPORTED,
+            error_type="Boom",
+        ),
+        _failure(
+            "send(ProtocolFrame(FrameKind.FAILED, struct.pack('!BI', 2, 0)))",
+            ProcessFailure.PROTOCOL,
+        ),
+        _failure(
+            "send(ProtocolFrame(FrameKind.FAILED, struct.pack('!BI', 2, 0) + b'a b'))",
+            ProcessFailure.PROTOCOL,
+        ),
+        _failure(
+            "send(ProtocolFrame(FrameKind.FAILED, struct.pack('!BI', 1, 0) + b'Name'))",
+            ProcessFailure.PROTOCOL,
         ),
         _failure(
             "ready(); raw(b'\\x63\\x00\\x00\\x00\\x00'); hang()",
@@ -307,7 +328,7 @@ def _failure(
 )
 def test_a_child_that_fails_ends_in_the_failed_path_without_a_hang(
     body: str,
-    reason: ProcessFailure,
+    logged: tuple[str, str | None],
     bounds: ProcessBounds,
     make_provider: MakeProvider,
     caplog: pytest.LogCaptureFixture,
@@ -318,8 +339,11 @@ def test_a_child_that_fails_ends_in_the_failed_path_without_a_hang(
         _exercise(provider)
 
     assert provider.failed
-    logged = [r.reason for r in caplog.records if r.msg == "provider.failed"]
-    assert logged == [reason.value]
+    assert [
+        (r.reason, r.error_type)  # type: ignore[attr-defined]
+        for r in caplog.records
+        if r.msg == "provider.failed"
+    ] == [logged]
     with pytest.raises(ProviderFailedError):
         provider.open_session(_MOZART)
 

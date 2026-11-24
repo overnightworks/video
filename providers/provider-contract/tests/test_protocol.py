@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import io
 import struct
 from typing import TYPE_CHECKING
@@ -18,10 +19,13 @@ from video_provider_contract.protocol import (
     ANSWER_KINDS,
     BYTES_PER_PIXEL,
     MAX_CONTROL_BYTES,
+    MAX_ERROR_TYPE_CHARACTERS,
     MAX_PCM_BYTES,
     MAX_PICTURE_BYTES,
     MAX_PICTURES_PER_ANSWER,
     REQUEST_KINDS,
+    UNNAMED,
+    Failure,
     FailureCode,
     FrameKind,
     FrameLimits,
@@ -41,6 +45,7 @@ from video_provider_contract.protocol import (
     encode_prepare,
     encode_ready,
     encode_session,
+    error_type_of,
     picture_bytes,
     read_frame,
     write_frame,
@@ -119,11 +124,102 @@ def test_frames_carry_whole_pictures_in_order(count: int) -> None:
     assert decode_frames(frame.payload, _VIDEO) == (_SESSION, pictures)
 
 
-@pytest.mark.parametrize("code", list(FailureCode))
-def test_failed_carries_a_closed_code_and_a_session(code: FailureCode) -> None:
-    frame = _round_trip(encode_failed(code, _SESSION), ANSWER_KINDS)
+def test_a_request_failure_carries_a_code_and_a_session_and_no_name() -> None:
+    frame = _round_trip(encode_failed(FailureCode.REQUEST, _SESSION), ANSWER_KINDS)
 
-    assert decode_failed(frame.payload) == (code, _SESSION)
+    assert decode_failed(frame.payload) == Failure(FailureCode.REQUEST, _SESSION)
+
+
+@pytest.mark.parametrize("name", ["InductorError", "_", "a1", "x" * 128, UNNAMED])
+def test_a_provider_failure_carries_its_name_in_the_bytes_after_the_session(
+    name: str,
+) -> None:
+    frame = _round_trip(
+        encode_failed(FailureCode.PROVIDER, _SESSION, name), ANSWER_KINDS
+    )
+
+    assert frame.payload == struct.pack("!BI", FailureCode.PROVIDER, _SESSION) + (
+        name.encode("ascii")
+    )
+    assert decode_failed(frame.payload) == Failure(FailureCode.PROVIDER, _SESSION, name)
+
+
+def test_a_failure_is_immutable() -> None:
+    failure = Failure(FailureCode.REQUEST, _SESSION)
+
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        failure.session = 1  # type: ignore[misc]
+
+
+def _chained(*names: str) -> BaseException:
+    """An exception named `names[0]` whose `__cause__` chain names the rest."""
+    error: BaseException | None = None
+    for name in reversed(names):
+        raised = type(name, (Exception,), {})()
+        raised.__cause__ = error
+        error = raised
+    assert error is not None
+    return error
+
+
+def test_the_root_of_a_failure_is_named_by_its_class_alone() -> None:
+    assert error_type_of(ValueError("a path /secret and words")) == "ValueError"
+
+
+def test_a_failure_without_a_cause_is_its_own_root() -> None:
+    assert error_type_of(_chained("Only")) == "Only"
+
+
+def test_the_root_is_found_through_the_chain_of_causes() -> None:
+    assert error_type_of(_chained("Wrapper", "Middle", "Root")) == "Root"
+
+
+def _raise_handled_key_error_as_value_error(*, cut_cause: bool) -> None:
+    try:
+        {}["missing"]
+    except KeyError:
+        if cut_cause:
+            raise ValueError from None
+        raise ValueError  # noqa: B904 - the implicit context is the case
+
+
+@pytest.mark.parametrize("cut_cause", [True, False], ids=["from none", "in a handler"])
+def test_a_handled_exception_in_the_context_is_not_the_root(*, cut_cause: bool) -> None:
+    with pytest.raises(ValueError) as raised:  # noqa: PT011 - the class is the point
+        _raise_handled_key_error_as_value_error(cut_cause=cut_cause)
+
+    assert raised.value.__context__ is not None
+    assert error_type_of(raised.value) == "ValueError"
+
+
+def test_a_class_defined_in_a_function_is_named_by_its_own_name() -> None:
+    class Local(Exception):  # noqa: N818 - the name is the example
+        pass
+
+    assert error_type_of(Local()) == "Local"
+
+
+def test_the_walk_stops_after_sixteen_causes() -> None:
+    names = [f"Link{index}" for index in range(40)]
+
+    assert error_type_of(_chained(*names)) == "Link16"
+
+
+def test_a_cycle_of_causes_ends_the_walk() -> None:
+    first = _chained("First", "Second")
+    assert first.__cause__ is not None
+    first.__cause__.__cause__ = first
+
+    assert error_type_of(first) in {"First", "Second"}
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["Fehlér", "x" * (MAX_ERROR_TYPE_CHARACTERS + 1), "has space", "line\nbreak", ""],
+    ids=["non-ascii", "too long", "a space", "a newline", "empty"],
+)
+def test_a_name_outside_the_form_is_reported_as_unnamed(name: str) -> None:
+    assert error_type_of(_chained(name)) == UNNAMED
 
 
 @pytest.mark.parametrize(
@@ -243,6 +339,14 @@ def test_a_ready_reporting_a_picture_above_the_cap_is_refused() -> None:
         ),
         lambda: decode_failed(b"x"),
         lambda: decode_failed(struct.pack("!BI", 99, 0)),
+        lambda: decode_failed(struct.pack("!BI", FailureCode.REQUEST, 0) + b"Name"),
+        lambda: decode_failed(struct.pack("!BI", FailureCode.PROVIDER, 0)),
+        lambda: decode_failed(struct.pack("!BI", FailureCode.PROVIDER, 0) + b"a b"),
+        lambda: decode_failed(struct.pack("!BI", FailureCode.PROVIDER, 0) + b"a\n"),
+        lambda: decode_failed(
+            struct.pack("!BI", FailureCode.PROVIDER, 0) + "é".encode()
+        ),
+        lambda: decode_failed(struct.pack("!BI", FailureCode.PROVIDER, 0) + b"x" * 129),
         lambda: decode_session(struct.pack("!I", 1) + b"x"),
     ],
     ids=[
@@ -258,6 +362,12 @@ def test_a_ready_reporting_a_picture_above_the_cap_is_refused() -> None:
         "too many pictures",
         "a failure without a session",
         "an unknown failure code",
+        "a request failure with a name",
+        "a provider failure without a name",
+        "a name with a space",
+        "a name with a newline",
+        "a name that is not ascii",
+        "a name of 129 characters",
         "a session frame with more than a session",
     ],
 )
@@ -275,12 +385,18 @@ def test_a_payload_the_protocol_does_not_allow_is_refused(
         lambda: encode_open(_SESSION, ""),
         lambda: encode_frames(_SESSION, [Frame(b"short")], _VIDEO),
         lambda: encode_session(FrameKind.PCM, _SESSION),
+        lambda: encode_failed(FailureCode.REQUEST, _SESSION, "Name"),
+        lambda: encode_failed(FailureCode.PROVIDER, _SESSION),
+        lambda: encode_failed(FailureCode.PROVIDER, _SESSION, "not a name"),
     ],
     ids=[
         "audio too long",
         "a look without a name",
         "a short picture",
         "a kind with more",
+        "a request failure with a name",
+        "a provider failure without a name",
+        "a provider failure with an invalid name",
     ],
 )
 def test_a_frame_the_protocol_does_not_allow_is_not_written(

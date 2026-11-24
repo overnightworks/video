@@ -12,6 +12,7 @@ from video_provider_contract import DecodedImage, ProviderVerb
 from video_provider_contract.protocol import (
     ANSWER_KINDS,
     NO_SESSION,
+    Failure,
     FailureCode,
     FrameKind,
     FrameLimits,
@@ -82,6 +83,11 @@ _WORKER = textwrap.dedent(
                 sys.stderr.flush()
             if MODE == "fails-to-start":
                 raise ProviderFailedError
+            if MODE == "fails-to-start-on-a-cause":
+                try:
+                    raise OSError("a secret path")
+                except OSError as error:
+                    raise ProviderFailedError from error
             return ProviderInfo(
                 (ProviderVerb.SPEAK,), ProviderVideoFormat(SIDE, SIDE, 25)
             )
@@ -240,25 +246,42 @@ def test_a_request_the_provider_refuses_is_answered_failed_and_the_worker_serves
     worker.send(encode_open(_SESSION, "mozart"))
     opened = worker.answer()
 
-    assert decode_failed(refused.payload) == (FailureCode.REQUEST, NO_SESSION)
+    assert decode_failed(refused.payload) == Failure(FailureCode.REQUEST, NO_SESSION)
     assert opened.kind is FrameKind.OPENED
     assert worker.finish() == 0
 
 
 @pytest.mark.parametrize(
-    ("mode", "ask", "answered"),
+    ("mode", "ask", "answered", "error_type"),
     [
-        ("fails-to-start", None, None),
-        ("breaks", encode_pcm(_SESSION, 16_000, bytes(4)), _SESSION),
-        ("draws-wrong-size", encode_pcm(_SESSION, 16_000, bytes(4)), _SESSION),
-        ("serves", encode_session(FrameKind.IDLE, 99), None),
-        ("serves", encode_open(NO_SESSION, "mozart"), None),
-        ("serves", encode_prepare("mozart", DecodedImage(11, 10, bytes(330))), None),
-        ("serves", ProtocolFrame(FrameKind.PREPARE, b"\x00"), None),
-        ("serves", ProtocolFrame(FrameKind.PREPARE, bytes(1_000)), None),
+        ("fails-to-start", None, None, "ProviderFailedError"),
+        ("fails-to-start-on-a-cause", None, None, "OSError"),
+        ("breaks", encode_pcm(_SESSION, 16_000, bytes(4)), _SESSION, "RuntimeError"),
+        (
+            "draws-wrong-size",
+            encode_pcm(_SESSION, 16_000, bytes(4)),
+            _SESSION,
+            "ProtocolError",
+        ),
+        ("serves", encode_session(FrameKind.IDLE, 99), None, "ProtocolError"),
+        ("serves", encode_open(NO_SESSION, "mozart"), None, "ProtocolError"),
+        (
+            "serves",
+            encode_prepare("mozart", DecodedImage(11, 10, bytes(330))),
+            None,
+            "ProtocolError",
+        ),
+        ("serves", ProtocolFrame(FrameKind.PREPARE, b"\x00"), None, "ProtocolError"),
+        (
+            "serves",
+            ProtocolFrame(FrameKind.PREPARE, bytes(1_000)),
+            None,
+            "ProtocolError",
+        ),
     ],
     ids=[
         "a provider that fails to start",
+        "a provider that fails to start on a cause",
         "a provider that breaks",
         "a provider that draws the wrong size",
         "a request for no session",
@@ -268,10 +291,11 @@ def test_a_request_the_provider_refuses_is_answered_failed_and_the_worker_serves
         "a frame longer than its kind allows",
     ],
 )
-def test_a_worker_that_cannot_go_on_answers_failed_for_the_provider_and_ends(
+def test_a_worker_that_cannot_go_on_answers_failed_naming_the_root_and_ends(
     mode: str,
     ask: ProtocolFrame | None,
     answered: int | None,
+    error_type: str,
     start_worker: Callable[..., _Worker],
 ) -> None:
     worker = start_worker(mode)
@@ -285,7 +309,9 @@ def test_a_worker_that_cannot_go_on_answers_failed_for_the_provider_and_ends(
     failure = worker.answer()
     worker.finish()
 
-    assert decode_failed(failure.payload)[0] is FailureCode.PROVIDER
+    assert decode_failed(failure.payload) == Failure(
+        FailureCode.PROVIDER, NO_SESSION, error_type
+    )
     assert worker.process.stdout is not None
     assert worker.process.stdout.read() == b""
 

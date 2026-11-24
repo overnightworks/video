@@ -15,12 +15,15 @@ service chooses, so one process serves every open session.
 | CLOSE `{session}` | none |
 
 Any request may be answered by FAILED `{code, session}` instead, with a closed code
-and never a message, since a provider's text can hold what a person said. A frame
-longer than its kind allows is refused from its header, before its payload is read.
+and never a message, since a provider's text can hold what a person said. A FAILED for
+the whole provider also carries the class name of the failure's root cause, after the
+session, and a FAILED for one request carries none. A frame longer than its kind
+allows is refused from its header, before its payload is read.
 """
 
 from __future__ import annotations
 
+import re
 import struct
 from dataclasses import dataclass
 from enum import IntEnum
@@ -46,6 +49,12 @@ MAX_PCM_BYTES = 64 * 1024
 MAX_PICTURE_BYTES = 64 * 1024 * 1024
 MAX_PICTURES_PER_ANSWER = 128
 NO_SESSION = 0
+MAX_ERROR_TYPE_CHARACTERS = 128
+# What a name is sent as when the root's class name is not of the allowed form.
+UNNAMED = "unnamed"
+# The causes the walk to a failure's root follows before it stops.
+_MAX_CAUSE_STEPS = 16
+_ERROR_TYPE = re.compile(rf"[A-Za-z0-9_]{{1,{MAX_ERROR_TYPE_CHARACTERS}}}")
 
 _HEADER = struct.Struct("!BI")
 _SESSION = struct.Struct("!I")
@@ -111,6 +120,15 @@ class FailureCode(IntEnum):
 
 class ProtocolError(ValueError):
     """A frame the protocol does not allow."""
+
+
+@dataclass(frozen=True, slots=True)
+class Failure:
+    """What a FAILED frame reports; `error_type` is set exactly for `PROVIDER`."""
+
+    code: FailureCode
+    session: int
+    error_type: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -297,20 +315,49 @@ def decode_frames(
     return session, [Frame(body[at : at + size]) for at in range(0, len(body), size)]
 
 
-def encode_failed(code: FailureCode, session: int = NO_SESSION) -> ProtocolFrame:
-    """FAILED with `code`, for `session` or, with none, the provider's own request."""
-    return ProtocolFrame(FrameKind.FAILED, _FAILED.pack(code, session))
+def error_type_of(error: BaseException) -> str:
+    """The class name of `error`'s root cause, or `UNNAMED` when it is not a valid name.
+
+    The root is reached through `__cause__` only, in at most 16 steps; never the
+    message, which can hold a path or what a person said.
+    """
+    root = error
+    for _ in range(_MAX_CAUSE_STEPS):
+        if root.__cause__ is None:
+            break
+        root = root.__cause__
+    name = type(root).__name__
+    return name if _ERROR_TYPE.fullmatch(name) else UNNAMED
 
 
-def decode_failed(payload: bytes) -> tuple[FailureCode, int]:
-    """The code and session of a FAILED payload, or ProtocolError."""
-    if len(payload) != _FAILED.size:
+def encode_failed(
+    code: FailureCode, session: int = NO_SESSION, error_type: str | None = None
+) -> ProtocolFrame:
+    """FAILED with `code`, for `session` or, with none, the provider's own request.
+
+    A `PROVIDER` failure carries `error_type` and a `REQUEST` failure none.
+    """
+    _require_name_exactly_for_provider(code, error_type)
+    name = b"" if error_type is None else error_type.encode("ascii")
+    return ProtocolFrame(FrameKind.FAILED, _FAILED.pack(code, session) + name)
+
+
+def decode_failed(payload: bytes) -> Failure:
+    """The failure a FAILED payload reports, or ProtocolError."""
+    if len(payload) < _FAILED.size:
         raise ProtocolError
-    raw_code, session = _FAILED.unpack(payload)
+    raw_code, session = _FAILED.unpack_from(payload)
     try:
-        return FailureCode(raw_code), session
+        code = FailureCode(raw_code)
     except ValueError:
         raise ProtocolError from None
+    raw_name = payload[_FAILED.size :]
+    try:
+        name = raw_name.decode("ascii") if raw_name else None
+    except UnicodeDecodeError:
+        raise ProtocolError from None
+    _require_name_exactly_for_provider(code, name)
+    return Failure(code, session, name)
 
 
 def session_of(payload: bytes) -> int:
@@ -352,3 +399,12 @@ def _decode_look(name: bytes) -> str:
         return name.decode("utf-8")
     except UnicodeDecodeError:
         raise ProtocolError from None
+
+
+def _require_name_exactly_for_provider(
+    code: FailureCode, error_type: str | None
+) -> None:
+    if (code is FailureCode.PROVIDER) != (error_type is not None) or (
+        error_type is not None and not _ERROR_TYPE.fullmatch(error_type)
+    ):
+        raise ProtocolError
