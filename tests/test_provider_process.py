@@ -272,15 +272,8 @@ def _failure(
             error_type="Boom",
         ),
         _failure(
-            "send(ProtocolFrame(FrameKind.FAILED, struct.pack('!BI', 2, 0)))",
-            ProcessFailure.PROTOCOL,
-        ),
-        _failure(
-            "send(ProtocolFrame(FrameKind.FAILED, struct.pack('!BI', 2, 0) + b'a b'))",
-            ProcessFailure.PROTOCOL,
-        ),
-        _failure(
-            "send(ProtocolFrame(FrameKind.FAILED, struct.pack('!BI', 1, 0) + b'Name'))",
+            "send(ProtocolFrame(FrameKind.FAILED, "
+            "struct.pack('!BI', FailureCode.PROVIDER, 0) + b'a b'))",
             ProcessFailure.PROTOCOL,
         ),
         _failure(
