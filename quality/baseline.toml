@@ -2,5 +2,4 @@
 
 [clones]
 
-[job_minutes.".github/workflows/image-test.yml"]
-test = 60
+[job_minutes]
