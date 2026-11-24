@@ -1,0 +1,7 @@
+claim_id = "0d940e07ea5a485e91913c2c82bcc89b"
+agent = "Claude 935e04ab-5243-4567-a43b-a7b4826faace"
+role = "builder"
+base = "76f45f6bf48a68283b6061e650712e151842c852"
+branch = "claude/issue-123-take-webauth-0-46-0"
+scope = ["pyproject.toml", "src/video_service/callers.py", "uv.lock"]
+opened_commit = "7eb74f4de101e4511f16a0f77740c225539edd55"
