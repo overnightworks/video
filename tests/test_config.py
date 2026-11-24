@@ -218,7 +218,9 @@ def test_a_fault_inside_a_look_with_a_refused_name_names_no_look(
     """CONFIG-4."""
     path = _look_file(tmp_path, '["a SENTINEL"]\nurl = 1\n')
 
-    with pytest.raises(ValueError, match=r"VIDEO_LOOKS_FILE") as stopped:
+    with pytest.raises(
+        ValueError, match=r"VIDEO_LOOKS_FILE breaks .*\(Value error"
+    ) as stopped:
         read_look_file(path)
 
     assert "SENTINEL" not in str(stopped.value)
