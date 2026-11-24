@@ -1,5 +1,5 @@
 claim_id = "9c0d390cf16c4743b92d439fc90d1b72"
-agent = "Claude 4ce2c9a4-6d87-4ed3-86f8-feb9b2cfb3a5"
+agent = "Claude 935e04ab-5243-4567-a43b-a7b4826faace"
 role = "builder"
 base = "68ccc111b50b61a10e9c4be6c9045b151d68217d"
 branch = "claude/issue-115-image-job-every-pull-request"
