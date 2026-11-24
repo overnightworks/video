@@ -1,8 +1,0 @@
-claim_id = "2bfd57d44c0c469784fded9cc9e36a98"
-agent = "Claude 935e04ab-5243-4567-a43b-a7b4826faace"
-role = "builder"
-base = "7ee7ad4ea842b75ee5d6086b32a4fc687e302ebc"
-branch = "claude/issue-129-refused-table-name-never-printed"
-scope = ["docs/configuration.md", "src/video_service/config.py", "src/video_service/looks.py", "src/video_service/toml_file.py", "tests/test_config.py", "tests/test_looks_fetch.py"]
-opened_commit = "2f5067a258784c61a326b0d1fe23d3842539df90"
-whole_reason = "One promise of one reader: both files it reads, their documents and their proofs move together."
