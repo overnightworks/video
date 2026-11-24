@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from functools import cached_property
 from pathlib import Path
-from typing import Annotated, Final, Self
+from typing import TYPE_CHECKING, Annotated, Final, Self
 
 from pydantic import (
     BaseModel,
@@ -24,6 +24,9 @@ from webauth.https_client import is_https_url
 from video_service.looks import SourcePrefix
 from video_service.providers import ProviderName
 from video_service.toml_file import read_toml_file
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 _LOOKS_FILE_ERROR: Final = "VIDEO_LOOKS_FILE must be an absolute path"
 _SOURCES_ERROR: Final = "must be a JSON list of source prefixes"
@@ -154,12 +157,12 @@ class CallerConfig(_FileModel):
     identity: IdentityConfig
     apps: Annotated[dict[str, AppConfig], Field(min_length=1)]
 
-    @field_validator("apps")
+    @field_validator("apps", mode="before")
     @classmethod
-    def _app_names_make_login_groups(
-        cls, apps: dict[str, AppConfig]
-    ) -> dict[str, AppConfig]:
-        _login_groups(apps)
+    def _app_names_make_login_groups(cls, apps: object) -> object:
+        # Runs before the tables are read: a refused name never reaches a location.
+        if isinstance(apps, dict):
+            _login_groups(apps)
         return apps
 
     @cached_property
@@ -175,7 +178,7 @@ class CallerConfig(_FileModel):
         return self
 
 
-def _login_groups(apps: dict[str, AppConfig]) -> dict[str, GroupPath]:
+def _login_groups(apps: Mapping[str, object]) -> dict[str, GroupPath]:
     if any("/" in name for name in apps):
         raise ValueError(_APP_NAME_ERROR)
     return {name: GroupPath(f"/apps/{name}") for name in apps}

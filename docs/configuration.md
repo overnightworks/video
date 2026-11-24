@@ -39,7 +39,8 @@ service's environment.
 - CONFIG-4: `VIDEO_LOOKS_FILE` is a TOML file with one table per look, named by
 `^[A-Za-z0-9._-]{1,64}$` (a name with a dot is quoted), each holding exactly `url` and
 `sha256` (64 lowercase hex characters). A file that breaks this form or cannot be read
-stops the start naming `VIDEO_LOOKS_FILE`. An empty file offers no look.
+stops the start naming `VIDEO_LOOKS_FILE`; a fault inside a look's table names the look
+only when its name is valid. An empty file offers no look.
 
 ```toml
 [mozart]
@@ -68,8 +69,9 @@ check, or that the provider refuses, stays not ready in health and is logged wit
 shares, and its people belong to the group `/apps/<name>`, so an app name is one path
 segment. `jwks_url` is https, and each group is a webauth `GroupPath`, which owns what a
 valid group path is. An unknown key, a file that breaks this form or one that cannot be
-read stops the start, naming the field and never its value. The wire's use of the two
-tokens is [`wire.md`](wire.md#callers).
+read stops the start, naming the field and never its value; a fault inside an app's table
+names the app only when its name is valid. The wire's use of the two tokens is
+[`wire.md`](wire.md#callers).
 
 ```toml
 [identity]
