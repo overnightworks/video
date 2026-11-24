@@ -1,0 +1,8 @@
+claim_id = "668de8cc60bc41b2ac34ddf2f3ee1bf7"
+agent = "Claude 935e04ab-5243-4567-a43b-a7b4826faace"
+role = "builder"
+base = "5c5f660762bcbef1bf723f104de1b8a861ef75fa"
+branch = "claude/issue-126-interrupted-card-proof-always-ends"
+scope = ["scripts/card_supervision.py", "scripts/prove_card.py", "tests/scripts/test_prove_card.py", "tests/scripts/test_prove_card_kill.py"]
+opened_commit = "75354342bf3d20adb003385d94541adfe46b44a5"
+whole_reason = "One stop path: the script that takes the signal, its supervision and the two test modules that interrupt it are one behaviour."
