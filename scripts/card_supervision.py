@@ -234,6 +234,7 @@ def run_child(
     """
     stops, control = supervision.stops, supervision.control
     probe_run: Process | None = None
+    timer_armed = False
 
     def send_on(signum: int) -> None:
         # Once the process is reaped the group's process has ended and its id may name
@@ -242,10 +243,12 @@ def run_child(
             return
         # The group's process may not end after a stop: a thread of a library that is
         # no daemon keeps it from exiting, and nothing else would end it.
-        # A second stop that lands inside `start()` may find the timer started already.
-        if grace.ident is None:
-            with suppress(RuntimeError):
-                grace.start()
+        # The flag is set before `start()`: a second stop that lands inside it starts
+        # nothing, and a thread that cannot start raises out of the handler.
+        nonlocal timer_armed
+        if not timer_armed:
+            timer_armed = True
+            grace.start()
         # `timeout` kills its command at once on a signal, so the stop goes to the
         # group's process itself, which stops the service first and then exits.
         if not settled_at_group(probe_run, fragment, signum, control):
