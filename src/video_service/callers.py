@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from functools import partial
 from typing import TYPE_CHECKING, Final
 
-from webauth.admission import AdmissionConfig, NoAdmins
+from webauth.admission import AdmissionConfig, GroupPath, NoAdmins
 from webauth.service_callers import (
     CallerRefusalClass,
     PersonCaller,
@@ -76,7 +76,7 @@ class VideoCallers:
                 app=name,
                 admission=AdmissionConfig(
                     bound_issuer=identity.issuer,
-                    login_group=f"/apps/{name}",
+                    login_group=GroupPath(f"/apps/{name}"),
                     admin_group=NoAdmins.IN_THIS_APP,
                 ),
             )
