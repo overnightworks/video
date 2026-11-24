@@ -12,6 +12,7 @@ import pytest
 
 import card_drive
 from card_record import MEMORY_STOP, CompilerHome, Reason, StopReason, value_of
+from card_supervision import CHILD_MARKER
 from support.prove_card_support import (
     APPEARS_WITHIN_SECONDS,
     BELOW_THE_FLOOR,
@@ -41,6 +42,7 @@ GROUP_FOLLOWS_SECONDS: Final = (
 # The command's own entry point, run in a process that is the top, with the kernel
 # calls of the kill replaced by what makes one thing go wrong: a stop that arrives while
 # the end-of-group kill runs, a signal that is refused, a subreaper that cannot be set.
+# The grace a stopped group has is cut to a second in one case.
 HARNESS: Final = """
 import dataclasses
 import json
@@ -51,6 +53,7 @@ import sys
 from pathlib import Path
 
 import card_drive
+import card_supervision
 import prove_card
 from card_record import Reason, not_measured
 
@@ -151,8 +154,24 @@ controls = {
     "subreaper": dataclasses.replace(
         kernel, become_subreaper=subreaper_that_cannot_be_set
     ),
+    "short-grace": kernel,
 }
+if mode == "short-grace":
+    card_supervision.KILL_GRACE_SECONDS = 1
 raise SystemExit(prove_card.main(sys.argv[2:], controls[mode]))
+"""
+
+
+# A thread that is no daemon, as aiortc's decoder threads are, keeps the group's process
+# from ending after its cleanups; a hook the group's interpreter runs at its start.
+LINGERING_THREAD: Final = f"""
+import os
+import sys
+import threading
+import time
+
+if os.environ.get({CHILD_MARKER!r}) and sys.argv[0].endswith("prove_card.py"):
+    threading.Thread(target=time.sleep, args=(3600,)).start()
 """
 
 
@@ -469,6 +488,33 @@ def test_a_kill_that_fails_on_the_breach_path_is_closed_and_the_record_is_writte
 def _signals_sent(log: Path) -> list[int]:
     """The signal numbers the top sent through a pidfd, once it sent any."""
     return [int(line) for line in log.read_text().split()] if log.exists() else []
+
+
+def test_a_stop_ends_the_command_when_the_group_cannot_end_after_it(
+    run: Run, harness: Path, tmp_path: Path
+) -> None:
+    hook = tmp_path / "hook"
+    hook.mkdir()
+    (hook / "sitecustomize.py").write_text(LINGERING_THREAD)
+    run.environment["PYTHONPATH"] = os.pathsep.join(
+        [str(hook), run.environment["PYTHONPATH"]]
+    )
+    command = _start_with(
+        run, harness, "short-grace", "--dry-run", "--cells", "clear", "lag"
+    )
+    serving = run.wait_until(
+        lambda: "process.ready" in _log_text(run, LAG_SERVICE), APPEARS_WITHIN_SECONDS
+    )
+    os.kill(command.pid, signal.SIGTERM)
+
+    status, error = run.finish(command)
+
+    assert serving
+    assert status != 0
+    assert error.strip() == "interrupted by SIGTERM"
+    assert not run.record.exists()
+    assert run.wait_until(lambda: run.processes() == [], GONE_WITHIN_SECONDS)
+    assert list(run.scratch.iterdir()) == []
 
 
 def _log_text(run: Run, group: str) -> str:
