@@ -20,6 +20,7 @@ from threading import Timer
 from typing import TYPE_CHECKING, Final, NamedTuple
 
 from card_drive import (
+    KILL_GRACE_SECONDS,
     STOP_SIGNALS,
     end_processes_below,
     exit_on_stop,
@@ -35,7 +36,6 @@ if TYPE_CHECKING:
 
 CHILD_MARKER: Final = "PROVE_CARD_GROUP"
 PROBE_RUN: Final = "probe-run"
-KILL_GRACE_SECONDS: Final = 30
 CAP_SECONDS: Final = 1800
 
 
@@ -197,7 +197,10 @@ def service_exists(fragment: Path, control: ProcessControl) -> bool:
 def _killed_late(child: subprocess.Popen[bytes], control: ProcessControl) -> Timer:
     """The kill of everything below the command, to start once the grace has passed."""
     grace = Timer(
-        KILL_GRACE_SECONDS, end_processes_below, [control], {"spare": child.pid}
+        control.kill_grace_seconds,
+        end_processes_below,
+        [control],
+        {"spare": child.pid},
     )
     grace.daemon = True
     return grace

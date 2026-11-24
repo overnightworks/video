@@ -53,7 +53,6 @@ import sys
 from pathlib import Path
 
 import card_drive
-import card_supervision
 import prove_card
 from card_record import Reason, not_measured
 
@@ -154,10 +153,8 @@ controls = {
     "subreaper": dataclasses.replace(
         kernel, become_subreaper=subreaper_that_cannot_be_set
     ),
-    "short-grace": kernel,
+    "short-grace": dataclasses.replace(kernel, kill_grace_seconds=1),
 }
-if mode == "short-grace":
-    card_supervision.KILL_GRACE_SECONDS = 1
 raise SystemExit(prove_card.main(sys.argv[2:], controls[mode]))
 """
 
