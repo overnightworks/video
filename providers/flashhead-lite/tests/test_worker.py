@@ -11,6 +11,8 @@ from typing import TYPE_CHECKING, NoReturn
 import pytest
 from video_provider_contract.protocol import (
     ANSWER_KINDS,
+    NO_SESSION,
+    Failure,
     FailureCode,
     FrameKind,
     FrameLimits,
@@ -19,6 +21,7 @@ from video_provider_contract.protocol import (
 )
 from video_provider_contract.worker import CARD_MEMORY_MB_ENV, MAX_IMAGE_PIXELS_ENV
 from video_provider_flashhead_lite import worker
+from video_provider_flashhead_lite.renderer import NoCardError
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -85,7 +88,9 @@ def test_a_worker_on_a_host_without_a_card_answers_failed_for_the_provider_and_e
     code = process.wait(timeout=_EXIT_WITHIN_SECONDS)
 
     assert answer.kind is FrameKind.FAILED
-    assert decode_failed(answer.payload)[0] is FailureCode.PROVIDER
+    assert decode_failed(answer.payload) == Failure(
+        FailureCode.PROVIDER, NO_SESSION, NoCardError.__name__
+    )
     assert code != 0
     assert process.stdout.read() == b""
 

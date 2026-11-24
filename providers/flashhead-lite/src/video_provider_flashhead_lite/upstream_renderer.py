@@ -23,7 +23,13 @@ from typing import TYPE_CHECKING, Protocol
 import numpy as np
 from video_provider_contract import DecodedImage
 
-from video_provider_flashhead_lite.renderer import RenderError, RenderShape
+from video_provider_flashhead_lite.renderer import (
+    CapExceedsCardError,
+    NoCardError,
+    RenderError,
+    RenderShape,
+    WeightsMissingError,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator, Mapping
@@ -102,12 +108,12 @@ def allocator_fraction(cap_mebibytes: int, memory: CardMemory) -> float:
     The product of the fraction and the total never exceeds the cap.
 
     Raises:
-        RenderError: the cap exceeds the card's total or free memory.
+        CapExceedsCardError: the cap exceeds the card's total or free memory.
     """
     cap = cap_mebibytes * _BYTES_PER_MEBIBYTE
     if cap > memory.total or cap > memory.free:
         message = "the card cannot hold the memory cap"
-        raise RenderError(message)
+        raise CapExceedsCardError(message)
     return math.nextafter(cap / memory.total, 0.0)
 
 
@@ -178,17 +184,18 @@ class UpstreamRenderer:
         """Cap the allocator, load Lite, warm it up and report its shape.
 
         Raises:
-            RenderError: no card is visible, the cap exceeds the card's total or
-                free memory, or the weights directory is missing.
+            NoCardError: no card is visible.
+            CapExceedsCardError: the cap exceeds the card's total or free memory.
+            WeightsMissingError: the weights directory is missing.
         """
         memory = self._card.memory()
         if memory is None:
             message = "no card is visible"
-            raise RenderError(message)
+            raise NoCardError(message)
         fraction = allocator_fraction(self._cap_mebibytes, memory)
         if not self._weights.root.is_dir():
             message = "the weights directory is missing"
-            raise RenderError(message)
+            raise WeightsMissingError(message)
         self._card.limit_allocator(fraction)
         upstream = self._card.load(
             self._weights, model_type=_MODEL_TYPE, world_size=_WORLD_SIZE

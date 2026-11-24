@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 from video_provider_contract import ProviderFailedError
+from video_provider_flashhead_lite.renderer import NoCardError
 
 from video_service.config import Settings
 from video_service.provider_process import ProcessFailure
@@ -34,9 +35,10 @@ def test_without_a_card_the_real_worker_refuses_and_the_provider_is_failed(
 
     assert provider.failed
     (record,) = caplog.records
-    assert (record.reason, record.phase) == (  # type: ignore[attr-defined]
+    assert (record.reason, record.phase, record.error_type) == (  # type: ignore[attr-defined]
         ProcessFailure.REPORTED.value,
         "before_ready",
+        NoCardError.__name__,
     )
     assert record.getMessage() == "provider.failed"
     stock = vars(logging.makeLogRecord({}))
@@ -44,4 +46,5 @@ def test_without_a_card_the_real_worker_refuses_and_the_provider_is_failed(
         "reason",
         "phase",
         "exit_status",
+        "error_type",
     }

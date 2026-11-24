@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING
 import pytest
 from pydantic import BaseModel, ConfigDict, Field
 from video_provider_contract.worker import CARD_MEMORY_MB_ENV
+from video_provider_flashhead_lite.renderer import NoCardError
 
 from support.image_support import (
     HEALTH,
@@ -424,7 +425,7 @@ def test_without_a_card_health_names_the_provider_not_ready(service: str) -> Non
     assert not health.provider.ready
 
 
-def test_without_a_card_the_log_carries_the_refusal_as_reported_and_none_of_its_text(
+def test_without_a_card_the_log_names_the_refusal_s_type_and_none_of_its_text(
     service: str,
 ) -> None:
     logs = logs_of(service)
@@ -434,7 +435,13 @@ def test_without_a_card_the_log_carries_the_refusal_as_reported_and_none_of_its_
 
     assert failed["reason"] == ProcessFailure.REPORTED.value
     assert failed["phase"] == "before_ready"
-    assert set(failed) - set(started) == {"reason", "phase", "exit_status"}
+    assert failed["error_type"] == NoCardError.__name__
+    assert set(failed) - set(started) == {
+        "reason",
+        "phase",
+        "exit_status",
+        "error_type",
+    }
     assert "Traceback" not in logs
 
 
