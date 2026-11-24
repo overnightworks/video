@@ -1,8 +1,0 @@
-claim_id = "563b9770ef6743809fafdecbda8f6473"
-agent = "Claude 935e04ab-5243-4567-a43b-a7b4826faace"
-role = "builder"
-base = "68ccc111b50b61a10e9c4be6c9045b151d68217d"
-branch = "claude/issue-107-provider-failure-names-its-error-type"
-scope = ["docs/ARCHITECTURE.md", "providers/flashhead-lite/src/video_provider_flashhead_lite/renderer.py", "providers/flashhead-lite/src/video_provider_flashhead_lite/upstream_renderer.py", "providers/flashhead-lite/tests/test_upstream_renderer.py", "providers/flashhead-lite/tests/test_worker.py", "providers/provider-contract/src/video_provider_contract/protocol.py", "providers/provider-contract/src/video_provider_contract/worker.py", "providers/provider-contract/tests/test_protocol.py", "providers/provider-contract/tests/test_worker.py", "src/video_service/provider_process.py", "tests/support/worker_support.py", "tests/test_image.py", "tests/test_provider_process.py", "tests/test_providers_flashhead_lite.py"]
-opened_commit = "b482e90211ee9426c582fb629035f68b969c95e2"
-whole_reason = "One frame change: the worker that writes FAILED, the service that reads it and every test that decodes it move together, or the two ends disagree on the frame."
