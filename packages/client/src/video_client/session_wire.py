@@ -170,11 +170,12 @@ class _ServerEvent(BaseModel):
 
 
 class SessionInfo(BaseModel):
-    """The session as created: its id, its look and the picture it draws."""
+    """The session as created: its id, its look, its picture and its audio limit."""
 
     id: str
     look: LookName
     video: VideoFormat
+    max_queued_audio_seconds: float
 
 
 class SessionCreated(_ServerEvent):
