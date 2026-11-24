@@ -21,9 +21,11 @@ from PIL import Image
 from pydantic import (
     AfterValidator,
     BaseModel,
+    BeforeValidator,
     ConfigDict,
     StringConstraints,
     TypeAdapter,
+    ValidationError,
 )
 from video_provider_contract import DecodedImage
 
@@ -81,8 +83,24 @@ class LookSource(BaseModel):
     sha256: Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
 
 
+_LOOK_NAME = TypeAdapter(LookName)
+
+
+def _look_names_are_valid(tables: object) -> object:
+    # Runs before the tables are read: a refused name never reaches a location.
+    if isinstance(tables, dict):
+        for name in tables:
+            try:
+                _LOOK_NAME.validate_python(name)
+            except ValidationError:
+                message = "a look's name breaks the look name form"
+                raise ValueError(message) from None
+    return tables
+
+
 _LOOK_FILE = TypeAdapter(
-    dict[LookName, LookSource], config=ConfigDict(hide_input_in_errors=True)
+    Annotated[dict[LookName, LookSource], BeforeValidator(_look_names_are_valid)],
+    config=ConfigDict(hide_input_in_errors=True),
 )
 
 

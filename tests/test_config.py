@@ -212,6 +212,27 @@ def test_a_look_file_that_breaks_the_form_stops_the_start(
         read_look_file(path)
 
 
+def test_a_fault_inside_a_look_with_a_refused_name_names_no_look(
+    tmp_path: Path,
+) -> None:
+    """CONFIG-4."""
+    path = _look_file(tmp_path, '["a SENTINEL"]\nurl = 1\n')
+
+    with pytest.raises(ValueError, match=r"VIDEO_LOOKS_FILE") as stopped:
+        read_look_file(path)
+
+    assert "SENTINEL" not in str(stopped.value)
+    assert "url" not in str(stopped.value)
+
+
+def test_a_fault_inside_a_look_with_a_valid_name_names_the_look(tmp_path: Path) -> None:
+    """CONFIG-4."""
+    path = _look_file(tmp_path, '[mozart]\nurl = "https://x/"\nsha256 = "ABC"\n')
+
+    with pytest.raises(ValueError, match=r"mozart\.sha256"):
+        read_look_file(path)
+
+
 @pytest.mark.parametrize("content", [None, b"\xff\xfe"], ids=["missing", "not-utf8"])
 def test_a_look_file_that_cannot_be_read_names_its_setting(
     content: bytes | None, tmp_path: Path
@@ -337,6 +358,32 @@ def test_a_caller_file_that_breaks_the_form_names_the_field_and_echoes_no_value(
         load_caller_config(path)
 
     assert "SENTINEL" not in str(stopped.value)
+
+
+@pytest.mark.parametrize("name", [" SENTINEL", "a/b SENTINEL"])
+def test_a_fault_inside_an_app_with_a_refused_name_names_no_app(
+    name: str, tmp_path: Path
+) -> None:
+    """CONFIG-6."""
+    path = write_caller_config(
+        tmp_path, caller_config_text(apps=f'[apps."{name}"]\nworkload_client = 1\n')
+    )
+
+    with pytest.raises(ValueError, match=r"apps") as stopped:
+        load_caller_config(path)
+
+    assert "SENTINEL" not in str(stopped.value)
+    assert "workload_client" not in str(stopped.value)
+
+
+def test_a_fault_inside_an_app_with_a_valid_name_names_the_app(tmp_path: Path) -> None:
+    """CONFIG-6."""
+    path = write_caller_config(
+        tmp_path, caller_config_text(apps="[apps.quiz]\nworkload_client = 1\n")
+    )
+
+    with pytest.raises(ValueError, match=r"apps\.quiz\.workload_client"):
+        load_caller_config(path)
 
 
 @pytest.mark.parametrize("content", [None, b"\xff\xfe", b"not toml ["])

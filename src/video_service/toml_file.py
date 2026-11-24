@@ -30,6 +30,8 @@ def read_toml_file[Document](
     except ValidationError as error:
         faults = "; ".join(
             f"{'.'.join(map(str, fault['loc']))}: {fault['msg']}"
+            if fault["loc"]
+            else fault["msg"]
             for fault in error.errors(include_input=False, include_url=False)
         )
         message = f"{variable} breaks {form} ({faults})"
