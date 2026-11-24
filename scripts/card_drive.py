@@ -223,7 +223,7 @@ def _pidfd_send_signal(pidfd: int, signum: int) -> None:
 
 @dataclass(frozen=True)
 class ProcessControl:
-    """What the kill and a forwarded stop ask of the kernel; a test swaps it."""
+    """The kernel calls the kill and a forwarded stop make, and the grace a test may cut."""
 
     become_subreaper: Callable[[], None]
     list_processes: Callable[[], list[int]]
