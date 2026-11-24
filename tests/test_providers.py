@@ -1,4 +1,4 @@
-"""Where a provider's worker is: under the root or beside the interpreter (CONFIG-2)."""
+"""Where a provider's worker is: under the root or beside the interpreter."""
 
 from __future__ import annotations
 
@@ -27,6 +27,7 @@ def _worker_script(name: ProviderName) -> str:
 def test_with_a_provider_root_the_worker_is_a_script_the_provider_declares(
     name: ProviderName,
 ) -> None:
+    """CONFIG-2."""
     root = Path("/opt/providers")
 
     worker = worker_executable(name, root)
@@ -36,6 +37,7 @@ def test_with_a_provider_root_the_worker_is_a_script_the_provider_declares(
 
 
 def test_without_a_provider_root_the_worker_is_beside_the_interpreter() -> None:
+    """CONFIG-2."""
     worker = worker_executable(ProviderName.FAKE, None)
 
     assert worker.parent == Path(sys.executable).parent

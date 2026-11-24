@@ -1,4 +1,4 @@
-"""A viewer's offer gets one stream: Opus and VP8, idle between sentences (WIRE-10)."""
+"""A viewer's offer gets one stream: Opus and VP8, idle between sentences."""
 
 from __future__ import annotations
 
@@ -28,6 +28,8 @@ _LONG_MS = 20_000
 def test_an_offer_from_the_opener_is_answered_with_every_candidate_and_a_location(
     live: Callable[..., None],
 ) -> None:
+    """WIRE-10."""
+
     async def scenario(service: Service) -> None:
         session = await service.open_session()
         watcher = Watcher()
@@ -49,6 +51,8 @@ def test_an_offer_from_the_opener_is_answered_with_every_candidate_and_a_locatio
 def test_a_viewer_of_a_silent_session_gets_dark_frames_at_the_frame_rate_and_silence(
     live: Callable[..., None],
 ) -> None:
+    """WIRE-10."""
+
     async def scenario(service: Service) -> None:
         session = await service.open_session()
 
@@ -73,6 +77,8 @@ def test_a_viewer_of_a_silent_session_gets_dark_frames_at_the_frame_rate_and_sil
 def test_a_beep_reaches_the_viewer_as_sound_and_a_bright_frame_then_idle_returns(
     live: Callable[..., None],
 ) -> None:
+    """WIRE-10."""
+
     async def scenario(service: Service) -> None:
         session = await service.open_session()
         watcher = await service.watch(session)
@@ -88,6 +94,8 @@ def test_a_beep_reaches_the_viewer_as_sound_and_a_bright_frame_then_idle_returns
 
 
 def test_the_idle_picture_and_silence_follow_a_clear(live: Callable[..., None]) -> None:
+    """WIRE-10."""
+
     async def scenario(service: Service) -> None:
         session = await service.open_session()
         watcher = await service.watch(session)
@@ -109,6 +117,8 @@ def _answer_of(response_text: str) -> SessionDescription:
 def test_an_offer_listing_h264_first_is_answered_with_opus_and_vp8_in_one_stream(
     live: Callable[..., None],
 ) -> None:
+    """WIRE-10."""
+
     async def scenario(service: Service) -> None:
         session = await service.open_session()
         watcher = Watcher()
@@ -134,6 +144,8 @@ def test_an_offer_listing_h264_first_is_answered_with_opus_and_vp8_in_one_stream
 def test_a_relay_policy_gathers_no_host_or_server_reflexive_candidate(
     live: Callable[..., None],
 ) -> None:
+    """WIRE-10."""
+
     async def scenario(service: Service) -> None:
         session = await service.open_session(update=False)
         await session.update(ICE_SERVERS, "relay")

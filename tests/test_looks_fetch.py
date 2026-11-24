@@ -1,4 +1,4 @@
-"""The start checks of a look's image: source, size, digest, format (CONFIG-5)."""
+"""The start checks of a look's image: source, size, digest, format."""
 
 from __future__ import annotations
 
@@ -26,6 +26,7 @@ def test_each_image_format_a_look_may_have_is_ready(
     source: LookServer,
     build_runtime: BuildRuntime,
 ) -> None:
+    """CONFIG-5."""
     runtime = build_runtime({"mozart": source.host("face", picture(fmt=fmt).data)})
 
     runtime.load()
@@ -36,6 +37,7 @@ def test_each_image_format_a_look_may_have_is_ready(
 def test_the_pixel_cap_holds_above_the_pillow_default(
     source: LookServer, build_runtime: BuildRuntime, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """CONFIG-5."""
     monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 1)
     runtime = build_runtime({"mozart": hosted_picture(source)})
 
@@ -127,6 +129,7 @@ def test_a_look_that_fails_a_check_is_not_ready_logs_why_and_the_others_serve(
     build_runtime: BuildRuntime,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
+    """CONFIG-5."""
     runtime = build_runtime(
         {"refused": make(source), "mozart": hosted_picture(source)},
         sources=(source.base_url, _NOBODY),
@@ -159,6 +162,7 @@ def test_a_look_that_fails_a_check_is_not_ready_logs_why_and_the_others_serve(
 def test_a_look_url_that_leaves_the_allowed_source_is_never_fetched(
     path: str, source: LookServer, build_runtime: BuildRuntime
 ) -> None:
+    """CONFIG-5."""
     shown = picture()
     runtime = build_runtime(
         {"mozart": LookSource(url=source.url(path), sha256=shown.sha256)}
@@ -176,6 +180,7 @@ def test_a_look_url_that_leaves_the_allowed_source_is_never_fetched(
 def test_a_look_from_a_source_that_is_not_allowed_is_never_fetched(
     allowed: tuple[str, ...], source: LookServer, build_runtime: BuildRuntime
 ) -> None:
+    """CONFIG-5."""
     runtime = build_runtime({"mozart": hosted_picture(source)}, sources=allowed)
 
     runtime.load()

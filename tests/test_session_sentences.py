@@ -1,4 +1,4 @@
-"""Sentences and their playback (WIRE-5, WIRE-7) and the failures that end a session."""
+"""Sentences and their playback and the failures that end a session."""
 
 from __future__ import annotations
 
@@ -89,6 +89,7 @@ def _playback(
 def test_a_sentence_starts_with_its_first_frame_and_stops_with_its_last(
     client: TestClient, rate: int
 ) -> None:
+    """WIRE-5."""
     with opened(client) as session:
         _speak(session, "s1", _SHORT_MS, rate)
 
@@ -98,6 +99,7 @@ def test_a_sentence_starts_with_its_first_frame_and_stops_with_its_last(
 
 
 def test_audio_in_several_frames_is_one_sentence(client: TestClient) -> None:
+    """WIRE-5."""
     with opened(client) as session:
         start, end = sentence_events("s1")
         session.send_json(start)
@@ -111,6 +113,7 @@ def test_audio_in_several_frames_is_one_sentence(client: TestClient) -> None:
 
 
 def test_sentences_play_in_order_back_to_back(client: TestClient) -> None:
+    """WIRE-5."""
     with opened(client) as session:
         for sentence in ("a", "b", "c"):
             _speak(session, sentence, _SHORT_MS)
@@ -130,6 +133,7 @@ def test_sentences_play_in_order_back_to_back(client: TestClient) -> None:
 def test_a_sentence_whose_audio_comes_late_is_not_a_provider_lag(
     started: Callable[..., Runtime], wire: Callable[[Runtime], TestClient]
 ) -> None:
+    """WIRE-7."""
     clock = FakeClock()
     client = wire(started(max_lag_ms=500, pacing=clock.pacing))
     with opened(client) as session:
@@ -151,6 +155,7 @@ def test_a_sentence_whose_audio_comes_late_is_not_a_provider_lag(
 def test_a_sentence_that_the_client_ends_late_is_not_a_provider_lag(
     started: Callable[..., Runtime], wire: Callable[[Runtime], TestClient]
 ) -> None:
+    """WIRE-7."""
     clock = FakeClock()
     provider = FakeProvider(render_seconds=_FRAME_SECONDS, sleep=clock.advance)
     client = wire(started(provider, max_lag_ms=500, pacing=clock.pacing))
@@ -219,6 +224,7 @@ def test_a_sentence_that_the_client_ends_late_is_not_a_provider_lag(
 def test_a_sentence_event_out_of_order_or_not_valid_ends_the_session(
     client: TestClient, events: list[dict[str, object]], param: str
 ) -> None:
+    """WIRE-5."""
     with opened(client) as session:
         for event in events:
             session.send_json(event)
@@ -231,6 +237,7 @@ def test_a_sentence_event_out_of_order_or_not_valid_ends_the_session(
 def test_a_sentence_id_that_is_still_queued_cannot_start_again(
     client: TestClient,
 ) -> None:
+    """WIRE-5."""
     with opened(client) as session:
         start, end = sentence_events("a")
         session.send_json(start)
@@ -248,6 +255,7 @@ def test_a_sentence_id_that_is_still_queued_cannot_start_again(
 def test_audio_outside_an_open_sentence_or_of_an_odd_length_ends_the_session(
     client: TestClient, frame: bytes
 ) -> None:
+    """WIRE-5."""
     with opened(client) as session:
         if len(frame) == 1:
             session.send_json(sentence_events("a")[0])
@@ -263,6 +271,7 @@ def test_audio_outside_an_open_sentence_or_of_an_odd_length_ends_the_session(
 def test_queued_audio_above_the_bound_ends_the_session_too_large(
     started: Callable[..., Runtime], wire: Callable[[Runtime], TestClient]
 ) -> None:
+    """WIRE-5."""
     client = wire(started(max_queued_audio_seconds=1))
     with opened(client) as session:
         session.send_json(sentence_events("a")[0])
@@ -278,6 +287,7 @@ def test_queued_audio_above_the_bound_ends_the_session_too_large(
 def test_audio_the_provider_already_played_no_longer_counts_as_queued(
     started: Callable[..., Runtime], wire: Callable[[Runtime], TestClient]
 ) -> None:
+    """WIRE-5."""
     client = wire(started(max_queued_audio_seconds=0.3))
     with opened(client) as session:
         for sentence in ("a", "b", "c"):
@@ -293,6 +303,7 @@ def test_audio_the_provider_already_played_no_longer_counts_as_queued(
 def test_an_event_above_the_size_bound_ends_the_session_too_large(
     client: TestClient,
 ) -> None:
+    """WIRE-5."""
     with opened(client) as session:
         session.send_json({"type": "sentence.start", "sentence": "x" * MAX_EVENT_BYTES})
         error = failure_of(receive(session))
@@ -310,6 +321,7 @@ def test_a_provider_that_falls_behind_or_fails_ends_the_session_unavailable(
     wire: Callable[[Runtime], TestClient],
     fails: dict[str, object],
 ) -> None:
+    """WIRE-7."""
     clock = FakeClock()
     provider = FakeProvider(**fails, sleep=clock.advance)
     client = wire(started(provider, max_lag_ms=50, max_sessions=1, pacing=clock.pacing))
@@ -328,6 +340,7 @@ def test_a_provider_that_falls_behind_or_fails_ends_the_session_unavailable(
 def test_a_provider_that_never_answers_ends_the_session_unavailable_and_frees_the_place(
     started: Callable[..., Runtime], wire: Callable[[Runtime], TestClient]
 ) -> None:
+    """WIRE-7."""
     held = threading.Event()
     client = wire(
         started(FakeProvider(finish_gate=held), max_lag_ms=50, max_sessions=1)
@@ -350,6 +363,7 @@ def test_a_provider_that_never_answers_ends_the_session_unavailable_and_frees_th
 def test_a_client_that_leaves_while_a_sentence_plays_frees_the_place(
     started: Callable[..., Runtime], wire: Callable[[Runtime], TestClient]
 ) -> None:
+    """WIRE-5."""
     client = wire(started(max_sessions=1))
     with opened(client) as session:
         _speak(session, "a", 10_000)
@@ -362,6 +376,7 @@ def test_a_client_that_leaves_while_a_sentence_plays_frees_the_place(
 def test_chunked_sentences_back_to_back_leave_with_no_frame_between_and_none_late(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    """WIRE-7."""
     clock = FakeClock()
     leaves = record_leaves(monkeypatch, clock)
     script = [waiting(clock, _START_UP_SECONDS)]
@@ -383,6 +398,7 @@ def test_chunked_sentences_back_to_back_leave_with_no_frame_between_and_none_lat
 
 
 def test_a_message_of_any_length_never_makes_a_call_longer_than_one_render() -> None:
+    """WIRE-7."""
     clock = FakeClock()
     worker = clock.worker()
     start, end = sentence_events("long")

@@ -1,4 +1,4 @@
-"""A session that has ended frees its place for the next upgrade (WIRE-3, WIRE-12)."""
+"""A session that has ended frees its place for the next upgrade."""
 
 from __future__ import annotations
 
@@ -138,6 +138,7 @@ async def _admitted_once_free(service: _Service) -> ClientConnection:
 def test_an_upgrade_after_a_session_ended_waits_for_its_place(
     run_on_service: Callable[[Scenario], None],
 ) -> None:
+    """WIRE-3."""
     outcome: list[object] = []
 
     async def scenario(service: _Service) -> None:
@@ -158,6 +159,7 @@ def test_an_upgrade_after_a_session_ended_waits_for_its_place(
 def test_health_counts_no_open_session_while_an_ended_one_holds_its_place(
     run_on_service: Callable[[Scenario], None],
 ) -> None:
+    """WIRE-12."""
     outcome: list[object] = []
 
     async def scenario(service: _Service) -> None:
@@ -172,6 +174,7 @@ def test_health_counts_no_open_session_while_an_ended_one_holds_its_place(
 def test_only_one_of_two_waiting_upgrades_takes_the_freed_place(
     run_on_service: Callable[[Scenario], None],
 ) -> None:
+    """WIRE-3."""
     outcome: list[object] = []
 
     async def scenario(service: _Service) -> None:
@@ -195,6 +198,7 @@ def test_only_one_of_two_waiting_upgrades_takes_the_freed_place(
 def test_an_upgrade_while_a_live_session_holds_the_place_is_busy(
     run_on_service: Callable[[Scenario], None],
 ) -> None:
+    """WIRE-3."""
     outcome: list[int] = []
 
     async def scenario(service: _Service) -> None:
@@ -214,6 +218,7 @@ def test_an_upgrade_while_a_live_session_holds_the_place_is_busy(
 def test_a_waiting_upgrade_whose_client_left_gives_the_place_to_the_next_one(
     run_on_service: Callable[[Scenario], None],
 ) -> None:
+    """WIRE-3."""
     outcome: list[object] = []
 
     async def scenario(service: _Service) -> None:
@@ -233,6 +238,7 @@ def test_a_waiting_upgrade_whose_client_left_gives_the_place_to_the_next_one(
 
 
 def test_the_place_counts_open_until_the_session_has_closed_its_socket() -> None:
+    """WIRE-3."""
     clock = FakeClock()
     socket = scripted([{"type": "no.such.event"}], sentences=0)
     seen: list[int | None] = []
@@ -252,6 +258,7 @@ def test_the_place_counts_open_until_the_session_has_closed_its_socket() -> None
 def test_a_session_whose_client_left_counts_open_no_more_while_its_viewers_wind_down(
     live: Callable[..., None],
 ) -> None:
+    """WIRE-3."""
     winding_down = asyncio.Event()
     release = asyncio.Event()
     open_sessions: list[int] = []

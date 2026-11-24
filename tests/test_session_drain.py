@@ -1,4 +1,4 @@
-"""The drain (WIRE-11): not ready at once, no new sessions, the playing one ends."""
+"""The drain: not ready at once, no new sessions, the playing one ends."""
 
 from __future__ import annotations
 
@@ -59,6 +59,7 @@ def _speak(session: WebSocketTestSession, milliseconds: int) -> None:
 def test_an_idle_session_closes_with_service_restart_when_the_drain_begins(
     client: TestClient, runtime: Runtime
 ) -> None:
+    """WIRE-11."""
     with opened(client) as session:
         _begin_drain(client, runtime)
 
@@ -70,6 +71,7 @@ def test_an_idle_session_closes_with_service_restart_when_the_drain_begins(
 def test_a_session_still_waiting_for_its_first_event_closes_when_the_drain_begins(
     client: TestClient, runtime: Runtime
 ) -> None:
+    """WIRE-11."""
     with connect(client) as session:
         assert isinstance(receive(session), SessionCreated)
         _begin_drain(client, runtime)
@@ -82,6 +84,7 @@ def test_a_session_still_waiting_for_its_first_event_closes_when_the_drain_begin
 def test_a_draining_service_is_not_ready_and_refuses_new_sessions(
     client: TestClient, runtime: Runtime
 ) -> None:
+    """WIRE-11."""
     _begin_drain(client, runtime)
 
     health = Health.model_validate(client.get("/health").json())
@@ -98,6 +101,7 @@ def test_a_draining_service_is_not_ready_and_refuses_new_sessions(
 def test_the_playing_sentence_finishes_before_the_session_closes(
     client: TestClient, runtime: Runtime
 ) -> None:
+    """WIRE-11."""
     with opened(client) as session:
         _speak(session, 200)
         assert isinstance(receive(session), OutputAudioBufferStarted)
@@ -118,6 +122,7 @@ def test_the_playing_sentence_finishes_before_the_session_closes(
 def test_a_clear_during_the_drain_ends_the_session_at_once(
     client: TestClient, runtime: Runtime
 ) -> None:
+    """WIRE-11."""
     with opened(client) as session:
         _speak(session, 10_000)
         assert isinstance(receive(session), OutputAudioBufferStarted)
@@ -134,6 +139,7 @@ def test_a_clear_during_the_drain_ends_the_session_at_once(
 def test_the_service_is_idle_once_the_drained_sessions_have_ended(
     client: TestClient, runtime: Runtime
 ) -> None:
+    """WIRE-11."""
     with opened(client) as session:
         _begin_drain(client, runtime)
         close_code(session)
