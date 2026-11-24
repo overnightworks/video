@@ -220,6 +220,16 @@ def _waited_for(
     )
 
 
+def _started(command: list[str], group: str) -> subprocess.Popen[bytes]:
+    """`command` started as the group's process, marked with the group."""
+    # No `with`: its exit waits for `probe-run` without a bound, and a kill that failed
+    # leaves it alive. The command's own exit then takes the parent-death chain to it.
+    # The operator names the audio path that the command passes on.
+    return subprocess.Popen(  # NOSONAR(S8705)  # noqa: S603 - probe-run and this python
+        command, env={**os.environ, CHILD_MARKER: group}
+    )
+
+
 def run_child(
     command: list[str],
     group: str,
@@ -261,12 +271,7 @@ def run_child(
         stops.record(signum, frame)
         send_on(signum)
 
-    # No `with`: its exit waits for `probe-run` without a bound, and a kill that failed
-    # leaves it alive. The command's own exit then takes the parent-death chain to it.
-    # The operator names the audio path that the command passes on.
-    child = subprocess.Popen(  # NOSONAR(S8705)  # noqa: S603 - probe-run and this python
-        command, env={**os.environ, CHILD_MARKER: group}
-    )
+    child = _started(command, group)
     grace = _killed_late(child, control)
     # The start time that tells `probe-run` from a process that took its id.
     with suppress(OSError):
