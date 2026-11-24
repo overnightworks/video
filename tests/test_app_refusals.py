@@ -1,4 +1,4 @@
-"""The version and the refusals (WIRE-1); what the service does not offer (WIRE-13)."""
+"""The version and the refusals; what the service does not offer."""
 
 from __future__ import annotations
 
@@ -39,6 +39,7 @@ def _refusal_of(client: TestClient, method: str, path: str) -> tuple[int, Refusa
 def test_a_version_other_than_the_supported_is_refused_whatever_the_method(
     client: TestClient, method: str, path: str
 ) -> None:
+    """WIRE-1."""
     status, refusal = _refusal_of(client, method, path)
 
     assert status == HTTPStatus.BAD_REQUEST
@@ -62,6 +63,7 @@ def test_a_version_other_than_the_supported_is_refused_whatever_the_method(
     ],
 )
 def test_any_other_path_is_not_found(client: TestClient, path: str) -> None:
+    """WIRE-1."""
     status, refusal = _refusal_of(client, "GET", path)
 
     assert status == HTTPStatus.NOT_FOUND
@@ -72,6 +74,7 @@ def test_any_other_path_is_not_found(client: TestClient, path: str) -> None:
 def test_a_method_that_health_does_not_offer_is_not_found(
     client: TestClient, method: str
 ) -> None:
+    """WIRE-1."""
     status, refusal = _refusal_of(client, method, "/health")
 
     assert status == HTTPStatus.NOT_FOUND
@@ -98,6 +101,7 @@ def test_a_method_that_health_does_not_offer_is_not_found(
 def test_no_schema_docs_look_administration_or_recording_is_offered(
     client: TestClient, method: str, path: str
 ) -> None:
+    """WIRE-13."""
     status, refusal = _refusal_of(client, method, path)
 
     assert status == HTTPStatus.NOT_FOUND
@@ -105,6 +109,7 @@ def test_no_schema_docs_look_administration_or_recording_is_offered(
 
 
 def test_a_refusal_never_echoes_the_request(client: TestClient) -> None:
+    """WIRE-1."""
     answer = client.get("/v1/an-unlikely-path-name?secret=hunter2")
 
     assert "unlikely" not in answer.text
@@ -114,6 +119,7 @@ def test_a_refusal_never_echoes_the_request(client: TestClient) -> None:
 def test_a_refused_request_logs_its_status_as_a_plain_number(
     client: TestClient, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    """WIRE-1."""
     client.get("/nowhere")
 
     (line,) = [

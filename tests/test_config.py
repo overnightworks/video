@@ -1,4 +1,4 @@
-"""What the process refuses to start on: settings and files (CONFIG-1 to 4, 6)."""
+"""What the process refuses to start on: settings and files."""
 
 from __future__ import annotations
 
@@ -33,6 +33,7 @@ def _no_video_settings(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_the_provider_alone_is_enough_to_start(monkeypatch: pytest.MonkeyPatch) -> None:
+    """CONFIG-1."""
     monkeypatch.setenv("VIDEO_PROVIDER", "fake")
 
     settings = load_settings()
@@ -45,6 +46,7 @@ def test_the_provider_alone_is_enough_to_start(monkeypatch: pytest.MonkeyPatch) 
 def test_the_provider_root_is_an_absolute_path(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    """CONFIG-1."""
     monkeypatch.setenv("VIDEO_PROVIDER", "fake")
     monkeypatch.setenv("VIDEO_PROVIDER_ROOT", str(tmp_path))
 
@@ -52,6 +54,7 @@ def test_the_provider_root_is_an_absolute_path(
 
 
 def test_a_missing_provider_names_its_setting() -> None:
+    """CONFIG-1."""
     with pytest.raises(ValueError, match=r"VIDEO_PROVIDER"):
         load_settings()
 
@@ -94,6 +97,7 @@ def test_a_missing_provider_names_its_setting() -> None:
 def test_a_setting_that_is_not_valid_stops_the_start_naming_it_and_echoing_nothing(
     name: str, value: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """CONFIG-1."""
     monkeypatch.setenv("VIDEO_PROVIDER", "fake")
     monkeypatch.setenv(name, value)
 
@@ -106,6 +110,7 @@ def test_a_setting_that_is_not_valid_stops_the_start_naming_it_and_echoing_nothi
 def test_an_empty_card_memory_stops_the_start_naming_it(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """CONFIG-3."""
     monkeypatch.setenv("VIDEO_PROVIDER", "fake")
     monkeypatch.setenv("VIDEO_CARD_MEMORY_MB", "")
 
@@ -116,6 +121,7 @@ def test_an_empty_card_memory_stops_the_start_naming_it(
 def test_flashhead_lite_without_a_card_memory_stops_the_start_naming_it(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """CONFIG-3."""
     monkeypatch.setenv("VIDEO_PROVIDER", "flashhead-lite")
 
     with pytest.raises(ValueError, match="VIDEO_CARD_MEMORY_MB"):
@@ -126,6 +132,7 @@ def test_flashhead_lite_without_a_card_memory_stops_the_start_naming_it(
 def test_flashhead_lite_reads_any_card_memory_of_at_least_one(
     cap: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """CONFIG-3."""
     monkeypatch.setenv("VIDEO_PROVIDER", "flashhead-lite")
     monkeypatch.setenv("VIDEO_CARD_MEMORY_MB", cap)
 
@@ -136,6 +143,7 @@ def test_flashhead_lite_reads_any_card_memory_of_at_least_one(
 
 
 def test_fake_needs_no_card_memory(monkeypatch: pytest.MonkeyPatch) -> None:
+    """CONFIG-3."""
     monkeypatch.setenv("VIDEO_PROVIDER", "fake")
 
     assert load_settings().card_memory_mb is None
@@ -148,6 +156,7 @@ def test_fake_needs_no_card_memory(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_a_source_with_a_clean_path_is_allowed(
     prefix: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """CONFIG-5."""
     monkeypatch.setenv("VIDEO_PROVIDER", "fake")
     monkeypatch.setenv("VIDEO_LOOK_SOURCES", f'["{prefix}"]')
 
@@ -161,6 +170,7 @@ def _look_file(directory: Path, text: str) -> Path:
 
 
 def test_the_look_file_names_each_look_with_its_image_source(tmp_path: Path) -> None:
+    """CONFIG-4."""
     path = _look_file(
         tmp_path,
         f'[mozart]\nurl = "https://images.example/looks/m.png"\nsha256 = "{_SHA256}"\n'
@@ -175,6 +185,7 @@ def test_the_look_file_names_each_look_with_its_image_source(tmp_path: Path) -> 
 
 
 def test_an_empty_look_file_offers_no_look(tmp_path: Path) -> None:
+    """CONFIG-4."""
     assert read_look_file(_look_file(tmp_path, "")) == {}
 
 
@@ -194,6 +205,7 @@ def test_an_empty_look_file_offers_no_look(tmp_path: Path) -> None:
 def test_a_look_file_that_breaks_the_form_stops_the_start(
     text: str, tmp_path: Path
 ) -> None:
+    """CONFIG-4."""
     path = _look_file(tmp_path, text)
 
     with pytest.raises(ValueError, match=r"VIDEO_LOOKS_FILE"):
@@ -204,6 +216,7 @@ def test_a_look_file_that_breaks_the_form_stops_the_start(
 def test_a_look_file_that_cannot_be_read_names_its_setting(
     content: bytes | None, tmp_path: Path
 ) -> None:
+    """CONFIG-4."""
     path = tmp_path / "looks.toml"
     if content is not None:
         path.write_bytes(content)
@@ -215,6 +228,7 @@ def test_a_look_file_that_cannot_be_read_names_its_setting(
 def test_the_runtime_composes_the_provider_and_the_looks_the_settings_name(
     source: LookServer, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """CONFIG-1."""
     shown = source.host("mozart.png", picture().data)
     path = _look_file(
         tmp_path, f'[mozart]\nurl = "{shown.url}"\nsha256 = "{shown.sha256}"\n'
@@ -234,6 +248,7 @@ def test_the_runtime_composes_the_provider_and_the_looks_the_settings_name(
 def test_the_runtime_offers_no_look_without_a_look_file(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """CONFIG-4."""
     monkeypatch.setenv("VIDEO_PROVIDER", "fake")
     runtime = Runtime.from_settings(load_settings())
 
@@ -243,6 +258,7 @@ def test_the_runtime_offers_no_look_without_a_look_file(
 
 
 def test_the_caller_file_names_the_issuer_and_the_apps(tmp_path: Path) -> None:
+    """CONFIG-6."""
     config = load_caller_config(write_caller_config(tmp_path))
 
     assert list(config.apps) == [APP]
@@ -281,6 +297,7 @@ def test_the_caller_file_names_the_issuer_and_the_apps(tmp_path: Path) -> None:
 def test_a_caller_file_that_breaks_the_form_names_the_field_and_echoes_no_value(
     text: str, named: str, tmp_path: Path
 ) -> None:
+    """CONFIG-6."""
     path = write_caller_config(tmp_path, text)
 
     with pytest.raises(ValueError, match=named) as stopped:
@@ -293,6 +310,7 @@ def test_a_caller_file_that_breaks_the_form_names_the_field_and_echoes_no_value(
 def test_a_caller_file_that_cannot_be_read_names_its_setting(
     content: bytes | None, tmp_path: Path
 ) -> None:
+    """CONFIG-6."""
     path = tmp_path / "caller-config.toml"
     if content is not None:
         path.write_bytes(content)

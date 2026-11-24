@@ -1,4 +1,4 @@
-"""Who may open a session (WIRE-2) and the order the upgrade is refused in (WIRE-3)."""
+"""Who may open a session and the order the upgrade is refused in."""
 
 from __future__ import annotations
 
@@ -110,6 +110,7 @@ def client(
 def test_an_upgrade_without_two_valid_tokens_of_a_member_is_refused(
     client: TestClient, headers: dict[str, str], expected: tuple[int, RefusalCode]
 ) -> None:
+    """WIRE-2."""
     denied = denial(client, session_url(), headers)
 
     assert (denied.status, denied.code) == expected
@@ -118,6 +119,7 @@ def test_an_upgrade_without_two_valid_tokens_of_a_member_is_refused(
 def test_an_upgrade_is_refused_unavailable_while_the_issuer_keys_are_down(
     client: TestClient, key_set: KeySet
 ) -> None:
+    """WIRE-2."""
     key_set.down = True
 
     denied = denial(client, session_url(), valid_headers())
@@ -128,6 +130,7 @@ def test_an_upgrade_is_refused_unavailable_while_the_issuer_keys_are_down(
 def test_an_unauthorized_refusal_challenges_for_a_bearer_token(
     client: TestClient,
 ) -> None:
+    """WIRE-2."""
     denied = denial(client, session_url(), {})
 
     assert (denied.status, denied.headers["www-authenticate"]) == (
@@ -137,6 +140,7 @@ def test_an_unauthorized_refusal_challenges_for_a_bearer_token(
 
 
 def test_the_tokens_are_checked_before_the_look(client: TestClient) -> None:
+    """WIRE-3."""
     denied = denial(client, session_url("no-such-look"), {})
 
     assert (denied.status, denied.code) == _UNAUTHORIZED
@@ -146,6 +150,7 @@ def test_the_tokens_are_checked_before_the_look(client: TestClient) -> None:
 def test_a_look_the_look_file_does_not_hold_is_refused_naming_the_look(
     client: TestClient, look: str
 ) -> None:
+    """WIRE-3."""
     denied = denial(client, session_url(look), valid_headers())
 
     assert (denied.status, denied.code, denied.param) == (
@@ -158,6 +163,7 @@ def test_a_look_the_look_file_does_not_hold_is_refused_naming_the_look(
 def test_an_upgrade_without_a_look_is_refused_naming_the_look(
     client: TestClient,
 ) -> None:
+    """WIRE-3."""
     denied = denial(client, SESSIONS_PATH, valid_headers())
 
     assert (denied.status, denied.param) == (HTTPStatus.UNPROCESSABLE_ENTITY, "look")
@@ -166,6 +172,7 @@ def test_an_upgrade_without_a_look_is_refused_naming_the_look(
 def test_a_look_that_is_not_ready_is_refused_unavailable_before_the_limit_applies(
     started: Callable[..., Runtime], wire: Callable[[Runtime], TestClient]
 ) -> None:
+    """WIRE-3."""
     runtime = started(FakeProvider(refuses=["mozart"]), max_sessions=1)
 
     denied = denial(wire(runtime), session_url(), valid_headers())
@@ -176,6 +183,7 @@ def test_a_look_that_is_not_ready_is_refused_unavailable_before_the_limit_applie
 def test_every_look_is_refused_unavailable_while_the_provider_is_not_ready(
     started: Callable[..., Runtime], wire: Callable[[Runtime], TestClient]
 ) -> None:
+    """WIRE-3."""
     runtime = started(FakeProvider(fails_to_start=True))
 
     denied = denial(wire(runtime), session_url(), valid_headers())
@@ -186,6 +194,7 @@ def test_every_look_is_refused_unavailable_while_the_provider_is_not_ready(
 def test_a_provider_that_fails_to_open_the_session_refuses_it_unavailable(
     started: Callable[..., Runtime], wire: Callable[[Runtime], TestClient]
 ) -> None:
+    """WIRE-3."""
     client = wire(started(FakeProvider(fails_to_open=True)))
 
     denied = denial(client, session_url(), valid_headers())
@@ -196,6 +205,7 @@ def test_a_provider_that_fails_to_open_the_session_refuses_it_unavailable(
 def test_a_session_past_the_limit_is_refused_busy_with_a_retry_hint(
     started: Callable[..., Runtime], wire: Callable[[Runtime], TestClient]
 ) -> None:
+    """WIRE-3."""
     client = wire(started(max_sessions=1))
 
     with opened(client):
@@ -211,6 +221,7 @@ def test_a_session_past_the_limit_is_refused_busy_with_a_retry_hint(
 def test_a_place_frees_when_its_session_ends(
     started: Callable[..., Runtime], wire: Callable[[Runtime], TestClient]
 ) -> None:
+    """WIRE-3."""
     client = wire(started(max_sessions=1))
     with opened(client):
         pass
@@ -224,6 +235,7 @@ def test_a_place_frees_when_its_session_ends(
 def test_the_limit_is_checked_after_the_look_and_its_readiness(
     started: Callable[..., Runtime], wire: Callable[[Runtime], TestClient]
 ) -> None:
+    """WIRE-3."""
     client = wire(started(max_sessions=1))
 
     with opened(client):
@@ -243,6 +255,7 @@ def test_the_limit_is_checked_after_the_look_and_its_readiness(
 def test_an_upgrade_at_another_path_is_refused_as_a_request_there_would_be(
     client: TestClient, path: str, status: int, code: RefusalCode
 ) -> None:
+    """WIRE-3."""
     denied = denial(client, path, valid_headers())
 
     assert (denied.status, denied.code) == (status, code)

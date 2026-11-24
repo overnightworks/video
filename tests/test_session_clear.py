@@ -1,4 +1,4 @@
-"""Clearing the buffer (WIRE-6): the playing and every queued sentence are dropped."""
+"""Clearing the buffer: the playing and every queued sentence are dropped."""
 
 from __future__ import annotations
 
@@ -80,6 +80,7 @@ def _cleared(
 def test_a_clear_drops_the_playing_sentence_and_every_queued_one(
     client: TestClient,
 ) -> None:
+    """WIRE-6."""
     with opened(client) as session:
         _queue(session, "playing", _LONG_MS)
         assert isinstance(receive(session), OutputAudioBufferStarted)
@@ -102,6 +103,7 @@ def test_a_clear_drops_the_playing_sentence_and_every_queued_one(
 def test_the_playing_sentence_reports_the_audio_that_had_left_in_whole_frames(
     client: TestClient,
 ) -> None:
+    """WIRE-6."""
     with opened(client) as session:
         _queue(session, "playing", _LONG_MS)
         started = receive(session)
@@ -118,6 +120,7 @@ def test_the_playing_sentence_reports_the_audio_that_had_left_in_whole_frames(
 def test_a_cleared_sentence_never_stops_and_the_provider_forgets_it(
     client: TestClient, provider: FakeProvider
 ) -> None:
+    """WIRE-6."""
     with opened(client) as session:
         _queue(session, "playing", _LONG_MS)
         receive(session)
@@ -136,6 +139,7 @@ def test_a_cleared_sentence_never_stops_and_the_provider_forgets_it(
 def test_a_sentence_cleared_before_any_audio_is_dropped_with_nothing_played(
     client: TestClient,
 ) -> None:
+    """WIRE-6."""
     with opened(client) as session:
         session.send_json(sentence_events("empty")[0])
         session.send_json(_CLEAR)
@@ -149,6 +153,7 @@ def test_a_sentence_cleared_before_any_audio_is_dropped_with_nothing_played(
 
 
 def test_a_clear_with_nothing_queued_sends_nothing(client: TestClient) -> None:
+    """WIRE-6."""
     with opened(client) as session:
         session.send_json(_CLEAR)
         _queue(session, "next", 80)
@@ -158,6 +163,7 @@ def test_a_clear_with_nothing_queued_sends_nothing(client: TestClient) -> None:
 
 
 def test_the_end_of_a_cleared_open_sentence_is_refused(client: TestClient) -> None:
+    """WIRE-6."""
     with opened(client) as session:
         start, end = sentence_events("a")
         session.send_json(start)
@@ -176,6 +182,7 @@ def test_the_end_of_a_cleared_open_sentence_is_refused(client: TestClient) -> No
 def test_a_clear_while_the_last_frames_are_drawn_leaves_no_stop_behind(
     started: Callable[..., Runtime], wire: Callable[[Runtime], TestClient]
 ) -> None:
+    """WIRE-6."""
     gate = threading.Event()
     provider = FakeProvider(finish_gate=gate)
     client = wire(started(provider))
@@ -197,6 +204,7 @@ def test_a_clear_while_the_last_frames_are_drawn_leaves_no_stop_behind(
 def test_a_clear_while_a_chunk_renders_drops_every_frame_of_the_sentence(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """WIRE-6."""
     clock = FakeClock()
     chunked_provider = chunked(clock)
     leaves = record_leaves(monkeypatch, clock)

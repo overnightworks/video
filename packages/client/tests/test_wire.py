@@ -1,4 +1,4 @@
-"""The refusal form: OpenAI's error form with a fixed message per code (WIRE-1)."""
+"""The refusal form: OpenAI's error form with a fixed message per code."""
 
 from __future__ import annotations
 
@@ -22,10 +22,12 @@ from video_client.wire import (
     ],
 )
 def test_a_refusal_type_follows_its_status_class(code: RefusalCode, kind: str) -> None:
+    """WIRE-1."""
     assert refusal(code).error.type == kind
 
 
 def test_a_refusal_names_the_field_at_fault() -> None:
+    """WIRE-1."""
     body = refusal(RefusalCode.INVALID_REQUEST, "look").model_dump(mode="json")
 
     assert body["error"]["param"] == "look"
@@ -33,6 +35,7 @@ def test_a_refusal_names_the_field_at_fault() -> None:
 
 
 def test_every_code_has_one_status_and_one_message() -> None:
+    """WIRE-1."""
     messages = {refusal(code).error.message for code in RefusalCode}
 
     assert set(REFUSAL_STATUS) == set(RefusalCode)
