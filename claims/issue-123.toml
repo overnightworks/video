@@ -3,5 +3,6 @@ agent = "Claude 935e04ab-5243-4567-a43b-a7b4826faace"
 role = "builder"
 base = "76f45f6bf48a68283b6061e650712e151842c852"
 branch = "claude/issue-123-take-webauth-0-46-0"
-scope = ["pyproject.toml", "src/video_service/callers.py", "uv.lock"]
+scope = ["pyproject.toml", "src/video_service/callers.py", "tests/test_session_callers.py", "uv.lock"]
 opened_commit = "7eb74f4de101e4511f16a0f77740c225539edd55"
+whole_reason = "One pin: the lock, the one call the new version refuses and the test rows that prove the group is not built too broad move together."
