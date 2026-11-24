@@ -1,0 +1,8 @@
+claim_id = "428edd293cf54974b452795ffe469631"
+agent = "Claude 935e04ab-5243-4567-a43b-a7b4826faace"
+role = "builder"
+base = "68ccc111b50b61a10e9c4be6c9045b151d68217d"
+branch = "claude/issue-109-a-video-client-learns-its-session-s-queu"
+scope = ["docs/wire.md", "packages/client/src/video_client/session_wire.py", "src/video_service/session.py", "tests/test_session_start.py"]
+opened_commit = "c151c543344f01d814960dc00da3ea63d4a18cbd"
+whole_reason = "One wire member: its type, its sender, its ruled sentence and its proof move together, or the wire document and the service disagree."
