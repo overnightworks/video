@@ -1,8 +1,0 @@
-claim_id = "508877401ca941239a94cfb9d36b713c"
-agent = "Claude 935e04ab-5243-4567-a43b-a7b4826faace"
-role = "builder"
-base = "f18b4c7a9add88dd87eca2b2197130b7a473945c"
-branch = "claude/issue-114-video-pins-quality-v0-26-0"
-scope = [".github/workflows/ci.yml", ".github/workflows/code-scanning.yml", ".github/workflows/release-distributions.yml", ".github/workflows/release.yml", "docs", "packages", "quality/baseline.toml", "quality/config.toml", "tests"]
-opened_commit = "98cb30eab46c7dc13f1c2a7aa7cb88179c37de7c"
-whole_reason = "the pin does not move before the list is recorded, so the pin, the conversion of documents and citations and the recorded list move in one pull request."
