@@ -1,4 +1,4 @@
-"""Health and what is ready behind it (WIRE-12): the start, provider and looks."""
+"""Health and what is ready behind it: the start, provider and looks."""
 
 from __future__ import annotations
 
@@ -35,6 +35,7 @@ def test_nothing_is_ready_before_the_start_ends(
     build_runtime: BuildRuntime,
     wire: Callable[[Runtime], TestClient],
 ) -> None:
+    """WIRE-12."""
     runtime = build_runtime({"mozart": hosted_picture(source)})
 
     health = _health(wire(runtime))
@@ -51,6 +52,7 @@ def test_a_started_service_offers_its_provider_and_its_ready_looks(
     build_runtime: BuildRuntime,
     wire: Callable[[Runtime], TestClient],
 ) -> None:
+    """WIRE-12."""
     runtime = build_runtime(
         {"mozart": hosted_picture(source), "bach": hosted_picture(source, "b")}
     )
@@ -72,6 +74,7 @@ def test_a_started_service_offers_its_provider_and_its_ready_looks(
 def test_a_service_with_no_looks_is_ready_and_offers_none(
     build_runtime: BuildRuntime, wire: Callable[[Runtime], TestClient]
 ) -> None:
+    """WIRE-12."""
     runtime = build_runtime({})
 
     runtime.load()
@@ -84,6 +87,7 @@ def test_a_service_with_no_looks_is_ready_and_offers_none(
 def test_a_look_that_reaches_the_provider_arrives_decoded(
     source: LookServer, build_runtime: BuildRuntime
 ) -> None:
+    """WIRE-12."""
     provider = FakeProvider()
     runtime = build_runtime({"mozart": hosted_picture(source)}, provider=provider)
 
@@ -99,6 +103,7 @@ def test_a_look_is_fetched_once_at_start_and_never_during_a_session(
     build_runtime: BuildRuntime,
     wire: Callable[[Runtime], TestClient],
 ) -> None:
+    """WIRE-12."""
     runtime = build_runtime({"mozart": hosted_picture(source)})
     client = wire(runtime)
 
@@ -112,6 +117,7 @@ def test_a_look_is_fetched_once_at_start_and_never_during_a_session(
 def test_a_look_the_provider_refuses_is_not_ready_and_the_others_serve(
     source: LookServer, build_runtime: BuildRuntime
 ) -> None:
+    """WIRE-12."""
     runtime = build_runtime(
         {"mozart": hosted_picture(source), "bach": hosted_picture(source, "b.png")},
         provider=FakeProvider(refuses={"bach"}),
@@ -125,6 +131,7 @@ def test_a_look_the_provider_refuses_is_not_ready_and_the_others_serve(
 def test_a_provider_that_fails_to_start_leaves_every_look_unready_and_fetches_none(
     source: LookServer, build_runtime: BuildRuntime
 ) -> None:
+    """WIRE-12."""
     runtime = build_runtime(
         {"mozart": hosted_picture(source)}, provider=FakeProvider(fails_to_start=True)
     )
@@ -139,6 +146,7 @@ def test_a_provider_that_fails_to_start_leaves_every_look_unready_and_fetches_no
 
 
 def test_every_verb_a_provider_reports_is_a_verb_of_the_wire() -> None:
+    """WIRE-12."""
     assert {verb.value for verb in ProviderVerb} <= {verb.value for verb in Verb}
 
 
@@ -148,6 +156,7 @@ def test_a_provider_that_fails_after_its_start_makes_health_and_every_look_unava
     make_provider: MakeProvider,
     wire: Callable[[Runtime], TestClient],
 ) -> None:
+    """WIRE-12."""
     provider = make_provider("ready(); serve(1); request(); os._exit(1)")
     runtime = build_runtime(
         {"mozart": hosted_picture(source)},

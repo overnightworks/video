@@ -1,4 +1,4 @@
-"""A provider that falls behind real time ends the session (WIRE-7)."""
+"""A provider that falls behind real time ends the session."""
 
 from __future__ import annotations
 
@@ -57,6 +57,7 @@ def _sentences(*ids: str) -> list[dict[str, object] | bytes]:
 
 
 def test_queued_audio_keeps_the_lag_the_frames_before_it_built_up() -> None:
+    """WIRE-7."""
     clock = FakeClock()
     provider = FakeProvider(render_seconds=_RENDER_SECONDS, sleep=clock.render)
 
@@ -75,6 +76,7 @@ def test_queued_audio_keeps_the_lag_the_frames_before_it_built_up() -> None:
 
 
 def test_a_sentence_ended_while_its_first_frame_draws_keeps_that_frames_lag() -> None:
+    """WIRE-7."""
     clock = FakeClock()
     start, end = sentence_events("a")
     events = played(
@@ -97,6 +99,7 @@ def test_a_sentence_ended_while_its_first_frame_draws_keeps_that_frames_lag() ->
 
 
 def test_a_client_that_ends_a_sentence_after_its_frames_left_adds_no_lag() -> None:
+    """WIRE-7."""
     clock = FakeClock()
 
     async def stall_once_playing(socket: ScriptedSocket) -> None:
@@ -125,6 +128,7 @@ def test_a_client_that_ends_a_sentence_after_its_frames_left_adds_no_lag() -> No
 def test_a_clear_that_waits_for_two_renders_ends_the_session_only_below_the_worst_case(
     max_lag_ms: int, *, ends_unavailable: bool
 ) -> None:
+    """WIRE-7."""
     clock = FakeClock()
     start, end = sentence_events("a")
 
@@ -150,6 +154,7 @@ def test_a_clear_that_waits_for_two_renders_ends_the_session_only_below_the_wors
 def test_a_session_ended_unavailable_by_a_late_frame_names_it(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
+    """WIRE-7."""
     clock = FakeClock()
     provider = FakeProvider(render_seconds=_RENDER_SECONDS, sleep=clock.render)
 
@@ -179,6 +184,7 @@ def test_a_session_ended_unavailable_by_its_provider_names_the_path(
     fails_to_draw: bool,
     ended_by: str,
 ) -> None:
+    """WIRE-7."""
     released = threading.Event()
     # A render that blocks until released is a call that never comes back in time.
     provider = FakeProvider(
@@ -206,6 +212,7 @@ def test_a_session_ended_unavailable_by_its_provider_names_the_path(
 def test_an_idle_call_that_times_out_is_not_counted_in_the_longest_idle_call(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
+    """WIRE-7."""
     released = threading.Event()
     # An idle render that blocks until released is a call that never comes back in time.
     provider = FakeProvider(
@@ -233,6 +240,7 @@ def test_an_idle_call_that_times_out_is_not_counted_in_the_longest_idle_call(
 def test_a_late_frame_within_the_limit_is_logged_as_the_most_a_frame_fell_behind(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
+    """WIRE-7."""
     clock = FakeClock()
     provider = FakeProvider(render_seconds=_RENDER_SECONDS, sleep=clock.render)
 

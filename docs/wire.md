@@ -13,7 +13,7 @@ The service listens on `VIDEO_HOST:VIDEO_PORT`, over HTTP on a TCP address.
 
 ## Version and refusals
 
-**WIRE-1** `GET /health` is the one path outside `/v1`; every other path is under
+- WIRE-1: `GET /health` is the one path outside `/v1`; every other path is under
 `/v1`. `/v{n}` or `/v{n}/...` with `n` other than 1, on any method, is 400
 `unsupported_version`. Any other path, and any method a path does not offer, is
 404 `not_found`.
@@ -40,7 +40,7 @@ a path the service does not offer is refused as a request there would be.
 
 ## Callers
 
-**WIRE-2** A session upgrade carries the app's workload token in
+- WIRE-2: A session upgrade carries the app's workload token in
 `Video-Workload-Token` and the person's token as `Authorization: Bearer <token>`;
 `video_client.wire.caller_headers` builds them. The service answers only when both
 tokens are valid and belong together:
@@ -64,7 +64,7 @@ cannot be fetched). Nothing taken from a token is logged.
 
 ## Session
 
-**WIRE-3** `WS /v1/sessions?look=<name>` opens a session on a look. The upgrade is
+- WIRE-3: `WS /v1/sessions?look=<name>` opens a session on a look. The upgrade is
 refused, in this order and with the refusal's HTTP status, for the first of:
 
 1. the tokens (WIRE-2);
@@ -80,7 +80,7 @@ place taken waits for a place of a session that has ended and is refused `busy` 
 if every place is held by a session that has not. Every refusal writes a
 `session.ended` line with outcome `refused` and its code as `reason`.
 
-**WIRE-4** Every server event is one JSON text message with a `type` and a fresh
+- WIRE-4: Every server event is one JSON text message with a `type` and a fresh
 `event_id`. A client event is one JSON text message with its `type`, an optional
 `event_id` that an `error` about it returns, and no member not listed here. The
 exchange starts like this:
@@ -103,7 +103,7 @@ exchange starts like this:
   `session.update`, ends the session with an `error` (`invalid_request`, `param`
   `type`).
 
-**WIRE-5** A sentence is `sentence.start`
+- WIRE-5: A sentence is `sentence.start`
 `{sentence, format: {"type": "audio/pcm", "rate": 16000 | 22050 | 24000 | 48000},
 traceparent?}`, then binary messages of PCM16 little-endian mono at `rate`, then
 `sentence.end` `{sentence}`. `sentence` is the app's id, one to 128 characters, and
@@ -120,7 +120,7 @@ and queued audio above `VIDEO_MAX_QUEUED_AUDIO_SECONDS` end it with `too_large`.
 queued audio is the audio received of the queued sentences that has not yet left as
 frames, the playing sentence's included.
 
-**WIRE-6** `output_audio_buffer.clear` drops the playing sentence and every queued
+- WIRE-6: `output_audio_buffer.clear` drops the playing sentence and every queued
 one, the sentence still open included, and the face returns to idle: the idle
 frame on silence follows (WIRE-10). The playing sentence gets
 `output_audio_buffer.cleared` `{response_id, audio_end_ms}` with the milliseconds of
@@ -130,7 +130,7 @@ gets no `started` or `stopped` after its `cleared`. A clear with nothing queued 
 nothing; the audio and `sentence.end` of a dropped open sentence are refused as
 outside an open sentence.
 
-**WIRE-7** `output_audio_buffer.started` `{response_id}` is sent when a sentence's
+- WIRE-7: `output_audio_buffer.started` `{response_id}` is sent when a sentence's
 first frame leaves for the viewers, and `output_audio_buffer.stopped`
 `{response_id, audio_end_ms}` when its last frame has left, with the sentence's whole
 audio as `audio_end_ms`. A failure sends `error`
@@ -158,7 +158,7 @@ sends the trace of the turn that spoke, so the service's lines join it.
 
 ## Viewers and media
 
-**WIRE-9** `POST /v1/sessions/{id}/viewers` adds a viewer to the session `{id}`
+- WIRE-9: `POST /v1/sessions/{id}/viewers` adds a viewer to the session `{id}`
 (`session.created` names it) by the WHEP exchange: the body is a recvonly SDP offer
 with exactly one audio and one video section, `Content-Type: application/sdp`, at
 most `MAX_OFFER_BYTES` (16 KiB) in `video_client.wire`. It answers 201 with the
@@ -193,7 +193,7 @@ aioice 0.13.0. The service sets no deadline on a connection that is never
 established: a viewer whose peer never applies the answer holds its place until it
 is deleted or its session ends.
 
-**WIRE-10** A viewer receives one Opus audio track and one VP8 video track in one
+- WIRE-10: A viewer receives one Opus audio track and one VP8 video track in one
 stream with one CNAME, so the browser keeps sound and picture together (RFC 3550,
 section 6). The answer offers only Opus and VP8, whatever the offer lists first. Both
 tracks are stamped from the session's frame count: video timestamps advance by one
@@ -215,7 +215,7 @@ answer, the candidates, the ICE credentials and the tokens are never logged, at 
 
 ## The app's route
 
-**WIRE-14** The browser package's `watch(host, path, iceServers, show)` calls the
+- WIRE-14: The browser package's `watch(host, path, iceServers, show)` calls the
 app's own route at `path`, never the service, so no token reaches a browser; the
 route relays to WIRE-9 with the session's tokens. Its contract:
 
@@ -244,7 +244,7 @@ route relays to WIRE-9 with the session's tokens. Its contract:
 
 ## Drain
 
-**WIRE-11** On SIGTERM or SIGINT the service reports `ready` false at once, refuses
+- WIRE-11: On SIGTERM or SIGINT the service reports `ready` false at once, refuses
 every new session and every new viewer as `unavailable` (WIRE-3, WIRE-9), lets the
 playing sentence of each open
 session finish, then closes the session with `1012` (Service Restart,
@@ -258,7 +258,7 @@ viewers end with it.
 
 ## Health
 
-**WIRE-12** `GET /health` needs no token and answers 200:
+- WIRE-12: `GET /health` needs no token and answers 200:
 
 ```json
 {
@@ -290,7 +290,7 @@ viewers end with it.
 
 ## Not offered
 
-**WIRE-13** The service offers no look administration or upload, no recording, and
+- WIRE-13: The service offers no look administration or upload, no recording, and
 no `/docs`, `/redoc` or `/openapi.json`; each of those paths is 404 `not_found`.
 The looks are what the operator's look file names.
 

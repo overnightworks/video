@@ -6,7 +6,7 @@ Each rule carries the ID the test that proves it cites. The settings that shape 
 
 ## Settings
 
-**CONFIG-1** The process reads `VIDEO_*` from the environment. A missing or malformed
+- CONFIG-1: The process reads `VIDEO_*` from the environment. A missing or malformed
 setting stops the start, naming the setting and never its value.
 
 | Setting | Default | Meaning |
@@ -24,11 +24,11 @@ setting stops the start, naming the setting and never its value.
 
 ## Provider and card
 
-**CONFIG-2** The provider runs as `<VIDEO_PROVIDER_ROOT>/<provider>/.venv/bin/video-<provider>-worker`;
+- CONFIG-2: The provider runs as `<VIDEO_PROVIDER_ROOT>/<provider>/.venv/bin/video-<provider>-worker`;
 with no root it runs as `video-<provider>-worker` beside the service's interpreter. No
 other location is searched.
 
-**CONFIG-3** `VIDEO_CARD_MEMORY_MB` is an integer of at least 1. It is required for
+- CONFIG-3: `VIDEO_CARD_MEMORY_MB` is an integer of at least 1. It is required for
 `flashhead-lite` and optional for `fake`. It binds torch's allocator, not the card's
 context; whether the card holds it is the worker's judgement at start, and a cap too large
 leaves the provider failed. The child's cap is this value, never one inherited from the
@@ -36,7 +36,7 @@ service's environment.
 
 ## Look file
 
-**CONFIG-4** `VIDEO_LOOKS_FILE` is a TOML file with one table per look, named by
+- CONFIG-4: `VIDEO_LOOKS_FILE` is a TOML file with one table per look, named by
 `^[A-Za-z0-9._-]{1,64}$` (a name with a dot is quoted), each holding exactly `url` and
 `sha256` (64 lowercase hex characters). A file that breaks this form or cannot be read
 stops the start naming `VIDEO_LOOKS_FILE`. An empty file offers no look.
@@ -51,7 +51,7 @@ url = "https://images.example/looks/bach.png"
 sha256 = "0f3a...64 lowercase hex characters"
 ```
 
-**CONFIG-5** Each prefix of `VIDEO_LOOK_SOURCES` is http or https with a lowercase host,
+- CONFIG-5: Each prefix of `VIDEO_LOOK_SOURCES` is http or https with a lowercase host,
 no user, query or fragment, and a path that starts and ends with `/`, holds only ASCII
 letters, digits and `-._~/` and has no empty, `.` or `..` segment. At start each look's
 image is fetched once, only from a URL under such a prefix, without following a redirect.
@@ -62,7 +62,7 @@ check, or that the provider refuses, stays not ready in health and is logged wit
 
 ## Caller file
 
-**CONFIG-6** `VIDEO_CONFIG_FILE` is a TOML file that says whom the service trusts.
+- CONFIG-6: `VIDEO_CONFIG_FILE` is a TOML file that says whom the service trusts.
 `[identity]` names the issuer and the one group the people must belong to; each
 `[apps.<name>]` registers an app by the client id of its workload token, which no other app
 shares, and its people belong to the group `/apps/<name>`. `jwks_url` is https, and each

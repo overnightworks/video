@@ -1,4 +1,4 @@
-"""How a session starts (WIRE-4): created, update, the first idle frame."""
+"""How a session starts: created, update, the first idle frame."""
 
 from __future__ import annotations
 
@@ -45,6 +45,7 @@ def client(
 def test_the_first_event_names_the_session_its_look_and_the_picture(
     client: TestClient,
 ) -> None:
+    """WIRE-4."""
     with connect(client) as session:
         created = receive(session)
 
@@ -69,6 +70,7 @@ def test_the_first_event_names_the_queued_audio_limit_the_service_enforces(
 
 
 def test_every_server_event_and_session_gets_a_fresh_id(client: TestClient) -> None:
+    """WIRE-4."""
     with connect(client) as first, connect(client) as second:
         events = [receive(first), receive(second)]
 
@@ -82,6 +84,7 @@ def test_every_server_event_and_session_gets_a_fresh_id(client: TestClient) -> N
 def test_the_session_takes_the_ice_servers_in_the_webrtc_shape(
     client: TestClient, policy: str
 ) -> None:
+    """WIRE-4."""
     update = update_event(
         session={
             "ice_servers": [*ICE_SERVERS, {"urls": "stun:stun.test"}],
@@ -143,6 +146,7 @@ def test_the_session_takes_the_ice_servers_in_the_webrtc_shape(
 def test_a_first_event_that_is_not_a_valid_session_update_ends_the_session(
     client: TestClient, first: dict[str, object], param: str
 ) -> None:
+    """WIRE-4."""
     with connect(client) as session:
         receive(session)
         session.send_json(first)
@@ -155,6 +159,7 @@ def test_a_first_event_that_is_not_a_valid_session_update_ends_the_session(
 
 
 def test_a_first_message_that_is_not_text_ends_the_session(client: TestClient) -> None:
+    """WIRE-4."""
     with connect(client) as session:
         receive(session)
         session.send_bytes(b"\x00\x00")
@@ -169,6 +174,7 @@ def test_a_first_message_that_is_not_text_ends_the_session(client: TestClient) -
 def test_a_second_session_update_ends_the_session_naming_the_event(
     client: TestClient,
 ) -> None:
+    """WIRE-4."""
     with opened(client) as session:
         session.send_json(update_event(event_id="client-event-7"))
         error = failure_of(receive(session))
@@ -187,6 +193,7 @@ def test_a_second_session_update_ends_the_session_naming_the_event(
 def test_a_second_session_update_names_its_type_whatever_else_is_wrong_with_it(
     client: TestClient, second: dict[str, object]
 ) -> None:
+    """WIRE-4."""
     with opened(client) as session:
         session.send_json(second)
         error = failure_of(receive(session))
@@ -199,6 +206,7 @@ def test_a_session_that_leaves_before_its_first_event_closes_its_provider_sessio
     wire: Callable[[Runtime], TestClient],
     provider: FakeProvider,
 ) -> None:
+    """WIRE-4."""
     client = wire(started(provider, max_sessions=1))
     with connect(client) as session:
         receive(session)
