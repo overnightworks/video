@@ -1,0 +1,7 @@
+claim_id = "ad5a458d3ba3424b903cf3b499c70750"
+agent = "Claude 935e04ab-5243-4567-a43b-a7b4826faace"
+role = "builder"
+base = "b9cfae09a20e116993742ab5549880887d9ce1a6"
+branch = "claude/issue-121-fake-audio-release-test-is-stable"
+scope = ["providers/fake/tests/test_video_provider_fake.py"]
+opened_commit = "f6bb131f964520e8eecbca588590328f21c8df02"
