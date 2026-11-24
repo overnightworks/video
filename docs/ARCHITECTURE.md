@@ -105,8 +105,8 @@ browser package's checks, the browser layer, and then the quality gate.
   does not carry; it holds gcc and libc6-dev, which Triton needs on the card at first use.
   The image does not fit a standard runner's disk, so the release builds it on the
   organisation's larger runner, with reproducible layers so that an unchanged weights layer
-  keeps its digest. A pull request that changes what the build context holds builds it
-  without a push and runs the same test; every other pull request starts no larger runner.
+  keeps its digest. Every pull request builds the image without a push and runs the same
+  test on the larger runner.
 
 ## Crosscutting Concepts
 
