@@ -11,6 +11,7 @@ from video_provider_fake.worker import settings_from
 _RATE = 16_000
 _CHUNK_SECONDS = 0.1
 _SENTENCE_SECONDS = 20
+_UNPLAYED_CHUNKS = 10
 
 
 def _held_by_the_fake() -> int:
@@ -34,20 +35,25 @@ def test_played_and_closed_audio_is_released() -> None:
         tracemalloc.start()
     try:
         # What the interpreter caches while the fake plays is held from here on,
-        # whatever ran before; only what the audio adds after this point counts.
+        # whatever ran before; the measure starts with the buffer empty, and only
+        # what the audio adds after this point counts.
         for _ in range(chunks // 2):
             list(session.feed(chunk, _RATE))
+        session.clear()
         held_before = _held_by_the_fake()
         for _ in range(chunks // 2):
             list(session.feed(chunk, _RATE))
         played = _held_by_the_fake() - held_before
-        session.feed(chunk, _RATE)
+        session.clear()
+        for _ in range(_UNPLAYED_CHUNKS):
+            session.feed(chunk, _RATE)
         session.close()
         closed = _held_by_the_fake() - held_before
     finally:
         if not traced_before:
             tracemalloc.stop()
 
+    # A fake that kept audio would hold many chunks here, far above the bound.
     assert played < len(chunk)
     assert closed < len(chunk)
 
