@@ -26,8 +26,14 @@ def _held_by_the_fake() -> int:
 
 
 def test_played_and_closed_audio_is_released() -> None:
-    session = FakeProvider().open_session("mozart")
     chunk = bytes(2 * int(_RATE * _CHUNK_SECONDS))
+    # `struct` caches each format it parses, and the cache's entries count as the
+    # fake's bytes while the run before this test decides whether this format is
+    # in it; a session played before the measure puts it there for good.
+    warm = FakeProvider().open_session("mozart")
+    list(warm.feed(chunk, _RATE))
+    warm.close()
+    session = FakeProvider().open_session("mozart")
     traced_before = tracemalloc.is_tracing()
     if not traced_before:
         tracemalloc.start()
