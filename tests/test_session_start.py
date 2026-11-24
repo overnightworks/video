@@ -60,6 +60,7 @@ def test_the_first_event_names_the_queued_audio_limit_the_service_enforces(
     started: Callable[..., Runtime],
     wire: Callable[[Runtime], TestClient],
 ) -> None:
+    """WIRE-4."""
     limit = 7.5
     client = wire(started(provider, max_queued_audio_seconds=limit))
     with connect(client) as session:
