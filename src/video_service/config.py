@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from functools import cached_property
 from pathlib import Path
 from typing import Annotated, Final, Self
 
@@ -11,6 +10,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    PrivateAttr,
     TypeAdapter,
     ValidationError,
     ValidationInfo,
@@ -154,18 +154,19 @@ class CallerConfig(_FileModel):
     identity: IdentityConfig
     apps: Annotated[dict[str, AppConfig], Field(min_length=1)]
 
-    @field_validator("apps")
-    @classmethod
-    def _app_names_make_login_groups(
-        cls, apps: dict[str, AppConfig]
-    ) -> dict[str, AppConfig]:
-        _login_groups(apps)
-        return apps
+    _login_groups: dict[str, GroupPath] = PrivateAttr(default_factory=dict)
 
-    @cached_property
+    @property
     def login_groups(self) -> dict[str, GroupPath]:
         """The group of each app's people, by the app's name."""
-        return _login_groups(self.apps)
+        return self._login_groups
+
+    @model_validator(mode="after")
+    def _app_names_make_login_groups(self) -> Self:
+        if any("/" in name for name in self.apps):
+            raise ValueError(_APP_NAME_ERROR)
+        self._login_groups = {name: GroupPath(f"/apps/{name}") for name in self.apps}
+        return self
 
     @model_validator(mode="after")
     def _each_client_belongs_to_one_app(self) -> Self:
@@ -173,12 +174,6 @@ class CallerConfig(_FileModel):
         if len(set(clients)) != len(clients):
             raise ValueError(_SHARED_CLIENT_ERROR)
         return self
-
-
-def _login_groups(apps: dict[str, AppConfig]) -> dict[str, GroupPath]:
-    if any("/" in name for name in apps):
-        raise ValueError(_APP_NAME_ERROR)
-    return {name: GroupPath(f"/apps/{name}") for name in apps}
 
 
 _CALLER_CONFIG = TypeAdapter(CallerConfig)

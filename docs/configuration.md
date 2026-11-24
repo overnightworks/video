@@ -67,9 +67,9 @@ check, or that the provider refuses, stays not ready in health and is logged wit
 `[apps.<name>]` registers an app by the client id of its workload token, which no other app
 shares, and its people belong to the group `/apps/<name>`, so an app name is one path
 segment. `jwks_url` is https, and each group is a webauth `GroupPath`, which owns what a
-valid group path is. An unknown key, a file that breaks this
-form or one that cannot be read stops the start, naming the field and never its value.
-The wire's use of the two tokens is [`wire.md`](wire.md#callers).
+valid group path is. An unknown key, a file that breaks this form or one that cannot be
+read stops the start, naming the field and never its value. The wire's use of the two
+tokens is [`wire.md`](wire.md#callers).
 
 ```toml
 [identity]
