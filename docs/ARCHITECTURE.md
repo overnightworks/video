@@ -136,8 +136,10 @@ browser package's checks, the browser layer, and then the quality gate.
   browser. The media is DTLS-SRTP.
 - Egress: the look sources at start, the issuer's key set when it checks tokens and the
   TURN servers the app hands over, and nothing else.
-- Logs carry closed codes and look names, never a URL, an image, a token, an ICE credential,
-  an SDP, a candidate address or a setting's value.
+- Logs carry closed codes, look names and `error_type`, the validated `__name__` of a
+  provider's root failure (1 to 128 characters of `[A-Za-z0-9_]`, else `unnamed`), never
+  its message, a URL, an image, a token, an ICE credential, an SDP, a candidate address
+  or a setting's value.
 
 **Failure isolation.** A failed look makes that look not ready; a failed provider (a child
 that died, hung or broke the protocol) makes every look not ready while health keeps
