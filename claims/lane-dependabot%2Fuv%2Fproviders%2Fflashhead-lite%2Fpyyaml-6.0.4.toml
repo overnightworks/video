@@ -1,0 +1,7 @@
+claim_id = "efea8c48653f4cc1acb32feae69ca8d0"
+agent = "Claude ea6ee1fa-a180-4e6c-8801-3ab2cb3bebe3"
+role = "builder"
+base = "901c8d5072ce749db924040655befb3028af6304"
+branch = "dependabot/uv/providers/flashhead-lite/pyyaml-6.0.4"
+scope = ["providers/flashhead-lite/pyproject.toml", "providers/flashhead-lite/uv.lock"]
+opened_commit = "40abb8df55ccae8d8e27a2086ebaa97e97b74b22"
