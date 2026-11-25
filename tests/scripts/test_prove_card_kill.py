@@ -503,10 +503,16 @@ def test_a_stop_ends_the_command_when_the_group_cannot_end_after_it(
         lambda: "process.ready" in _log_text(run, LAG_SERVICE), APPEARS_WITHIN_SECONDS
     )
     os.kill(command.pid, signal.SIGTERM)
+    # Signals of one kind sent before the first is handled coalesce into one stop.
+    forwarded = run.wait_until(
+        lambda: "process.stopped" in _log_text(run, LAG_SERVICE), GONE_WITHIN_SECONDS
+    )
+    os.kill(command.pid, signal.SIGTERM)
 
     status, error = run.finish(command)
 
     assert serving
+    assert forwarded
     assert status != 0
     assert error.strip() == "interrupted by SIGTERM"
     assert not run.record.exists()
