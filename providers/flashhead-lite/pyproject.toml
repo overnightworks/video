@@ -24,7 +24,7 @@ dependencies = [
     "opencv-python-headless==5.1.0.95",
     "overnightworks-video-provider-contract",
     "pyloudnorm==0.2.0",
-    "pyyaml==6.0.3",
+    "pyyaml==6.0.4",
     "safetensors==0.8.0",
     "soxr==1.0.0",
     "torch==2.15.0",
