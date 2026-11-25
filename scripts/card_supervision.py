@@ -16,9 +16,11 @@ import subprocess
 import sys
 from contextlib import suppress
 from dataclasses import dataclass, field
+from threading import Timer
 from typing import TYPE_CHECKING, Final, NamedTuple
 
 from card_drive import (
+    KILL_GRACE_SECONDS,
     STOP_SIGNALS,
     end_processes_below,
     exit_on_stop,
@@ -34,7 +36,6 @@ if TYPE_CHECKING:
 
 CHILD_MARKER: Final = "PROVE_CARD_GROUP"
 PROBE_RUN: Final = "probe-run"
-KILL_GRACE_SECONDS: Final = 30
 CAP_SECONDS: Final = 1800
 
 
@@ -193,6 +194,42 @@ def service_exists(fragment: Path, control: ProcessControl) -> bool:
     return service is not None and service.parent == group_pid
 
 
+def _killed_late(child: subprocess.Popen[bytes], control: ProcessControl) -> Timer:
+    """The kill of everything below the command, to start once the grace has passed."""
+    grace = Timer(
+        control.kill_grace_seconds,
+        end_processes_below,
+        [control],
+        {"spare": child.pid},
+    )
+    grace.daemon = True
+    return grace
+
+
+def _waited_for(
+    child: subprocess.Popen[bytes], fragment: Path, supervision: Supervision
+) -> int | None:
+    """The status of `child`, which the card watch samples while it waits."""
+    stops, control = supervision.stops, supervision.control
+    if supervision.watch is None:
+        return child.wait()
+    return supervision.watch.until_ended(
+        child,
+        service_exists=lambda: service_exists(fragment, control),
+        end=ending(stops, control, child.pid),
+    )
+
+
+def _started(command: list[str], group: str) -> subprocess.Popen[bytes]:
+    """`command` started as the group's process, marked with the group."""
+    # No `with`: its exit waits for `probe-run` without a bound, and a kill that failed
+    # leaves it alive. The command's own exit then takes the parent-death chain to it.
+    # The operator names the audio path that the command passes on.
+    return subprocess.Popen(  # NOSONAR(S8705)  # noqa: S603 - probe-run and this python
+        command, env={**os.environ, CHILD_MARKER: group}
+    )
+
+
 def run_child(
     command: list[str],
     group: str,
@@ -202,22 +239,29 @@ def run_child(
     """Run `command` as the group's process; a stop is recorded and, meanwhile, sent on.
 
     Once the process is reaped, or the group is ending for its memory, a stop is only
-    recorded; the caller puts the handlers back. A card-mode run samples the card while
-    it waits. Its status is none when the group was ended for its memory and
-    `probe-run` outlived the kill.
+    recorded; the caller puts the handlers back. A group that has not ended
+    `KILL_GRACE_SECONDS` after the first stop sent on is killed with everything below
+    the command, as `probe-run` ends its command after a stop. A card-mode run samples
+    the card while it waits. Its status is none when the group was ended for its memory
+    and `probe-run` outlived the kill.
     """
-    stops, control, watch = (
-        supervision.stops,
-        supervision.control,
-        supervision.watch,
-    )
+    stops, control = supervision.stops, supervision.control
     probe_run: Process | None = None
+    timer_armed = False
 
     def send_on(signum: int) -> None:
         # Once the process is reaped the group's process has ended and its id may name
         # another process; once the group is ending the kill is about to free them.
         if stops.ending or child.returncode is not None:
             return
+        # The group's process may not end after a stop: a thread of a library that is
+        # no daemon keeps it from exiting, and nothing else would end it.
+        # The flag is set before `start()`: a second stop that lands inside it starts
+        # nothing, and a thread that cannot start raises out of the handler.
+        nonlocal timer_armed
+        if not timer_armed:
+            timer_armed = True
+            grace.start()
         # `timeout` kills its command at once on a signal, so the stop goes to the
         # group's process itself, which stops the service first and then exits.
         if not settled_at_group(probe_run, fragment, signum, control):
@@ -227,12 +271,8 @@ def run_child(
         stops.record(signum, frame)
         send_on(signum)
 
-    # No `with`: its exit waits for `probe-run` without a bound, and a kill that failed
-    # leaves it alive. The command's own exit then takes the parent-death chain to it.
-    # The operator names the audio path that the command passes on.
-    child = subprocess.Popen(  # NOSONAR(S8705)  # noqa: S603 - probe-run and this python
-        command, env={**os.environ, CHILD_MARKER: group}
-    )
+    child = _started(command, group)
+    grace = _killed_late(child, control)
     # The start time that tells `probe-run` from a process that took its id.
     with suppress(OSError):
         probe_run = read_process(child.pid, control)
@@ -242,13 +282,10 @@ def run_child(
     # A stop recorded since the caller last looked, before `forward` was installed.
     if stops.recorded:
         send_on(stops.recorded[0])
-    if watch is None:
-        return child.wait()
-    return watch.until_ended(
-        child,
-        service_exists=lambda: service_exists(fragment, control),
-        end=ending(stops, control, child.pid),
-    )
+    try:
+        return _waited_for(child, fragment, supervision)
+    finally:
+        grace.cancel()
 
 
 class Probed(NamedTuple):

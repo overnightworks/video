@@ -68,6 +68,7 @@ if TYPE_CHECKING:
 # On top of the service's own bounds for the provider's start and each preparation.
 READY_SLACK_SECONDS: Final = 30.0
 STOP_WITHIN_SECONDS: Final = 20.0
+KILL_GRACE_SECONDS: Final = 30
 # What the unwinding of the drive may take after the kill of a service that stayed.
 KILL_MARGIN_SECONDS: Final = 10.0
 # How long the kill below the caller passes until nothing below it is alive.
@@ -222,13 +223,14 @@ def _pidfd_send_signal(pidfd: int, signum: int) -> None:
 
 @dataclass(frozen=True)
 class ProcessControl:
-    """What the kill and a forwarded stop ask of the kernel; a test swaps it."""
+    """The kernel calls a kill and a stop make, and the grace a test may cut."""
 
     become_subreaper: Callable[[], None]
     list_processes: Callable[[], list[int]]
     open: Callable[[int], int]
     send_signal: Callable[[int, int], None]
     read_stat: Callable[[int], bytes]
+    kill_grace_seconds: int
 
 
 def _list_processes() -> list[int]:
@@ -241,6 +243,7 @@ KERNEL: Final = ProcessControl(
     open=_pidfd_open,
     send_signal=_pidfd_send_signal,
     read_stat=_read_stat,
+    kill_grace_seconds=KILL_GRACE_SECONDS,
 )
 
 
