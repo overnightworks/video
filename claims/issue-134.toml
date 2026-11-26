@@ -1,0 +1,7 @@
+claim_id = "f74422dd2fd84053985f25722566da2d"
+agent = "Claude cda75482-82bf-4ba7-979c-48523347bd0a"
+role = "builder"
+base = "6456d1639d1eea1a1330cfe715e4535117ef6ef5"
+branch = "claude/issue-134-take-logline-v1-12-0-asyncio-and-unraisa"
+scope = ["pyproject.toml", "uv.lock"]
+opened_commit = "f0090b59d3065fc9b337302d3d3a4a1be78c66b8"
