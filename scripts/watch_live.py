@@ -332,7 +332,7 @@ async def _show(
         server = _Server(
             uvicorn.Config(
                 _application(page, arguments.package),
-                log_level="warning",
+                log_config=None,
                 timeout_graceful_shutdown=PAGE_CLOSE_SECONDS,
             )
         )

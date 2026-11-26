@@ -504,8 +504,8 @@ wheels = [
 
 [[package]]
 name = "overnightworks-logline"
-version = "1.9.0"
-source = { git = "https://github.com/overnightworks/logline?rev=v1.9.0#cca495315f8fb25dae85851592a2c42376052c58" }
+version = "1.12.0"
+source = { git = "https://github.com/overnightworks/logline?rev=v1.12.0#26c202af85cb01fd88029f76105cb1b0175dc8d2" }
 dependencies = [
     { name = "opentelemetry-api" },
     { name = "structlog" },
@@ -573,7 +573,7 @@ dev = [
 requires-dist = [
     { name = "aiortc", specifier = "==1.16.0" },
     { name = "fastapi", specifier = "==0.164.0" },
-    { name = "overnightworks-logline", git = "https://github.com/overnightworks/logline?rev=v1.9.0" },
+    { name = "overnightworks-logline", git = "https://github.com/overnightworks/logline?rev=v1.12.0" },
     { name = "overnightworks-video-client", editable = "packages/client" },
     { name = "overnightworks-video-provider-contract", editable = "providers/provider-contract" },
     { name = "overnightworks-webauth", git = "https://github.com/overnightworks/webauth?rev=v0.46.0" },
