@@ -1,7 +1,0 @@
-claim_id = "2dc72e4ce03b4194abe74f864e74cc84"
-agent = "Claude d8b1643a-c037-46e3-9a04-348b85359122"
-role = "builder"
-base = "78814ac2674c6837e92019d76b7f57aa40c66046"
-branch = "claude/issue-139-the-provider-report-measures-only-its-ow"
-scope = ["providers/flashhead-lite/pyproject.toml"]
-opened_commit = "77d490578dbbbba289192dac44db526bd66d3bca"
