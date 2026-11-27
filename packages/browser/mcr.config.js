@@ -6,7 +6,7 @@ import path from "node:path";
 // The lowest percentage of lines and of branches a report may reach, rounded down from what CI measured.
 const FLOORS = {
   "coverage-browser-pack.lcov": { lines: 96.87, branches: 75 },
-  "coverage-browser-report.lcov": { lines: 93.93, branches: 62.5 },
+  "coverage-browser-report.lcov": { lines: 92.15, branches: 58.33 },
   "coverage-browser.lcov": { lines: 100, branches: 100 },
 };
 const LCOV_COUNTS = { lines: ["LF", "LH"], branches: ["BRF", "BRH"] };
@@ -35,7 +35,8 @@ export default {
   name: "Browser package scripts",
   outputDir: OUTPUT_DIRECTORY,
   reports: [["lcovonly", { file: process.env.MCR_LCOV_FILE, projectRoot: "../.." }]],
-  entryFilter: { "**/scripts/**": true },
-  sourceFilter: { "**/scripts/**": true },
+  // The config is measured where a script imports it.
+  entryFilter: { "**/scripts/**": true, "**/mcr.config.js": true },
+  sourceFilter: { "**/scripts/**": true, "**/mcr.config.js": true },
   onEnd: enforceFloor(OUTPUT_DIRECTORY, process.env.MCR_LCOV_FILE),
 };
