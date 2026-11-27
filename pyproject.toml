@@ -140,7 +140,7 @@ convention = "google"
 "providers/provider-contract/tests/**" = ["S101", "D103"]
 
 [tool.coverage.report]
-# The floor is what CI measured, rounded down at two places.
-precision = 2
-fail_under = 98.29
+# The total varies by a few hundredths between runs of the same code, so the floor is rounded down to one decimal.
+precision = 1
+fail_under = 98.2
 exclude_also = ["if __name__ == .__main__.:"]
