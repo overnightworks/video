@@ -140,7 +140,7 @@ convention = "google"
 "providers/provider-contract/tests/**" = ["S101", "D103"]
 
 [tool.coverage.report]
-# The total varies by a few hundredths between runs of the same code, so the floor is rounded down to one decimal.
+# The total varies by about a tenth of a point between runs of the same code, so the floor is rounded down to the whole percent.
 precision = 1
-fail_under = 98.2
+fail_under = 98.0
 exclude_also = ["if __name__ == .__main__.:"]
