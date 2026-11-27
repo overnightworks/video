@@ -12,7 +12,7 @@ const FLOORS = {
 const LCOV_COUNTS = { lines: ["LF", "LH"], branches: ["BRF", "BRH"] };
 
 function sumOf(lcov, key) {
-  return [...lcov.matchAll(new RegExp(`^${key}:(\\d+)$`, "gm"))].reduce((sum, match) => sum + Number(match[1]), 0);
+  return [...lcov.matchAll(new RegExp(String.raw`^${key}:(\d+)$`, "gm"))].reduce((sum, match) => sum + Number(match[1]), 0);
 }
 
 // Fails the job when the written lcov stands below its floor; an empty lcov fails too, as the lcov is what the gate reads.
