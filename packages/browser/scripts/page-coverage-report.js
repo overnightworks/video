@@ -5,6 +5,7 @@ import { existsSync } from "node:fs";
 import { readFile, readdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { CoverageReport } from "monocart-coverage-reports";
+import { enforceFloor } from "../mcr.config.js";
 
 const [rawDirectory] = process.argv.slice(2);
 // The report empties its directory before it writes, so the directory is its own.
@@ -24,6 +25,7 @@ const report = new CoverageReport({
   // The maps name sources relative to the package; the lcov names them from the repository root.
   reports: [["lcovonly", { file: LCOV_FILE, projectRoot: repositoryRoot }]],
   outputFilter: (file) => MEASURED.includes(file.sourcePath),
+  onEnd: enforceFloor(REPORT_DIRECTORY, LCOV_FILE),
 });
 
 // Chromium reports a script's coverage without its text, and the build's maps carry no sources, so both are read here.

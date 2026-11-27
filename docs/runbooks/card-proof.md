@@ -84,7 +84,7 @@ before any container starts when the card's free memory minus the cap is below t
 gh auth token | docker login ghcr.io -u <login> --password-stdin
 docker pull <image>
 VIDEO_IMAGE=<image> VIDEO_CARD_MEMORY_MB=7168 \
-  probe-run uv run --locked pytest -q -m image_card tests/test_image_card.py
+  probe-run uv run --locked pytest -q -m image_card tests/e2e/test_image_card.py
 ```
 
 A missing `VIDEO_IMAGE` fails the run naming it first; with that set, a missing cap fails

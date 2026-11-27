@@ -113,7 +113,7 @@ jobs:
 
       - name: Test
         # pytest-workers: the suite runs in about 15 s, and xdist is not installed there
-        run: uv run --locked --no-build --project providers/flashhead-lite pytest providers/flashhead-lite/tests --cov --cov-report=xml:coverage-flashhead-lite.xml
+        run: uv run --locked --no-build --project providers/flashhead-lite pytest providers/flashhead-lite/tests --cov --cov-config=providers/flashhead-lite/pyproject.toml --cov-report=xml:coverage-flashhead-lite.xml
 
       - name: Start the real worker from the service without a card
         env:
@@ -308,7 +308,7 @@ jobs:
       - image
       - coverage
     if: always()
-    uses: overnightworks/quality/.github/workflows/gate.yml@e05e126f29f36bf68b8bfeffdc12278326160d98 # v0.26.0
+    uses: overnightworks/quality/.github/workflows/gate.yml@c4e75830ac6581f5216cda127eee4c0b026e6822 # v0.28.0
     with:
       coverage-artifact: coverage
     permissions:

@@ -108,6 +108,7 @@ src = [
 # The gate's layout rules forbid package markers in these directories.
 namespace-packages = [
     "scripts",
+    "tests/e2e",
     "tests/scripts",
     "tests/support",
     "packages/client/tests/support",
@@ -139,4 +140,7 @@ convention = "google"
 "providers/provider-contract/tests/**" = ["S101", "D103"]
 
 [tool.coverage.report]
+# The total varies by about a tenth of a point between runs of the same code, so the floor is rounded down to the whole percent.
+precision = 1
+fail_under = 98.0
 exclude_also = ["if __name__ == .__main__.:"]

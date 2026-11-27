@@ -71,4 +71,4 @@ jobs:
       - name: Run the image test
         # pytest-workers: one image, and the cases start containers one after the other
         # pytest-random: the cases run one after another against one real image
-        run: uv run --locked --no-build pytest -q -m image tests/test_image.py
+        run: uv run --locked --no-build pytest -q -m image tests/e2e/test_image.py
