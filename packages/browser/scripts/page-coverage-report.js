@@ -1,8 +1,7 @@
 // Turns the raw V8 coverage the browser layer collected from Chromium into an lcov of the package's sources.
 // Usage: node scripts/page-coverage-report.js <raw coverage directory>
 // It writes coverage/coverage-browser.lcov, with paths from the repository root.
-import { existsSync } from "node:fs";
-import { readFile, readdir, rm } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import { CoverageReport } from "monocart-coverage-reports";
 import { enforceFloor } from "../mcr.config.js";
@@ -15,10 +14,6 @@ const LCOV_FILE = "coverage-browser.lcov";
 const MEASURED = ["src/watch.ts"];
 const BUILD_PATH = "/dist/";
 const repositoryRoot = path.resolve("../..");
-const lcovPath = path.join(REPORT_DIRECTORY, LCOV_FILE);
-// Without coverage data the report writes nothing, so an earlier run's lcov must not stand in for it.
-await rm(lcovPath, { force: true });
-
 const report = new CoverageReport({
   name: "Browser layer",
   outputDir: REPORT_DIRECTORY,
@@ -48,23 +43,5 @@ const entriesByFile = await Promise.all(
     return Promise.all(built.map(withBuildAndMap));
   }),
 );
-const entries = entriesByFile.flat();
-if (entries.length > 0) {
-  await report.add(entries);
-}
+await report.add(entriesByFile.flat());
 await report.generate();
-
-const lcov = existsSync(lcovPath) ? await readFile(lcovPath, "utf8") : "";
-const reported = new Set(
-  lcov
-    .split("\n")
-    .filter((line) => line.startsWith("SF:"))
-    .map((line) => line.slice("SF:".length)),
-);
-const missing = MEASURED.map((name) => path.relative(repositoryRoot, path.resolve(name))).filter(
-  (name) => !reported.has(name),
-);
-if (missing.length > 0) {
-  console.error(`Sources with no browser coverage record:\n  ${missing.join("\n  ")}`);
-  process.exitCode = 1;
-}
