@@ -46,21 +46,7 @@ jobs:
         run: uv run --locked --no-build ruff format --check
 
       - name: Test
-        env:
-          COVERAGE_DEBUG: pid,process,dataio
-          COVERAGE_DEBUG_FILE: ${{ runner.temp }}/coverage-debug.log
         run: uv run --locked --no-build pytest -n auto --cov --cov-report=xml:coverage-root.xml
-
-      - name: Upload the coverage debug files
-        if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: coverage-debug-${{ github.run_attempt }}
-          path: |
-            ${{ runner.temp }}/coverage-debug.log
-            .coverage*
-          include-hidden-files: true
-          if-no-files-found: warn
 
       # A provider's environment may be older than the service's, so the contract's
       # own tests run on the oldest Python it supports, in an environment apart from
