@@ -40,6 +40,16 @@ function runScript(packageDirectory, args) {
   return spawnSync("node", [SCRIPT, ...args], { cwd: packageDirectory, encoding: "utf8" });
 }
 
+function printedIntegrity(stdout) {
+  return stdout.match(/^integrity=(.+)$/m)[1];
+}
+
+// openssl digests the tarball independently of the script's own hashing.
+function independentIntegrity(tarball) {
+  const digest = spawnSync("sh", ["-c", 'openssl dgst -sha512 -binary "$1" | base64 -w0', "sh", tarball], { encoding: "utf8" });
+  return `sha512-${digest.stdout}`;
+}
+
 describe("pack-release.js", () => {
   it("prints the tarball's file name and integrity for a package that installs", async () => {
     const destination = await temporaryDirectory();
@@ -48,6 +58,7 @@ describe("pack-release.js", () => {
     assert.equal(result.status, 0);
     assert.match(result.stdout, /^file=fixture-package-1\.2\.3\.tgz$/m);
     assert.match(result.stdout, /^integrity=sha512-[A-Za-z0-9+/]+=*$/m);
+    assert.equal(printedIntegrity(result.stdout), independentIntegrity(path.join(destination, "fixture-package-1.2.3.tgz")));
   });
 
   it("fails without a destination and prints nothing", async () => {
@@ -57,24 +68,22 @@ describe("pack-release.js", () => {
     assert.doesNotMatch(result.stdout, /^(file|integrity)=/m);
   });
 
-  it("refuses a tarball that holds a file beyond package.json and dist", async () => {
-    const packageDirectory = await fixturePackage({
+  const refusedTarballs = {
+    "a file beyond package.json and dist": {
       overrides: { files: ["dist", "stray.txt"] },
       extraFiles: ["stray.txt"],
-    });
-    const result = runScript(packageDirectory, [await temporaryDirectory()]);
-
-    assert.notEqual(result.status, 0);
-    assert.doesNotMatch(result.stdout, /^integrity=/m);
-  });
-
-  it("refuses a tarball whose export target is missing", async () => {
-    const packageDirectory = await fixturePackage({
+    },
+    "an export target that is missing": {
       overrides: { exports: { ".": { default: "./dist/missing.js" } } },
-    });
-    const result = runScript(packageDirectory, [await temporaryDirectory()]);
+    },
+  };
 
-    assert.notEqual(result.status, 0);
-    assert.doesNotMatch(result.stdout, /^integrity=/m);
-  });
+  for (const [behaviour, fixture] of Object.entries(refusedTarballs)) {
+    it(`refuses a tarball with ${behaviour}`, async () => {
+      const result = runScript(await fixturePackage(fixture), [await temporaryDirectory()]);
+
+      assert.notEqual(result.status, 0);
+      assert.doesNotMatch(result.stdout, /^integrity=/m);
+    });
+  }
 });
