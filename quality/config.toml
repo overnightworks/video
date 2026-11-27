@@ -1,39 +1,6 @@
 [gate]
 mandatory_jobs = ["Video: lint, tests", "Video: browser package", "Video: browser layer", "Video: flashhead-lite provider", "Video: image / Test"]
 
-[[root.allow]]
-entry = "packages/"
-reason = "the client packages an app builds on: the uv workspace's Python client and the pnpm browser package"
-
-[[root.allow]]
-entry = "providers/"
-reason = "the provider port and the providers, each its own distribution in the uv workspace"
-
 [[python.allow]]
 path = "providers/provider-contract/pyproject.toml"
 reason = "a provider's environment may be older than the service's, and imports the contract there"
-
-[[layout.allow]]
-path = "tests/test_browser_consent.py"
-rule = "test-layout"
-reason = "it drives packages/browser in Chromium against the service, which has no module of that name"
-
-[[layout.allow]]
-path = "tests/test_browser_timing.py"
-rule = "test-layout"
-reason = "it drives packages/browser in Chromium against the service, which has no module of that name"
-
-[[layout.allow]]
-path = "tests/test_browser_watch.py"
-rule = "test-layout"
-reason = "it drives packages/browser in Chromium against the service, which has no module of that name"
-
-[[layout.allow]]
-path = "tests/test_image.py"
-rule = "test-layout"
-reason = "it drives the built image, which has no module of that name"
-
-[[layout.allow]]
-path = "tests/test_image_card.py"
-rule = "test-layout"
-reason = "it drives the built image on the card, which has no module of that name"

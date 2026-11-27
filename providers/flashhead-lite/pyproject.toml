@@ -82,3 +82,17 @@ testpaths = ["tests"]
 [tool.ruff]
 extend = "../../pyproject.toml"
 target-version = "py314"
+
+# CI runs this provider's tests from the repository root with `--cov-config` naming this file, so the root's coverage
+# settings do not apply and the root's floor does not judge this report; the run settings repeat the root's.
+[tool.coverage.run]
+branch = true
+patch = ["subprocess", "_exit"]
+include = ["src/*", "packages/*/src/*", "providers/*/src/*", "scripts/*"]
+omit = ["providers/flashhead-lite/src/video_provider_flashhead_lite/card.py"]
+
+[tool.coverage.report]
+# The floor is what CI measured, rounded down at two places.
+precision = 2
+fail_under = 76.75
+exclude_also = ["if __name__ == .__main__.:"]

@@ -48,7 +48,7 @@ if TYPE_CHECKING:
 
 pytestmark = pytest.mark.image
 
-_REPOSITORY = Path(__file__).resolve().parents[1]
+_REPOSITORY = Path(__file__).resolve().parents[2]
 _PROVIDER_ROOT_ENV = "VIDEO_PROVIDER_ROOT"
 _DEPLOYMENT_SETTINGS = (
     "VIDEO_PROVIDER",

@@ -108,6 +108,7 @@ src = [
 # The gate's layout rules forbid package markers in these directories.
 namespace-packages = [
     "scripts",
+    "tests/e2e",
     "tests/scripts",
     "tests/support",
     "packages/client/tests/support",
@@ -139,4 +140,7 @@ convention = "google"
 "providers/provider-contract/tests/**" = ["S101", "D103"]
 
 [tool.coverage.report]
+# The floor is what CI measured, rounded down at two places.
+precision = 2
+fail_under = 98.29
 exclude_also = ["if __name__ == .__main__.:"]
