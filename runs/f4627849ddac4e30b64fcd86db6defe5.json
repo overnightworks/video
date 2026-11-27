@@ -179,7 +179,54 @@
     {
       "run": "0c1c22eed6bc4c9b8eb297b44366e392-3",
       "start_tip": "2a3f3d486ce3fd205d4e7995b2ceeacb7ec19019",
-      "follows": true
+      "follows": true,
+      "end_tip": "ab080630ccd0ed0b5d02a600cda832c177373feb",
+      "ran": [
+        "review",
+        "fix"
+      ],
+      "record": {
+        "version": 1,
+        "stages": {
+          "build": "sonnet/medium",
+          "fix": "sonnet/high",
+          "review": "sonnet/high",
+          "test": "none",
+          "gate": "none",
+          "land": "haiku/low"
+        },
+        "fix_rounds": {
+          "review": 1,
+          "gate": 0,
+          "ci": 1,
+          "test": 0
+        },
+        "blocking": {
+          "review": 1,
+          "gate": 0,
+          "ci": 2,
+          "test": 0
+        },
+        "misses": {
+          "review": 0,
+          "gate": 0,
+          "ci": 1,
+          "test": 0
+        },
+        "verdicts": [
+          {
+            "stage": "review",
+            "verdict": "revise",
+            "sha": "51300ec7af7491fc5589f9c679bd2e6183e93073"
+          },
+          {
+            "stage": "review",
+            "verdict": "approve",
+            "sha": "ab080630ccd0ed0b5d02a600cda832c177373feb"
+          }
+        ],
+        "risk": "normal"
+      }
     }
   ]
 }
