@@ -1,0 +1,8 @@
+claim_id = "a82c2fdaa8ed4805a4768de467d09746"
+agent = "Claude d8b1643a-c037-46e3-9a04-348b85359122"
+role = "builder"
+base = "246393dbba87436165a6cd9eec6119d8b7643e69"
+branch = "claude/issue-143-the-browser-scripts-coverage-reaches-100"
+scope = [".github/workflows/ci.yml", "AGENTS.md", "packages/browser/mcr.config.js", "packages/browser/scripts", "sonar-project.properties"]
+opened_commit = "3e933db7c47cbd8ed44360671a9509aff37b6720"
+whole_reason = "Each deleted check, the test that proves the rest and the floor it raises meet in the same mcr pass and CI call, so they land together."
