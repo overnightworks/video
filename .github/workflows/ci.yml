@@ -49,7 +49,7 @@ jobs:
         env:
           COVERAGE_DEBUG: pid,process,dataio
           COVERAGE_DEBUG_FILE: ${{ runner.temp }}/coverage-debug.log
-        run: uv run --locked --no-build pytest -n auto --randomly-seed=1234 --cov --cov-report=xml:coverage-root.xml
+        run: uv run --locked --no-build pytest -n auto --cov --cov-report=xml:coverage-root.xml
 
       - name: Upload the coverage debug files
         if: always()
