@@ -1,8 +1,0 @@
-claim_id = "f4627849ddac4e30b64fcd86db6defe5"
-agent = "Claude d8b1643a-c037-46e3-9a04-348b85359122"
-role = "builder"
-base = "51af2a0246fb9d08a6cf685b85cc114ddbef8c0f"
-branch = "claude/issue-136-video-pins-quality-v0-28-0"
-scope = [".github/workflows/ci.yml", ".github/workflows/code-scanning.yml", ".github/workflows/image-test.yml", ".github/workflows/release-distributions.yml", ".github/workflows/release.yml", "docs/runbooks/card-proof.md", "packages/browser/mcr.config.js", "packages/browser/scripts/page-coverage-report.js", "providers/flashhead-lite/pyproject.toml", "pyproject.toml", "quality/config.toml", "tests/e2e", "tests/test_browser_consent.py", "tests/test_browser_timing.py", "tests/test_browser_watch.py", "tests/test_image.py", "tests/test_image_card.py"]
-opened_commit = "7a425d2a38ea28c4dd6b6a37754b83be79af60e9"
-whole_reason = "One pin move with what v0.28.0's rules ask of it: at the new pin the gate reports five areas not checked until the entries end, so pins, entries and floors land together."
