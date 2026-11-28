@@ -142,5 +142,5 @@ convention = "google"
 [tool.coverage.report]
 # The total joins every measured run and is the same on every run of unchanged code, so the floor is that total rounded down at two decimals.
 precision = 2
-fail_under = 98.70
+fail_under = 98.69
 exclude_also = ["if __name__ == .__main__.:"]

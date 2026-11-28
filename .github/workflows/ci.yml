@@ -328,9 +328,9 @@ jobs:
           path: coverage-data
           merge-multiple: true
 
-      # A directory argument matches only `.coverage.*`; each run writes its data under
-      # its own name, with a process suffix where it measures child processes, so the globs name them and a run with no data
-      # fails; `coverage report` judges the floor in pyproject.toml.
+      # A directory argument matches only `joined.*`, the name of COVERAGE_FILE, so the globs name each
+      # run's data, which carries a process suffix where it measures child processes.
+      # A glob with no match fails the combine; `coverage report` judges the floor in pyproject.toml.
       - name: Join the runs and judge the floor
         env:
           COVERAGE_FILE: coverage-data/joined
