@@ -1,8 +1,0 @@
-claim_id = "bda4d0641c404e09b04f225a83975460"
-agent = "Claude d8b1643a-c037-46e3-9a04-348b85359122"
-role = "builder"
-base = "83315e6e8634638bd85abf077b4fb6c6ff0e89e3"
-branch = "claude/issue-154-the-card-scripts-refusals-and-failure-pa"
-scope = ["pyproject.toml", "scripts/card_memory.py", "tests/scripts/test_prove_card.py", "tests/scripts/test_prove_card_hold.py", "tests/support/prove_card_support.py"]
-opened_commit = "797dae55a593ac5238c3e493571f7128b24533d2"
-whole_reason = "The card scripts' refusals and failure paths share one report and one floor rise."
