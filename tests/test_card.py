@@ -42,10 +42,14 @@ def _line_of(memory: CardMemory) -> str:
     return f"{memory.used_mb}, {memory.free_mb}, {memory.total_mb}"
 
 
-def _nvidia_smi(directory: Path, script: str) -> None:
+def _program(directory: Path, text: str) -> None:
     program = directory / "nvidia-smi"
-    program.write_text(f"#!/bin/sh\n{script}\n", encoding="utf-8")
+    program.write_text(text, encoding="utf-8")
     program.chmod(0o755)
+
+
+def _nvidia_smi(directory: Path, script: str) -> None:
+    _program(directory, f"#!/bin/sh\n{script}\n")
 
 
 def test_the_reading_is_the_used_free_and_total_memory_of_the_first_line(
@@ -100,6 +104,22 @@ def test_an_nvidia_smi_that_cannot_say_is_an_error_and_health_reports_no_memory_
 ) -> None:
     if script is not None:
         _nvidia_smi(tmp_path, script)
+    monkeypatch.setenv("PATH", str(tmp_path))
+
+    with pytest.raises(CardReadingError):
+        read_card_memory()
+    assert card_memory_mb() == 0
+
+
+@pytest.mark.parametrize(
+    "program",
+    ["just text, no shebang\n", "#!/no/such/interpreter\n"],
+    ids=["no-shebang", "interpreter-missing"],
+)
+def test_an_nvidia_smi_that_cannot_start_is_an_error_and_health_reports_no_memory_used(
+    program: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _program(tmp_path, program)
     monkeypatch.setenv("PATH", str(tmp_path))
 
     with pytest.raises(CardReadingError):

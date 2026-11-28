@@ -86,8 +86,8 @@ def _abandon(process: subprocess.Popen[bytes]) -> None:
     except subprocess.TimeoutExpired:
         pass
     finally:
-        if process.stdout is not None:
-            process.stdout.close()
+        assert process.stdout is not None  # noqa: S101 - `Popen` was given `stdout=PIPE`
+        process.stdout.close()
         process.poll()
 
 
