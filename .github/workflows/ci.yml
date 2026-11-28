@@ -163,7 +163,10 @@ jobs:
       - name: Pack the tarball and install it into an empty project
         env:
           MCR_LCOV_FILE: coverage-browser-pack.lcov
-        run: pnpm exec mcr -c mcr.config.js node scripts/pack-release.js "$RUNNER_TEMP/release-files"
+        run: >-
+          pnpm exec mcr -c mcr.config.js -- sh -c
+          'node scripts/pack-release.js "$1" && node --test --test-randomize scripts/pack-release.test.js'
+          sh "$RUNNER_TEMP/release-files"
 
       - name: Upload the pack script's coverage report
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -236,7 +239,10 @@ jobs:
         env:
           VIDEO_BROWSER_COVERAGE_DIR: ${{ runner.temp }}/browser-coverage-raw
           MCR_LCOV_FILE: coverage-browser-report.lcov
-        run: pnpm exec mcr -c mcr.config.js node scripts/page-coverage-report.js "${VIDEO_BROWSER_COVERAGE_DIR}"
+        run: >-
+          pnpm exec mcr -c mcr.config.js -- sh -c
+          'node scripts/page-coverage-report.js "$1" && node --test --test-randomize scripts/page-coverage-report.test.js'
+          sh "${VIDEO_BROWSER_COVERAGE_DIR}"
 
       - name: Upload the coverage report
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

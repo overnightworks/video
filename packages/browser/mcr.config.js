@@ -5,8 +5,8 @@ import path from "node:path";
 
 // The lowest percentage of lines and of branches a report may reach, rounded down from what CI measured.
 const FLOORS = {
-  "coverage-browser-pack.lcov": { lines: 96.87, branches: 75 },
-  "coverage-browser-report.lcov": { lines: 92.15, branches: 58.33 },
+  "coverage-browser-pack.lcov": { lines: 100, branches: 100 },
+  "coverage-browser-report.lcov": { lines: 100, branches: 100 },
   "coverage-browser.lcov": { lines: 100, branches: 100 },
 };
 const LCOV_COUNTS = { lines: ["LF", "LH"], branches: ["BRF", "BRH"] };
@@ -30,13 +30,14 @@ export function enforceFloor(outputDirectory, lcovFile) {
   };
 }
 
+const MEASURED_FILES = { "**/scripts/pack-release.js": true, "**/scripts/page-coverage-report.js": true, "**/mcr.config.js": true };
 const OUTPUT_DIRECTORY = "coverage-scripts";
 export default {
   name: "Browser package scripts",
   outputDir: OUTPUT_DIRECTORY,
   reports: [["lcovonly", { file: process.env.MCR_LCOV_FILE, projectRoot: "../.." }]],
-  // The config is measured where a script imports it.
-  entryFilter: { "**/scripts/**": true, "**/mcr.config.js": true },
-  sourceFilter: { "**/scripts/**": true, "**/mcr.config.js": true },
+  // The two scripts, and the config where a script imports it; the tests that run them are not measured.
+  entryFilter: MEASURED_FILES,
+  sourceFilter: MEASURED_FILES,
   onEnd: enforceFloor(OUTPUT_DIRECTORY, process.env.MCR_LCOV_FILE),
 };
