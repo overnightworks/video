@@ -4,9 +4,11 @@ The adapter is the one `Provider` the service builds. It starts the provider's
 worker executable, reads its answers on a thread of its own and matches each to
 the request that waits for it: per session in request order, so one child serves
 every open session. Every bound is a watchdog that ends the child, since an answer
-that comes late may still be on the pipe. A child that dies, hangs past a bound or
-breaks the protocol makes the provider failed until the service restarts: every
-call after it raises `ProviderFailedError`.
+that comes late may still be on the pipe; a child that reported its own failure
+first gets a short bound to end on its own, so its exit status and the data it
+saves are its own. A child that dies, hangs past a bound or breaks the protocol
+makes the provider failed until the service restarts: every call once the failure
+has begun raises `ProviderFailedError`.
 """
 
 from __future__ import annotations
@@ -86,11 +88,18 @@ class ProcessFailure(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class ProcessBounds:
-    """How long the provider's start, a look's preparation and an open may take."""
+    """How long the provider's start, a look's preparation and an open may take.
+
+    `reported_exit_seconds` is how long a worker that reported its failure may take
+    to end on its own: it covers a measured worker saving its data on a loaded
+    runner, and the provider has already failed for good, so it delays only the log
+    line and the rejection of waiting requests.
+    """
 
     start_seconds: float = 600.0
     prepare_seconds: float = 60.0
     open_seconds: float = 30.0
+    reported_exit_seconds: float = 5.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -245,16 +254,42 @@ class ProcessProvider:
             with self._lock:
                 child = self._child
                 known = self._queues.pop(session, None) is not None
-                if not known or self._failure is not None or self._closing:
+                if (
+                    not known
+                    or self._failure is not None
+                    or self._failing
+                    or self._closing
+                ):
                     return
             with suppress(ProviderFailedError):
                 self._write(child, encode_session(FrameKind.CLOSE, session))
 
     def _ready_info(self) -> ProviderInfo:
-        with self._lock:
-            if self._info is None or self._failure is not None or self._closing:
+        with self._refusing(), self._lock:
+            if (
+                self._info is None
+                or self._failure is not None
+                or self._failing
+                or self._closing
+            ):
                 raise ProviderFailedError
             return self._info
+
+    @contextlib.contextmanager
+    def _refusing(self) -> Iterator[None]:
+        """A call refused during a failure raises once the failure is logged.
+
+        The refusal comes after the locks of the block are released, so the failing
+        thread can finish.
+        """
+        try:
+            yield
+        except ProviderFailedError:
+            with self._lock:
+                failing = self._failing and not self._closing
+            if failing:
+                self._failed.wait()
+            raise
 
     def _spawn(self, ready: _Request) -> subprocess.Popen[bytes]:
         with self._lock:
@@ -277,7 +312,7 @@ class ProcessProvider:
     ) -> ProtocolFrame | None:
         """Send `request` and wait for its answer, which must come within `seconds`."""
         waiting = _Request(answer)
-        with self._within(seconds):
+        with self._refusing(), self._within(seconds):
             with self._write_lock:
                 with self._lock:
                     child = self._child
@@ -286,6 +321,7 @@ class ProcessProvider:
                         child is None
                         or queue is None
                         or self._failure is not None
+                        or self._failing
                         or self._closing
                     ):
                         raise ProviderFailedError
@@ -329,7 +365,11 @@ class ProcessProvider:
                     read_frame(stdout, limits, ANSWER_KINDS), limits
                 )
         except _ReportedFailureError as reported:
-            self._fail(ProcessFailure.REPORTED, reported.error_type)
+            self._fail(
+                ProcessFailure.REPORTED,
+                reported.error_type,
+                self._bounds.reported_exit_seconds,
+            )
         except ProtocolError:
             self._fail(ProcessFailure.PROTOCOL)
         except EOFError, OSError, ValueError:
@@ -372,10 +412,19 @@ class ProcessProvider:
                     self._fail(ProcessFailure.STDERR_OVERSIZED)
                     return
 
-    def _fail(self, reason: ProcessFailure, error_type: str | None = None) -> None:
+    def _fail(
+        self,
+        reason: ProcessFailure,
+        error_type: str | None = None,
+        exit_seconds: float | None = None,
+    ) -> None:
         """Fail the provider for good: kill the process and fail every request.
 
         `error_type` is the root cause's class name the provider reported, if it did.
+        The first caller marks the provider failing, so no request is written to
+        the process from then on. With `exit_seconds` it first gives a process that
+        reported its failure that long to end on its own, so the line logs its own
+        exit status; without, it kills at once.
 
         Every caller returns once the failure is complete and logged, so one that
         sees it can rely on the line.
@@ -388,6 +437,8 @@ class ProcessProvider:
             self._failed.wait()
             return
         if child is not None:
+            if exit_seconds is not None:
+                _await_exit(child, exit_seconds)
             self._reap(child)
         with self._lock:
             closing = self._closing
@@ -409,6 +460,7 @@ class ProcessProvider:
     def _reap(self, child: subprocess.Popen[bytes]) -> None:
         """Kill the worker's process group, reap it and close its input.
 
+        The group dies with its leader, whether the leader ended on its own or not.
         A child already reaped is not killed again: its pid may belong to another
         process by now. A child that exited but is not reaped is a zombie, so its
         pid is still its own and its group is killed. Its output pipes close in the
@@ -503,6 +555,22 @@ def _addressee(frame: ProtocolFrame) -> int:
     if kind in {FrameKind.OPENED, FrameKind.CLEARED}:
         return decode_session(payload)
     return NO_SESSION
+
+
+def _await_exit(child: subprocess.Popen[bytes], seconds: float) -> None:
+    """Return when `child` has ended or after `seconds`, without reaping it.
+
+    The child stays a zombie, so its pid and its group are still its own.
+    """
+    ended = threading.Event()
+
+    def watch() -> None:
+        with suppress(ChildProcessError):
+            os.waitid(os.P_PID, child.pid, os.WEXITED | os.WNOWAIT)
+            ended.set()
+
+    threading.Thread(target=watch, daemon=True, name="provider-exit").start()
+    ended.wait(seconds)
 
 
 def _stream(pipe: IO[bytes] | None) -> IO[bytes]:
