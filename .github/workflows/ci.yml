@@ -329,17 +329,17 @@ jobs:
           merge-multiple: true
 
       # A directory argument matches only `.coverage.*`; each run writes its data under
-      # its own name and a process suffix, so the globs name them and a run with no data
+      # its own name, with a process suffix where it measures child processes, so the globs name them and a run with no data
       # fails; `coverage report` judges the floor in pyproject.toml.
       - name: Join the runs and judge the floor
         env:
           COVERAGE_FILE: coverage-data/joined
         run: |
           uv run --locked --no-build coverage combine \
-            coverage-data/video.* \
-            coverage-data/browser-layer.* \
-            coverage-data/flashhead-lite-provider.* \
-            coverage-data/flashhead-lite-service.*
+            coverage-data/video* \
+            coverage-data/browser-layer* \
+            coverage-data/flashhead-lite-provider* \
+            coverage-data/flashhead-lite-service*
           uv run --locked --no-build coverage xml -o coverage-root.xml
           uv run --locked --no-build coverage report
 
