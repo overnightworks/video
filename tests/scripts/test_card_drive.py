@@ -6,6 +6,7 @@ a process the test starts, and never in the pytest worker.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
 import os
@@ -14,11 +15,14 @@ import subprocess
 import sys
 import uuid
 from pathlib import Path
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Final
 
 import pytest
+from websockets.asyncio.server import serve
 
 import card_drive
+import card_identity
 from support.prove_card_support import (
     APPEARS_WITHIN_SECONDS,
     GONE_WITHIN_SECONDS,
@@ -30,6 +34,8 @@ from support.prove_card_support import (
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+
+    from card_drive import Service
 
 SCRIPTS: Final = Path(__file__).resolve().parents[2] / "scripts"
 MARKER: Final = "CARD_DRIVE_TEST_MARKER"
@@ -166,6 +172,26 @@ elif mode == "unreadable":
 
     control = dataclasses.replace(card_drive.KERNEL, read_stat=refused)
     report(killed(control) | {"unreadable": unreadable.pid, "killable": killable.pid})
+elif mode == "gone-before-open":
+    ending = sleeper()
+
+    def reaped_first(pid):
+        if pid == ending.pid:
+            ending.kill()
+            ending.wait()
+        return card_drive.KERNEL.open(pid)
+
+    report(killed(dataclasses.replace(card_drive.KERNEL, open=reaped_first)))
+elif mode == "gone-before-signal":
+    ending = sleeper()
+
+    def reaped_first(pidfd, signum):
+        ending.kill()
+        ending.wait()
+        card_drive.KERNEL.send_signal(pidfd, signum)
+
+    control = dataclasses.replace(card_drive.KERNEL, send_signal=reaped_first)
+    report(killed(control))
 elif mode == "unlistable":
     sleeper()
 
@@ -386,6 +412,18 @@ def test_a_process_that_cannot_be_read_fails_the_kill_which_goes_on_with_the_oth
     assert ended(result["killable"])
 
 
+@pytest.mark.parametrize("mode", ["gone-before-open", "gone-before-signal"])
+def test_a_process_that_ends_before_it_is_opened_or_signalled_is_no_failure(
+    top: StandInTop, mode: str
+) -> None:
+    top.start(mode)
+
+    result = top.result()
+
+    assert result["failed"] is False
+    assert result["alive"] == 0
+
+
 def test_a_kill_that_cannot_list_the_processes_fails_instead_of_raising(
     top: StandInTop,
 ) -> None:
@@ -481,3 +519,96 @@ def test_a_line_the_service_has_not_ended_is_read_on_a_later_poll(
     log.write_text(log.read_text(encoding="utf-8") + '": 2}\n', encoding="utf-8")
 
     assert [record["id"] for record in service.lines("session.started")] == [1, 2]
+
+
+@pytest.fixture
+def service(tmp_path: Path) -> Iterator[tuple[Service, card_identity.Identity]]:
+    """A running service on the fake provider, with the identity its callers use."""
+    with (
+        card_identity.throwaway_identity(tmp_path) as identity,
+        card_drive.running_service(
+            identity,
+            tmp_path / "service.log",
+            max_lag_ms=500,
+            compiler_home=tmp_path,
+            service_pid_file=tmp_path / "service.record",
+        ) as running,
+    ):
+        yield running, identity
+
+
+def test_a_service_that_exits_before_it_is_ready_is_a_drive_error_and_leaves_no_process(
+    tmp_path: Path,
+) -> None:
+    refused = {card_drive.PROVIDER_VARIABLE: "no-such-provider"}
+
+    with (
+        card_identity.throwaway_identity(tmp_path) as identity,
+        pytest.raises(card_drive.DriveError, match="exited before it was ready"),
+        card_drive.running_service(
+            identity,
+            tmp_path / "service.log",
+            max_lag_ms=500,
+            compiler_home=tmp_path,
+            service_pid_file=tmp_path / "service.record",
+            provider=refused,
+        ),
+    ):
+        pytest.fail("the service started")
+
+    assert ended(int((tmp_path / "service.record").read_text()))
+
+
+def test_a_service_not_ready_within_its_bound_is_a_drive_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(card_drive, "ready_within_seconds", lambda _looks: 0.0)
+
+    with (
+        card_identity.throwaway_identity(tmp_path) as identity,
+        pytest.raises(card_drive.DriveError, match="not ready in time"),
+        card_drive.running_service(
+            identity,
+            tmp_path / "service.log",
+            max_lag_ms=500,
+            compiler_home=tmp_path,
+            service_pid_file=tmp_path / "service.record",
+        ),
+    ):
+        pytest.fail("the service started")
+
+    assert ended(int((tmp_path / "service.record").read_text()))
+
+
+def test_a_log_line_the_service_never_writes_is_a_drive_error(
+    service: tuple[Service, card_identity.Identity], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(card_drive, "LINE_WITHIN_SECONDS", 0.5)
+
+    with pytest.raises(card_drive.DriveError, match="no missing_event line"):
+        asyncio.run(service[0].line("missing_event"))
+
+
+def test_a_viewer_offer_for_a_session_the_service_does_not_know_names_the_404(
+    service: tuple[Service, card_identity.Identity],
+) -> None:
+    running, identity = service
+
+    with pytest.raises(card_drive.DriveError, match="404"):
+        asyncio.run(card_drive.post_viewer_offer(running, identity, "unknown", "v=0"))
+
+
+def test_a_session_that_does_not_start_with_session_created_is_a_drive_error() -> None:
+    async def scenario() -> None:
+        async def another_event_first(connection: object) -> None:
+            await connection.send(json.dumps({"type": "session.updated"}))
+
+        async with serve(another_event_first, "127.0.0.1", 0) as server:
+            port = server.sockets[0].getsockname()[1]
+            stand_in = SimpleNamespace(url=lambda look: f"ws://127.0.0.1:{port}/{look}")
+            identity = SimpleNamespace(headers=dict)
+            async with card_drive.opened_session(stand_in, identity, "alpha"):
+                pytest.fail("the session opened")
+
+    with pytest.raises(card_drive.DriveError, match=r"session\.created"):
+        asyncio.run(scenario())
