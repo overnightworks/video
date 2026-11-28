@@ -158,7 +158,7 @@ class LivePage:
         async for chunk in request.stream():
             offer += chunk
             if len(offer) > MAX_OFFER_BYTES:
-                return Response(status_code=HTTPStatus.REQUEST_ENTITY_TOO_LARGE)
+                return Response(status_code=HTTPStatus.CONTENT_TOO_LARGE)
         relayed = await self._client.post(
             viewers_path(self._session.created.session.id),
             content=offer,
@@ -311,15 +311,12 @@ async def _show(
 ) -> Ended:
     """Serve the page until something ends it; what ended it."""
     loop = asyncio.get_running_loop()
-    ended: asyncio.Future[Ended] = loop.create_future()
-
-    def settle(result: Ended) -> None:
-        if not ended.done():
-            ended.set_result(result)
+    # The first entry ends the page; a later one is never read.
+    ended: asyncio.Queue[Ended] = asyncio.Queue()
 
     def over(reason: str, *, failed: bool = False) -> None:
         # Starlette runs a plain route handler in a worker thread.
-        loop.call_soon_threadsafe(settle, Ended(reason, failed))
+        loop.call_soon_threadsafe(ended.put_nowait, Ended(reason, failed))
 
     async with (
         opened_session(service, identity, LOOK_NAMES[0]) as session,
@@ -345,7 +342,7 @@ async def _show(
                 ),
             ]
             print(f"watch at http://{HOST}:{bound.getsockname()[1]}/", flush=True)
-            result = await ended
+            result = await ended.get()
             for watcher in watchers:
                 watcher.cancel()
             server.should_exit = True
