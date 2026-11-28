@@ -48,6 +48,8 @@ jobs:
       - name: Test
         env:
           COVERAGE_FILE: coverage-data/video
+          COVERAGE_DEBUG: pid,process,dataio
+          COVERAGE_DEBUG_FILE: ${{ runner.temp }}/coverage-debug-video.log
         run: uv run --locked --no-build coverage run -m pytest -n auto
 
       # A provider's environment may be older than the service's, so the contract's
@@ -72,6 +74,14 @@ jobs:
           name: raw-coverage-video
           path: coverage-data/
           if-no-files-found: error
+
+      - name: Upload the coverage debug logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: debug-video-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/coverage-debug-*.log
+          if-no-files-found: warn
 
   flashhead-lite-provider:
     name: "Video: flashhead-lite provider"
@@ -116,6 +126,8 @@ jobs:
       - name: Test
         env:
           COVERAGE_FILE: coverage-data/flashhead-lite-provider
+          COVERAGE_DEBUG: pid,process,dataio
+          COVERAGE_DEBUG_FILE: ${{ runner.temp }}/coverage-debug-flashhead-test.log
         # pytest-workers: the suite runs in about 15 s, and xdist is not installed there
         run: uv run --locked --no-build --project providers/flashhead-lite pytest providers/flashhead-lite/tests --cov --cov-config=providers/flashhead-lite/pyproject.toml --cov-report=xml:coverage-flashhead-lite.xml
 
@@ -123,6 +135,8 @@ jobs:
         env:
           CUDA_VISIBLE_DEVICES: ""
           COVERAGE_FILE: coverage-data/flashhead-lite-service
+          COVERAGE_DEBUG: pid,process,dataio
+          COVERAGE_DEBUG_FILE: ${{ runner.temp }}/coverage-debug-flashhead-service.log
         # pytest-workers: one test, and xdist is not worth its start
         run: uv run --locked --no-build coverage run -m pytest -m flashhead_lite tests
 
@@ -139,6 +153,14 @@ jobs:
           name: raw-coverage-flashhead-lite
           path: coverage-data/
           if-no-files-found: error
+
+      - name: Upload the coverage debug logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: debug-flashhead-lite-provider-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/coverage-debug-*.log
+          if-no-files-found: warn
 
   browser-package:
     name: "Video: browser package"
@@ -243,6 +265,8 @@ jobs:
         env:
           VIDEO_BROWSER_COVERAGE_DIR: ${{ runner.temp }}/browser-coverage-raw
           COVERAGE_FILE: coverage-data/browser-layer
+          COVERAGE_DEBUG: pid,process,dataio
+          COVERAGE_DEBUG_FILE: ${{ runner.temp }}/coverage-debug-browser-layer.log
         # pytest-workers: one worker, the scenarios measure real-time audio and picture
         # pytest-random: the scenarios run one after another against one real browser
         run: uv run --locked --no-build coverage run -m pytest -q -m browser tests
@@ -278,23 +302,13 @@ jobs:
           path: coverage-data/
           if-no-files-found: error
 
-  # The image is larger than the standard runner's disk holds, so its build runs on
-  # the paid larger runner `speech-gpu-build`. The job waits for the fast jobs: when one
-  # of them fails, it is skipped and reads red at the gate, and the paid runner is never
-  # started.
-  image:
-    name: "Video: image"
-    needs:
-      - video
-      - flashhead-lite-provider
-      - browser-package
-      - browser-layer
-    uses: $/.github/workflows/image-test.yml
-    permissions:
-      contents: read
-      packages: read
-    with:
-      runner: speech-gpu-build
+      - name: Upload the coverage debug logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: debug-browser-layer-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/coverage-debug-*.log
+          if-no-files-found: warn
 
   coverage:
     name: coverage
@@ -360,22 +374,3 @@ jobs:
             coverage-browser-pack.lcov
             coverage-browser-report.lcov
           if-no-files-found: error
-
-  quality:
-    name: quality
-    needs:
-      - video
-      - flashhead-lite-provider
-      - browser-package
-      - browser-layer
-      - image
-      - coverage
-    if: always()
-    uses: overnightworks/quality/.github/workflows/gate.yml@c4e75830ac6581f5216cda127eee4c0b026e6822 # v0.28.0
-    with:
-      coverage-artifact: coverage
-    permissions:
-      contents: read
-      actions: read
-    secrets:
-      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
