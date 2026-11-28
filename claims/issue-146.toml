@@ -1,8 +1,0 @@
-claim_id = "1b986739c9e848ab954941f4c79b6202"
-agent = "Claude d8b1643a-c037-46e3-9a04-348b85359122"
-role = "builder"
-base = "ad0acc33b0d4bdf15b983404b192be0cf5fdfe1d"
-branch = "claude/issue-146-a-worker-that-reports-its-failure-ends-o"
-scope = [".github/workflows/ci.yml", "src/video_service/provider_process.py", "tests/support/worker_support.py", "tests/test_provider_process.py"]
-opened_commit = "15974802561a2a01e3e8c9b2e6c73ab1714838fa"
-whole_reason = "The bounded wait, the tests that pin each failure path and the measurement that proves the save land together."
