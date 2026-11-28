@@ -1,7 +1,7 @@
 // Runs pack-release.js as a process against fixture packages built in temporary directories.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, describe, it } from "node:test";
@@ -59,6 +59,14 @@ describe("pack-release.js", () => {
     assert.match(result.stdout, /^file=fixture-package-1\.2\.3\.tgz$/m);
     assert.match(result.stdout, /^integrity=sha512-[A-Za-z0-9+/]+=*$/m);
     assert.equal(printedIntegrity(result.stdout), independentIntegrity(path.join(destination, "fixture-package-1.2.3.tgz")));
+  });
+
+  it("creates a destination that does not exist yet", async () => {
+    const destination = path.join(await temporaryDirectory(), "release", "files");
+    const result = runScript(await fixturePackage(), [destination]);
+
+    assert.equal(result.status, 0);
+    assert.deepEqual(await readdir(destination), ["fixture-package-1.2.3.tgz"]);
   });
 
   it("fails without a destination and prints nothing", async () => {

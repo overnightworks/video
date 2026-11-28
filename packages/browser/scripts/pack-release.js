@@ -4,7 +4,7 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { copyFile, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -53,6 +53,7 @@ async function packInto(staging, destination, name, version) {
     await rm(host, { recursive: true, force: true });
   }
 
+  await mkdir(destination, { recursive: true });
   await copyFile(tarballPath, path.join(destination, tarball));
   const integrity = createHash("sha512").update(await readFile(tarballPath)).digest("base64");
   console.log(`file=${tarball}`);
