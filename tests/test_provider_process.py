@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import select
+import signal
 import subprocess
 import sys
 import threading
@@ -44,6 +45,8 @@ if TYPE_CHECKING:
 
 _RATE = 16_000
 _WAIT_SECONDS = 20.0
+# A bound no test run reaches: a path that waited for it would hang.
+_NEVER_SECONDS = 1e6
 _IMAGE = DecodedImage(2, 2, bytes(12))
 _LOUD = b"\xff\x7f" * (_RATE // 25)
 _QUIET = bytes(2 * (_RATE // 25))
@@ -334,8 +337,7 @@ def test_a_child_that_fails_ends_in_the_failed_path_without_a_hang(
     assert provider.failed
     assert [
         (r.reason, r.error_type)  # type: ignore[attr-defined]
-        for r in caplog.records
-        if r.msg == "provider.failed"
+        for r in _failed_lines(caplog)
     ] == [logged]
     with pytest.raises(ProviderFailedError):
         provider.open_session(_MOZART)
@@ -548,22 +550,84 @@ def test_a_second_close_kills_no_process_group(
     assert killed == []
 
 
+_START_DESCENDANT = (
+    "import subprocess; "
+    "helper = subprocess.Popen(['sleep', '60'], stdin=subprocess.DEVNULL, "
+    "stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL); "
+    "open(os.environ['STUB_PIDFILE'] + '.descendant', 'w').write(str(helper.pid)); "
+)
+
+
+def _descendant_is_gone(stub_environment: Path) -> bool:
+    record = stub_environment.with_name(stub_environment.name + ".descendant")
+    descendant = int(record.read_text(encoding="utf-8"))
+    deadline = time.monotonic() + _WAIT_SECONDS
+    while not is_gone(descendant) and time.monotonic() < deadline:
+        time.sleep(0.01)
+    return is_gone(descendant)
+
+
+def _failed_lines(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
+    return [r for r in caplog.records if r.msg == "provider.failed"]
+
+
 def test_a_worker_that_exits_takes_its_descendants_with_it(
-    make_provider: MakeProvider, tmp_path: Path
+    make_provider: MakeProvider, stub_environment: Path
 ) -> None:
-    pidfile = tmp_path / "descendant.pid"
-    provider = make_provider(
-        "import subprocess; "
-        "helper = subprocess.Popen(['sleep', '60'], stdin=subprocess.DEVNULL, "
-        "stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL); "
-        f"open({str(pidfile)!r}, 'w').write(str(helper.pid)); os._exit(1)"
-    )
+    provider = make_provider(_START_DESCENDANT + "os._exit(1)")
 
     with pytest.raises(ProviderFailedError):
         provider.start()
 
-    descendant = int(pidfile.read_text(encoding="utf-8"))
-    deadline = time.monotonic() + _WAIT_SECONDS
-    while not is_gone(descendant) and time.monotonic() < deadline:
-        time.sleep(0.01)
-    assert is_gone(descendant)
+    assert _descendant_is_gone(stub_environment)
+
+
+def test_a_worker_that_reports_its_failure_and_exits_logs_its_own_status(
+    make_provider: MakeProvider,
+    stub_environment: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    provider = make_provider(
+        _START_DESCENDANT
+        + "send(encode_failed(FailureCode.PROVIDER, error_type='Boom')); os._exit(7)"
+    )
+
+    with caplog.at_level(logging.WARNING), pytest.raises(ProviderFailedError):
+        provider.start()
+
+    (line,) = _failed_lines(caplog)
+    assert (line.reason, line.exit_status) == (  # type: ignore[attr-defined]
+        ProcessFailure.REPORTED.value,
+        7,
+    )
+    assert _descendant_is_gone(stub_environment)
+
+
+def test_a_worker_that_reports_its_failure_and_hangs_is_killed_after_the_bound(
+    make_provider: MakeProvider, caplog: pytest.LogCaptureFixture
+) -> None:
+    provider = make_provider(
+        "send(encode_failed(FailureCode.PROVIDER, error_type='Boom')); hang()",
+        ProcessBounds(reported_exit_seconds=SHORT_BOUNDS.reported_exit_seconds),
+    )
+
+    with caplog.at_level(logging.WARNING), pytest.raises(ProviderFailedError):
+        provider.start()
+
+    (line,) = _failed_lines(caplog)
+    assert line.exit_status == -signal.SIGKILL  # type: ignore[attr-defined]
+
+
+def test_a_start_that_the_worker_rejects_kills_it_without_waiting_for_it(
+    make_provider: MakeProvider, caplog: pytest.LogCaptureFixture
+) -> None:
+    provider = make_provider(
+        "send(encode_failed(FailureCode.REQUEST)); hang()",
+        ProcessBounds(reported_exit_seconds=_NEVER_SECONDS),
+    )
+
+    with caplog.at_level(logging.WARNING), pytest.raises(ProviderFailedError):
+        provider.start()
+
+    (line,) = _failed_lines(caplog)
+    assert line.exit_status == -signal.SIGKILL  # type: ignore[attr-defined]

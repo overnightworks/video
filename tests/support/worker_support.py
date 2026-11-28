@@ -20,7 +20,12 @@ if TYPE_CHECKING:
 type MakeProvider = Callable[..., ProcessProvider]
 
 CALL_SECONDS = 5.0
-SHORT_BOUNDS = ProcessBounds(start_seconds=0.4, prepare_seconds=0.4, open_seconds=0.4)
+SHORT_BOUNDS = ProcessBounds(
+    start_seconds=0.4,
+    prepare_seconds=0.4,
+    open_seconds=0.4,
+    reported_exit_seconds=0.4,
+)
 
 # What a scripted worker may use: the contract's protocol on its own pipes, and
 # `serve` to answer requests the way a healthy provider would.
