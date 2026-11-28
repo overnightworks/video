@@ -1,0 +1,8 @@
+claim_id = "f9041594f1f4432dbb35ace9a32ced34"
+agent = "Claude d8b1643a-c037-46e3-9a04-348b85359122"
+role = "builder"
+base = "29883ef3e4e2de1da852d83caf7700491819e2d6"
+branch = "claude/issue-153-the-service-s-coverage-gaps"
+scope = ["pyproject.toml", "src/video_service/card.py", "src/video_service/looks.py", "src/video_service/media.py", "src/video_service/runtime.py", "tests/support/scripted_socket.py", "tests/test_card.py", "tests/test_config.py", "tests/test_session_clear.py", "tests/test_viewer_route_refusals.py"]
+opened_commit = "b4016084fdda465eef81dd84bd56b161724bb5fe"
+whole_reason = "The service's seven gaps share one report and one floor rise, and each is a few lines."
