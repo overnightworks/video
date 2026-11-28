@@ -15,7 +15,7 @@ from support.chunk_support import (
     waiting,
 )
 from support.clock_support import FakeClock
-from support.scripted_session import play, played, scripted
+from support.scripted_session import FRAME_RATE, play, played, scripted
 from support.session_support import (
     EVENT_WITHIN_SECONDS,
     failure_of,
@@ -46,7 +46,7 @@ if TYPE_CHECKING:
 _LONG_MS = 10_000
 _START_UP_SECONDS = 3.0
 _SENTENCE_MS = 3840
-_ONE_FRAME_MS = 40
+_ONE_FRAME_MS = 1000 // FRAME_RATE
 _CLEAR_AFTER_SECONDS = 1.5
 _AFTER_THE_CLEAR_SECONDS = 2.0
 _CLEAR = {"type": "output_audio_buffer.clear"}
