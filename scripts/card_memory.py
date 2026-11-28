@@ -218,22 +218,22 @@ class GroupWatch:
             }
         if before is not None:
             figures[MemoryFigure.USED_BEFORE] = value_of(before)
+            if most is not None:
+                figures[MemoryFigure.USED_BEYOND_CAP] = value_of(
+                    most - before - self.cap_mb
+                )
+            if self.stop is None and self._after_taken:
+                figures |= self._after_figures(before)
         if least is not None:
             figures[MemoryFigure.FREE_LEAST] = judged(
                 least, FREE_MEMORY_LINE, dry_run=False
             )
         if most is not None:
             figures[MemoryFigure.USED_MOST] = value_of(most)
-            if before is not None:
-                figures[MemoryFigure.USED_BEYOND_CAP] = value_of(
-                    most - before - self.cap_mb
-                )
         if self.stop is not None and (blind := self.stop.blind_reason) is not None:
             figures |= {name: not_measured(blind) for name in PEAK_FIGURES}
         if self.stop is not None:
             figures |= _after_not_measured(self.stop.cell_reason)
-        elif self._after_taken and before is not None:
-            figures |= self._after_figures(before)
         if self.stop is not None and self.kill is not None:
             figures[MEMORY_STOP] = self.stop.record(self.kill, self._seconds)
         return figures

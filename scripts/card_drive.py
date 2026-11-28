@@ -688,6 +688,7 @@ class Session:
         self.socket = connection
         self.created = created
         self.opening_ms = 0
+        self._watched = False
 
     async def next_event(self) -> ServerEvent:
         """The next server event, within a bound."""
@@ -702,6 +703,16 @@ class Session:
                 return event
             if isinstance(event, ErrorEvent):
                 raise SessionEndedError(event.error.code)
+
+    async def watch(self) -> AsyncIterator[ServerEvent]:
+        """Every event until the connection closes, which makes this the only reader.
+
+        A send that finds the connection closed then raises `ConnectionClosed` instead
+        of reading the `error` event itself, which would collide with this reader.
+        """
+        self._watched = True
+        async for message in self.socket:
+            yield parse_server_event(message)
 
     async def speak(self, sentence: str, audio: Audio) -> str:
         """Send `audio` as one sentence; the trace id its line is written in."""
@@ -735,6 +746,8 @@ class Session:
         try:
             await self.socket.send(message)
         except ConnectionClosed:
+            if self._watched:
+                raise
             with suppress(ConnectionClosed):
                 error = await self.until(ErrorEvent)
                 raise SessionEndedError(error.error.code) from None

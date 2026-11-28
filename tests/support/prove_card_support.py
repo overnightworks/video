@@ -53,6 +53,8 @@ SERVICE_COMMAND: Final = "video_service"
 PROBE_RUN_STAND_IN: Final = """#!/usr/bin/env bash
 echo "$*" >> "$PROBE_RUN_LOG"
 while [ -n "$PROBE_RUN_HOLD" ] && [ ! -e "$PROBE_RUN_HOLD" ]; do sleep 0.05; done
+# The command line is `-k GRACE CAP command...`: a test may cut the cap.
+if [ -n "$PROBE_RUN_CAP" ]; then set -- "$1" "$2" "$PROBE_RUN_CAP" "${@:4}"; fi
 exec setpriv --pdeathsig TERM timeout "$@"
 """
 # The real `probe-run` keeps its script running and starts `timeout` as its child, so
@@ -345,6 +347,10 @@ class Run:
         if not self.nvidia_smi_answers.exists():
             return 0
         return self.nvidia_smi_answers.read_text().splitlines().count(reading)
+
+    def cut_the_cap(self, seconds: int) -> None:
+        """Have the `probe-run` stand-in end the command after `seconds`."""
+        self.environment = self.environment | {"PROBE_RUN_CAP": str(seconds)}
 
     def nest_timeout_under_probe_run(self) -> None:
         """Have the `probe-run` stand-in keep running with `timeout` as its child."""

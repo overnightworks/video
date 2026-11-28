@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from support.kill_harness import written_harness
 from support.prove_card_support import Run
 
 if TYPE_CHECKING:
@@ -24,3 +25,9 @@ def run(tmp_path: Path) -> Iterator[Run]:
     for pid in prepared.alive():
         with contextlib.suppress(ProcessLookupError):
             os.kill(pid, signal.SIGKILL)
+
+
+@pytest.fixture
+def harness(run: Run) -> Path:
+    """The kill harness script, written beside the run."""
+    return written_harness(run.directory)

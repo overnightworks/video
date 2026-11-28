@@ -13,6 +13,7 @@ import pytest
 import card_drive
 from card_record import MEMORY_STOP, CompilerHome, Reason, StopReason, value_of
 from card_supervision import CHILD_MARKER
+from support.kill_harness import top_command
 from support.prove_card_support import (
     APPEARS_WITHIN_SECONDS,
     BELOW_THE_FLOOR,
@@ -39,126 +40,6 @@ GROUP_FOLLOWS_SECONDS: Final = (
     + TEST_MARGIN_SECONDS
 )
 
-# The command's own entry point, run in a process that is the top, with the kernel
-# calls of the kill replaced by what makes one thing go wrong: a stop that arrives while
-# the end-of-group kill runs, a signal that is refused, a subreaper that cannot be set.
-# The grace a stopped group has is cut to a second in one case.
-HARNESS: Final = """
-import dataclasses
-import json
-import os
-import signal
-import subprocess
-import sys
-from pathlib import Path
-
-import card_drive
-import prove_card
-from card_record import Reason, not_measured
-
-mode = sys.argv[1]
-kernel = card_drive.KERNEL
-opened = []
-
-
-def subreaper_that_leaves_a_process_below():
-    kernel.become_subreaper()
-    # It must not hold the command's standard error open once the command has ended.
-    subprocess.Popen(["sleep", "60"], stderr=subprocess.DEVNULL)
-
-
-def subreaper_that_cannot_be_set():
-    raise OSError(1, "Operation not permitted")
-
-
-def open_during_a_stop_that_names_a_bystander(pid):
-    if not opened:
-        opened.append(pid)
-        # The group's process has ended, so the id it wrote may name another process.
-        for pid_file in Path(os.environ["TMPDIR"]).glob("prove-card-record-*/*.pid"):
-            pid_file.write_text(os.environ["BYSTANDER_PID"])
-        signal.raise_signal(signal.SIGTERM)
-    return kernel.open(pid)
-
-
-def refuse_to_signal(_pidfd, _signum):
-    raise PermissionError
-
-
-def open_during_a_stop_that_is_to_be_held(pid):
-    # The first pidfd the top opens is the kill's, once the breach has marked the group
-    # as ending.
-    if not opened:
-        opened.append(pid)
-        signal.raise_signal(signal.SIGTERM)
-    return kernel.open(pid)
-
-
-fragment_written = []
-
-
-def write_the_fragment_of_a_group_that_saw_its_service_die_first(pidfd, signum):
-    # The group's process, ahead of the kill, failed the cell in progress and ended.
-    if not fragment_written:
-        fragment_written.append(pidfd)
-        for pid_file in Path(os.environ["TMPDIR"]).glob("prove-card-record-*/*.pid"):
-            fragment = pid_file.with_suffix(".json")
-            written = json.loads(fragment.read_text())
-            written["cells"] |= {
-                "viewer": not_measured(Reason.CELL_FAILED),
-                "viewers": not_measured(Reason.GROUP_ENDED),
-            }
-            fragment.write_text(json.dumps(written))
-    kernel.send_signal(pidfd, signum)
-
-
-def record_signal(pidfd, signum):
-    with Path(os.environ["SIGNALS_LOG"]).open("a") as log:
-        log.write(f"{signum}\\n")
-    kernel.send_signal(pidfd, signum)
-
-
-reads = []
-
-
-def read_stat_that_fails_at_first(pid):
-    reads.append(pid)
-    if len(reads) == 1:
-        raise PermissionError
-    return kernel.read_stat(pid)
-
-
-controls = {
-    "stop": dataclasses.replace(
-        kernel,
-        become_subreaper=subreaper_that_leaves_a_process_below,
-        open=open_during_a_stop_that_names_a_bystander,
-    ),
-    "raise": dataclasses.replace(
-        kernel,
-        become_subreaper=subreaper_that_leaves_a_process_below,
-        send_signal=refuse_to_signal,
-    ),
-    "blind": dataclasses.replace(kernel, read_stat=read_stat_that_fails_at_first),
-    "record": dataclasses.replace(kernel, send_signal=record_signal),
-    "refused": dataclasses.replace(kernel, send_signal=refuse_to_signal),
-    "breach-stop": dataclasses.replace(
-        kernel,
-        open=open_during_a_stop_that_is_to_be_held,
-        send_signal=record_signal,
-    ),
-    "cell-failed-first": dataclasses.replace(
-        kernel, send_signal=write_the_fragment_of_a_group_that_saw_its_service_die_first
-    ),
-    "subreaper": dataclasses.replace(
-        kernel, become_subreaper=subreaper_that_cannot_be_set
-    ),
-    "short-grace": dataclasses.replace(kernel, kill_grace_seconds=1),
-}
-raise SystemExit(prove_card.main(sys.argv[2:], controls[mode]))
-"""
-
-
 # A thread that is no daemon, as aiortc's decoder threads are, keeps the group's process
 # from ending after its cleanups; a hook the group's interpreter runs at its start.
 LINGERING_THREAD: Final = f"""
@@ -172,20 +53,13 @@ if os.environ.get({CHILD_MARKER!r}) and sys.argv[0].endswith("prove_card.py"):
 """
 
 
-@pytest.fixture
-def harness(run: Run) -> Path:
-    """The `HARNESS` script, written beside the run."""
-    script = run.directory / "harness.py"
-    script.write_text(HARNESS)
-    return script
-
-
 def _start_with(
     run: Run, harness: Path, mishap: str, *extra: str
 ) -> subprocess.Popen[bytes]:
     """Start the command as the top of the `HARNESS` case `mishap`."""
-    arguments = run.arguments(*extra)
-    return run.launch([arguments[0], str(harness), mishap, *arguments[2:]])
+    return run.launch(
+        top_command(harness, "prove_card", mishap, run.arguments(*extra)[2:])
+    )
 
 
 def test_a_worker_that_outlives_its_service_is_counted_and_ended_by_the_top(
@@ -249,8 +123,11 @@ def test_a_stop_during_the_end_of_group_kill_is_held_and_sent_to_no_process(
         bystander.wait()
 
 
+@pytest.mark.parametrize(
+    "gone", [False, True], ids=["a_process_probe_run_did_not_start", "a_gone_process"]
+)
 def test_a_stop_is_not_forwarded_to_a_process_that_is_no_child_of_probe_run(
-    run: Run, harness: Path
+    run: Run, harness: Path, *, gone: bool
 ) -> None:
     bystander = subprocess.Popen(["sleep", "60"])  # noqa: S607 - the test's own bystander
     signals = run.directory / "signals.log"
@@ -263,7 +140,11 @@ def test_a_stop_is_not_forwarded_to_a_process_that_is_no_child_of_probe_run(
             lambda: "process.ready" in _log_text(run, LAG_SERVICE),
             APPEARS_WITHIN_SECONDS,
         )
-        # The id the group's process wrote now names a process probe-run did not start.
+        if gone:
+            bystander.kill()
+            bystander.wait()
+        # The id the group's process wrote now names a process probe-run did not start,
+        # or none.
         (pid_file,) = run.scratch.glob("prove-card-record-*/*.pid")
         pid_file.write_text(str(bystander.pid))
         os.kill(command.pid, signal.SIGTERM)
@@ -278,10 +159,44 @@ def test_a_stop_is_not_forwarded_to_a_process_that_is_no_child_of_probe_run(
         assert run.has_spoken()
         assert signal.SIGTERM.value not in _signals_sent(signals)
         assert run.processes() == []
-        assert bystander.poll() is None
+        assert (bystander.poll() is None) is not gone
     finally:
         bystander.kill()
         bystander.wait()
+
+
+def test_a_stop_while_probe_run_waits_for_the_load_goes_to_probe_run(
+    run: Run, tmp_path: Path
+) -> None:
+    run.environment["PROBE_RUN_HOLD"] = str(tmp_path / "never-released")
+    command = run.start("--dry-run", "--cells", "lag")
+    held = run.wait_until(run.probe_run_log.exists, APPEARS_WITHIN_SECONDS)
+    os.kill(command.pid, signal.SIGTERM)
+
+    status, error = run.finish(command)
+
+    assert held
+    assert status != 0
+    assert error.strip() == "interrupted by SIGTERM"
+    assert len(run.probe_run_log.read_text().splitlines()) == 1
+    assert run.logs() == []
+    assert run.processes() == []
+
+
+def test_a_stop_that_arrives_before_the_top_forwards_stops_goes_to_probe_run(
+    run: Run, harness: Path, tmp_path: Path
+) -> None:
+    run.environment["PROBE_RUN_HOLD"] = str(tmp_path / "never-released")
+
+    status, error = run.finish(
+        _start_with(run, harness, "stopped-at-start", "--dry-run", "--cells", "lag")
+    )
+
+    assert status != 0
+    assert error.strip() == "interrupted by SIGTERM"
+    assert len(run.probe_run_log.read_text().splitlines()) == 1
+    assert run.logs() == []
+    assert run.processes() == []
 
 
 def test_a_stop_is_forwarded_through_the_checked_send_to_the_child_of_probe_run(

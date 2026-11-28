@@ -10,28 +10,36 @@ import signal
 import socket
 import sys
 import types
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 from urllib.parse import urlsplit
 
 import httpx2
 import pytest
+from websockets.exceptions import ConcurrencyError, ConnectionClosedOK
 
 import watch_live
+from card_drive import Session
 from card_supervision import CAP_SECONDS, KILL_GRACE_SECONDS
 from support.browser_support import PACKAGE_BUILD, opened
+from support.kill_harness import top_command
 from support.prove_card_support import (
     APPEARS_WITHIN_SECONDS,
     FLOOR_MB,
     GONE_WITHIN_SECONDS,
+    MAX_QUEUED_AUDIO_SECONDS,
     SCRIPTS,
     USED_MB,
     Run,
     write_audio,
 )
+from video_client.session_wire import ErrorEvent, SessionCreated, SessionFailure
+from video_client.wire import MAX_OFFER_BYTES, REFUSAL_STATUS, RefusalCode
 
 if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
+
+    from card_identity import Identity
 
 ADDRESS = re.compile(r"watch at (http://\S+)")
 IDLE_SECONDS = 2
@@ -39,6 +47,7 @@ IDLE_SECONDS = 2
 SECOND_SECONDS = 1
 SENTENCE_WITHIN_SECONDS = 30
 ENDED_WITHIN_SECONDS = 30
+CAP_TEST_SECONDS = 3
 # Free memory that leaves less than the floor beside the cap a live test gives.
 NO_ROOM_FOR_THE_CAP = f"{USED_MB}, {watch_live.CARD_MEMORY_MB + FLOOR_MB - 1}, 24576"
 
@@ -46,14 +55,19 @@ NO_ROOM_FOR_THE_CAP = f"{USED_MB}, {watch_live.CARD_MEMORY_MB + FLOOR_MB - 1}, 2
 class Live:
     """The command started on a run's surroundings."""
 
-    def __init__(self, run: Run, audio: list[Path], arguments: list[str]) -> None:
-        """Start the command with the run's audio and `audio`, then `arguments`."""
+    def __init__(
+        self,
+        run: Run,
+        audio: list[Path],
+        arguments: list[str],
+        top: list[str] | None = None,
+    ) -> None:
+        """Start the command, or `top` that runs it, with the run's audio and more."""
         self.run = run
         self.log = run.directory / "service.log"
         self.command = run.launch(
             [
-                sys.executable,
-                str(SCRIPTS / "watch_live.py"),
+                *(top or [sys.executable, str(SCRIPTS / "watch_live.py")]),
                 "--log",
                 str(self.log),
                 "--audio",
@@ -108,11 +122,17 @@ def package(run: Run) -> Path:
 
 
 @pytest.fixture
-def live(run: Run, package: Path) -> Callable[..., Live]:
-    """Start the command on the fake provider, or on the card's stand-in."""
+def live(run: Run, package: Path, harness: Path) -> Callable[..., Live]:
+    """Start the command on the fake provider, or on the card's stand-in.
+
+    A `mishap` runs it as the top of the kill harness case of that name.
+    """
 
     def start(
-        *arguments: str, audio: list[Path] | None = None, card: bool = False
+        *arguments: str,
+        audio: list[Path] | None = None,
+        card: bool = False,
+        mishap: str | None = None,
     ) -> Live:
         if card:
             run.in_card_mode()
@@ -120,6 +140,7 @@ def live(run: Run, package: Path) -> Callable[..., Live]:
             run,
             audio or [],
             ["--package", str(package), *([] if card else ["--dry-run"]), *arguments],
+            None if mishap is None else top_command(harness, "watch_live", mishap, []),
         )
 
     return start
@@ -192,6 +213,47 @@ def test_a_stop_signal_ends_the_service_and_the_command(
     assert f"stopped by {stop.name}" in command.run.printed()
 
 
+def test_a_session_the_service_ends_ends_the_command_with_a_failure(
+    live: Callable[..., Live], run: Run
+) -> None:
+    longer = run.directory / "longer.wav"
+    write_audio(longer, seconds=MAX_QUEUED_AUDIO_SECONDS + 1)
+    command = live(audio=[longer])
+    command.post(f"/speak/{longer.name}")
+
+    status, _ = command.ended()
+
+    assert status == 1
+    assert "ended: the session ended with too_large" in command.run.printed()
+
+
+def test_a_process_below_the_command_that_is_not_ended_fails_the_command(
+    live: Callable[..., Live],
+) -> None:
+    command = live(mishap="raise")
+    assert command.address
+
+    command.post("/end")
+
+    # The process the harness leaves below the top stays: the run's cleanup ends it.
+    status, error = command.run.finish(command.command)
+    assert status == 1
+    assert "a process below the command was not ended" in error
+
+
+def test_a_run_that_reaches_the_cap_ends_at_the_cap(
+    live: Callable[..., Live], run: Run
+) -> None:
+    run.cut_the_cap(CAP_TEST_SECONDS)
+    command = live()
+
+    status, _ = command.ended()
+
+    assert status == 0
+    assert "ended at the cap" in command.run.printed()
+    assert run.processes() == []
+
+
 def test_a_service_that_dies_ends_the_command_with_a_failure(
     live: Callable[..., Live],
 ) -> None:
@@ -225,6 +287,33 @@ def test_a_request_for_another_host_or_from_another_origin_is_refused(
     status, _ = command.ended()
     assert status == 0
     assert "ended: the end button" in command.run.printed()
+
+
+def test_an_offer_over_the_wires_bound_is_refused_with_413(
+    live: Callable[..., Live],
+) -> None:
+    command = live()
+
+    refused = httpx2.post(
+        command.address + "viewers", content=bytes(MAX_OFFER_BYTES + 1)
+    )
+
+    assert refused.status_code == httpx2.codes.CONTENT_TOO_LARGE
+    command.post("/end")
+    command.ended()
+
+
+def test_an_offer_the_service_refuses_is_relayed_with_its_status_and_body(
+    live: Callable[..., Live],
+) -> None:
+    command = live()
+
+    refused = httpx2.post(command.address + "viewers", content=b"not an offer")
+
+    assert refused.status_code == REFUSAL_STATUS[RefusalCode.INVALID_REQUEST]
+    assert refused.json()["error"]["code"] == RefusalCode.INVALID_REQUEST
+    command.post("/end")
+    command.ended()
 
 
 def test_a_request_from_the_pages_own_origin_is_answered(
@@ -525,3 +614,88 @@ def test_a_page_whose_tab_closed_ends_after_its_idle_time(
     status, _ = command.ended()
     assert status == 0
     assert "ended: no viewer for 5 seconds" in command.run.printed()
+
+
+class _EndingConnection:
+    """A connection whose session ends while a press is sent and the page reads.
+
+    Like a websockets connection it refuses a second `recv` while one is in progress,
+    and a send to an ended session raises `ConnectionClosed`.
+    """
+
+    def __init__(self) -> None:
+        self.sending = asyncio.Event()
+        self.reading = asyncio.Event()
+        self._send_ended = asyncio.get_running_loop().create_future()
+        self._event = asyncio.get_running_loop().create_future()
+        self._reading = False
+        self._delivered = False
+
+    async def send(self, _message: str | bytes) -> None:
+        self.sending.set()
+        await self._send_ended
+        raise ConnectionClosedOK(None, None)
+
+    async def recv(self) -> str:
+        if self._reading:
+            message = "cannot call recv while another coroutine is already running recv"
+            raise ConcurrencyError(message)
+        if self._delivered:
+            raise ConnectionClosedOK(None, None)
+        self._reading = True
+        self.reading.set()
+        try:
+            return await self._event
+        finally:
+            self._reading = False
+            self._delivered = True
+
+    def __aiter__(self) -> _EndingConnection:
+        return self
+
+    async def __anext__(self) -> str:
+        try:
+            return await self.recv()
+        except ConnectionClosedOK:
+            raise StopAsyncIteration from None
+
+    def end(self, event: str) -> None:
+        """End the session: the press wakes first, then the reader gets `event`."""
+        self._send_ended.set_result(None)
+        self._event.set_result(event)
+
+
+def test_a_press_while_the_session_ends_answers_503(tmp_path: Path) -> None:
+    error = ErrorEvent(
+        error=SessionFailure(
+            message="the session ended", type="error", code=RefusalCode.BUSY, param=None
+        )
+    ).model_dump_json()
+
+    async def scenario() -> int:
+        connection = _EndingConnection()
+        session = Session(connection, SessionCreated.model_construct())
+        ends: list[str] = []
+
+        def over(reason: str, *, failed: bool = False) -> None:  # noqa: ARG001 - the Over signature
+            ends.append(reason)
+
+        page = watch_live.LivePage(
+            httpx2.AsyncClient(), cast("Identity", None), session, {}, over
+        )
+        application = watch_live.application(page, tmp_path)
+        transport = httpx2.ASGITransport(application, raise_app_exceptions=False)
+        async with httpx2.AsyncClient(
+            transport=transport, base_url="http://127.0.0.1"
+        ) as browser:
+            reader = asyncio.create_task(watch_live.end_with_session(session, over))
+            await connection.reading.wait()
+            pressing = asyncio.create_task(browser.post("/clear"))
+            await connection.sending.wait()
+            connection.end(error)
+            answered = await pressing
+            await reader
+        assert ends
+        return answered.status_code
+
+    assert asyncio.run(scenario()) == httpx2.codes.SERVICE_UNAVAILABLE
