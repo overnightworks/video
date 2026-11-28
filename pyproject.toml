@@ -140,7 +140,7 @@ convention = "google"
 "providers/provider-contract/tests/**" = ["S101", "D103"]
 
 [tool.coverage.report]
-# The total joins every measured run and is the same on every run of unchanged code, so the floor is that total rounded down at two decimals.
+# The total joins every measured run and is the same on every run of unchanged code; every line and branch is covered, so the floor is the whole.
 precision = 2
-fail_under = 99.25
+fail_under = 100
 exclude_also = ["if __name__ == .__main__.:"]
