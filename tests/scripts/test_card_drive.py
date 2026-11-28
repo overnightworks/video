@@ -283,7 +283,7 @@ class StandInTop:
                     os.kill(pid, signal.SIGKILL)
             if self.process is not None:
                 self.process.kill()
-                self.process.wait()
+                self.process.wait(timeout=ENDS_WITHIN_SECONDS)
 
 
 @pytest.fixture
