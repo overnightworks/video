@@ -11,7 +11,7 @@ const [rawDirectory] = process.argv.slice(2);
 const REPORT_DIRECTORY = "coverage";
 const LCOV_FILE = "coverage-browser.lcov";
 // index.ts only re-exports, so it has no statements for the report to list.
-const MEASURED = ["src/watch.ts"];
+const MEASURED = new Set(["src/watch.ts"]);
 const BUILD_PATH = "/dist/";
 const repositoryRoot = path.resolve("../..");
 const report = new CoverageReport({
@@ -19,7 +19,7 @@ const report = new CoverageReport({
   outputDir: REPORT_DIRECTORY,
   // The maps name sources relative to the package; the lcov names them from the repository root.
   reports: [["lcovonly", { file: LCOV_FILE, projectRoot: repositoryRoot }]],
-  outputFilter: (file) => MEASURED.includes(file.sourcePath),
+  outputFilter: (file) => MEASURED.has(file.sourcePath),
   onEnd: enforceFloor(REPORT_DIRECTORY, LCOV_FILE),
 });
 

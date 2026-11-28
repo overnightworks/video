@@ -4,7 +4,7 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -18,10 +18,20 @@ async function packRelease(destination) {
   if (!destination) throw new Error("usage: node scripts/pack-release.js <destination>");
 
   const { name, version } = JSON.parse(await readFile("package.json", "utf8"));
-  run("pnpm", ["pack", "--pack-destination", destination]);
+  // The tarball is built and checked in a directory of its own; the caller's destination only receives the finished copy.
+  const staging = await mkdtemp(path.join(tmpdir(), "pack-release-staging-"));
+  try {
+    return await packInto(staging, destination, name, version);
+  } finally {
+    await rm(staging, { recursive: true, force: true });
+  }
+}
+
+async function packInto(staging, destination, name, version) {
+  run("pnpm", ["pack", "--pack-destination", staging]);
 
   const tarball = `${name}-${version}.tgz`;
-  const tarballPath = path.join(destination, tarball);
+  const tarballPath = path.join(staging, tarball);
 
   const stray = run("tar", ["-tzf", tarballPath])
     .split("\n")
@@ -43,6 +53,7 @@ async function packRelease(destination) {
     await rm(host, { recursive: true, force: true });
   }
 
+  await copyFile(tarballPath, path.join(destination, tarball));
   const integrity = createHash("sha512").update(await readFile(tarballPath)).digest("base64");
   console.log(`file=${tarball}`);
   console.log(`integrity=sha512-${integrity}`);
