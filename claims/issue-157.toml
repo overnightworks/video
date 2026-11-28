@@ -1,0 +1,8 @@
+claim_id = "21c048cda895472fade13ca96229d356"
+agent = "Claude d8b1643a-c037-46e3-9a04-348b85359122"
+role = "builder"
+base = "a56638dd4cece7a5d1d07834bb39b6fb29bb5319"
+branch = "claude/issue-157-the-card-scripts-races-and-watch-live-s"
+scope = ["pyproject.toml", "scripts/card_cells.py", "scripts/card_drive.py", "scripts/card_memory.py", "scripts/watch_live.py", "tests/scripts/test_card_drive.py", "tests/scripts/test_card_memory.py", "tests/scripts/test_prove_card.py", "tests/scripts/test_prove_card_kill.py", "tests/scripts/test_watch_live.py", "tests/support/prove_card_support.py"]
+opened_commit = "93ddf35eb6a8fa294832ea23e25a141bb96ccdd5"
+whole_reason = "The last root gaps share one report and the floor's rise to 100."
