@@ -39,6 +39,8 @@ MAX_QUEUED_AUDIO_SECONDS: Final = Settings.model_fields[
 ].default
 DEFAULT_LAG_MS: Final = Settings.model_fields["max_lag_ms"].default
 # The group a run without `--lag-ms` starts first.
+# Beyond one render of the fake at the card's cost, so a hold's session does not starve.
+HOLD_LAG_MS: Final = 1500
 LAG_SERVICE: Final = f"lag-{DEFAULT_LAG_MS}"
 MARKER: Final = "PROVE_CARD_TEST_MARKER"
 # In the order the groups run: the sweep's before the wire group.

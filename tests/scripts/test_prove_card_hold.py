@@ -12,7 +12,7 @@ from video_provider_fake import worker as fake_worker
 
 import card_drive
 import prove_card
-from support.prove_card_support import APPEARS_WITHIN_SECONDS
+from support.prove_card_support import APPEARS_WITHIN_SECONDS, HOLD_LAG_MS
 
 if TYPE_CHECKING:
     from support.prove_card_support import Run
@@ -20,8 +20,6 @@ if TYPE_CHECKING:
 _HOLD_SECONDS = "3"
 # Longer than the test takes to end the session.
 _LONG_HOLD = "120"
-# Beyond one render of the fake at the card's cost.
-_LAG_MS = "1500"
 _FIGURES = (
     "held_seconds",
     "fps",
@@ -49,7 +47,7 @@ def test_a_dry_run_hold_records_every_figure_and_leaves_no_busy_worker(
             "--hold-seconds",
             _HOLD_SECONDS,
             "--lag-ms",
-            _LAG_MS,
+            str(HOLD_LAG_MS),
             "--cpus",
             str(cpu),
             "--busy-workers",
@@ -78,7 +76,7 @@ def test_a_hold_whose_provider_dies_ends_early_with_its_figures_and_exits_zero(
         "--hold-seconds",
         _LONG_HOLD,
         "--lag-ms",
-        _LAG_MS,
+        str(HOLD_LAG_MS),
     )
     serving = run.wait_until(run.has_spoken, APPEARS_WITHIN_SECONDS)
     for worker in card_drive.worker_pids(run.service_pid()):
