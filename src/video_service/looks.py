@@ -86,15 +86,14 @@ class LookSource(BaseModel):
 _LOOK_NAME = TypeAdapter(LookName)
 
 
-def _look_names_are_valid(tables: object) -> object:
+def _look_names_are_valid(tables: dict[str, object]) -> dict[str, object]:
     # Runs before the tables are read: a refused name never reaches a location.
-    if isinstance(tables, dict):
-        for name in tables:
-            try:
-                _LOOK_NAME.validate_python(name)
-            except ValidationError:
-                message = "a look's name breaks the look name form"
-                raise ValueError(message) from None
+    for name in tables:
+        try:
+            _LOOK_NAME.validate_python(name)
+        except ValidationError:
+            message = "a look's name breaks the look name form"
+            raise ValueError(message) from None
     return tables
 
 
