@@ -197,6 +197,22 @@ def test_a_worker_serves_a_provider_over_the_protocol(
     assert status == 0
 
 
+def test_a_session_closed_can_be_opened_again(
+    start_worker: Callable[..., _Worker],
+) -> None:
+    worker = start_worker()
+    _ready(worker)
+    worker.send(encode_open(_SESSION, "mozart"))
+    worker.answer()
+
+    worker.send(encode_session(FrameKind.CLOSE, _SESSION))
+    worker.send(encode_open(_SESSION, "mozart"))
+    reopened = worker.answer()
+
+    assert reopened.kind is FrameKind.OPENED
+    assert worker.finish() == 0
+
+
 def test_a_print_in_the_provider_does_not_corrupt_the_protocol(
     start_worker: Callable[..., _Worker],
 ) -> None:
