@@ -81,11 +81,14 @@ a gh login with the `read:packages` scope, and the operator's free card: the run
 before any container starts when the card's free memory minus the cap is below the floor.
 
 ```sh
-gh auth token | docker login ghcr.io -u <login> --password-stdin
-docker pull <image>
+uv run --locked python scripts/pull_image.py <image>
 VIDEO_IMAGE=<image> VIDEO_CARD_MEMORY_MB=7168 \
   probe-run uv run --locked pytest -q -m image_card tests/e2e/test_image_card.py
 ```
+
+`scripts/pull_image.py` logs in to ghcr as your gh login inside a temporary `DOCKER_CONFIG`
+that it removes when it ends, so the login lives only for that run and your
+`~/.docker` stays untouched.
 
 A missing `VIDEO_IMAGE` fails the run naming it first; with that set, a missing cap fails
 naming the cap. Every container the run starts is removed when its test ends.
