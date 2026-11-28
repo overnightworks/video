@@ -268,13 +268,19 @@ class StandInTop:
         return json.loads(path.read_text())
 
     def end(self) -> None:
-        """Let the stand-in finish and end every process of this test."""
+        """Let the stand-in finish, then end what it left running.
+
+        The stand-in ends on its own, so it saves its coverage data; what it left
+        are sleepers and their parents, which do not end by themselves.
+        """
         (self.directory / "end").touch()
-        for pid in self.marked():
-            with contextlib.suppress(ProcessLookupError):
-                os.kill(pid, signal.SIGKILL)
-        if self.process is not None:
-            self.process.wait(timeout=ENDS_WITHIN_SECONDS)
+        try:
+            if self.process is not None:
+                self.process.wait(timeout=ENDS_WITHIN_SECONDS)
+        finally:
+            for pid in self.marked():
+                with contextlib.suppress(ProcessLookupError):
+                    os.kill(pid, signal.SIGKILL)
 
 
 @pytest.fixture
