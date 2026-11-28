@@ -337,8 +337,7 @@ def test_a_child_that_fails_ends_in_the_failed_path_without_a_hang(
     assert provider.failed
     assert [
         (r.reason, r.error_type)  # type: ignore[attr-defined]
-        for r in caplog.records
-        if r.msg == "provider.failed"
+        for r in _failed_lines(caplog)
     ] == [logged]
     with pytest.raises(ProviderFailedError):
         provider.open_session(_MOZART)

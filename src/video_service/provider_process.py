@@ -565,8 +565,10 @@ def _await_exit(child: subprocess.Popen[bytes], seconds: float) -> None:
     ended = threading.Event()
 
     def watch() -> None:
-        with suppress(ChildProcessError):
-            os.waitid(os.P_PID, child.pid, os.WEXITED | os.WNOWAIT)
+        try:
+            with suppress(ChildProcessError):
+                os.waitid(os.P_PID, child.pid, os.WEXITED | os.WNOWAIT)
+        finally:
             ended.set()
 
     threading.Thread(target=watch, daemon=True, name="provider-exit").start()
