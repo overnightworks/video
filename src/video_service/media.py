@@ -85,7 +85,10 @@ class Admission:
 
 
 def parse_offer(body: bytes) -> Offer | None:
-    """The offer in `body`; `None` unless it is recvonly with one Opus and one VP8."""
+    """The offer in `body`; `None` unless it is recvonly with one Opus and one VP8.
+
+    Each section carries its own `a=mid`: the peer answers sections it can tell apart.
+    """
     try:
         text = body.decode()
         description = SessionDescription.parse(text)
@@ -98,6 +101,9 @@ def parse_offer(body: bytes) -> Offer | None:
         offered = {codec.mimeType.lower() for codec in section.rtp.codecs}
         if section.direction != _RECVONLY or _CODEC[kind] not in offered:
             return None
+    mids = {section.rtp.muxId for section in sections.values()}
+    if "" in mids or len(mids) != len(sections):
+        return None
     return Offer(text)
 
 
@@ -282,10 +288,7 @@ class Media:
             return refused
         # The viewer counts toward the limit while its candidates are gathered.
         self._viewers[viewer_id] = viewer
-        try:
-            answer = await viewer.answer()
-        except Exception:  # noqa: BLE001 - aiortc fails an answer it cannot give any way
-            return RefusalCode.INVALID_REQUEST
+        answer = await viewer.answer()
         return RefusalCode.NOT_FOUND if self._closed else answer
 
     async def _take(
