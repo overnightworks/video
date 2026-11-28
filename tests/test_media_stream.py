@@ -2,20 +2,25 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from http import HTTPStatus
 from typing import TYPE_CHECKING
 
+import pytest
+from aiortc.mediastreams import MediaStreamError
 from aiortc.sdp import SessionDescription
 
 from support.session_support import ICE_SERVERS
 from support.viewer_support import (
     VIDEO_TICKS_PER_FRAME,
+    WITHIN_SECONDS,
     Service,
     Watcher,
     beep,
 )
 from video_client.wire import SDP_CONTENT_TYPE, viewers_path
+from video_service.media import _FeedTrack
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -159,3 +164,12 @@ def test_a_relay_policy_gathers_no_host_or_server_reflexive_candidate(
         await watcher.close()
 
     live(scenario)
+
+
+def test_a_stopped_track_refuses_the_sender_with_a_media_stream_error() -> None:
+    track = _FeedTrack("audio", 1)
+    track.stop()
+    receiving = track.recv()
+
+    with pytest.raises(MediaStreamError):
+        asyncio.run(asyncio.wait_for(receiving, WITHIN_SECONDS))
