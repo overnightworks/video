@@ -50,6 +50,13 @@ def _sampler(*readings: CardMemory | type[Exception]) -> Callable[[], CardMemory
     return read
 
 
+def _after_a_roomy_first_sample(*readings: CardMemory | type[Exception]) -> GroupWatch:
+    """A watch that took the sample before the group, as the command does."""
+    watch = GroupWatch(_sampler(_memory(used=100, free=9000), *readings), CAP, FLOOR)
+    assert watch.refuse_first(lambda _stop: NOTHING_LEFT) is False
+    return watch
+
+
 class _Child:
     """The group's `probe-run`: it times out of `wait` `ticks` times, then ends."""
 
@@ -125,7 +132,7 @@ def test_a_group_is_refused_while_free_memory_minus_the_cap_is_below_the_floor(
 def test_a_group_is_ended_once_free_memory_falls_below_the_floor(
     *, free: int, breached: bool
 ) -> None:
-    watch = GroupWatch(_sampler(_memory(used=100, free=free)), CAP, FLOOR)
+    watch = _after_a_roomy_first_sample(_memory(used=300, free=free))
 
     status, stops = _watched(watch, ticks=1)
 
@@ -144,7 +151,6 @@ def test_a_failed_sample_ends_the_group_before_and_after_its_service_exists(
     *,
     serving: bool,
 ) -> None:
-    watch = GroupWatch(_sampler(CardReadingError), CAP, FLOOR)
     ended: list[Stop] = []
 
     def end(stop: Stop) -> Kill:
@@ -152,8 +158,10 @@ def test_a_failed_sample_ends_the_group_before_and_after_its_service_exists(
         return NOTHING_LEFT
 
     if serving:
+        watch = _after_a_roomy_first_sample(CardReadingError)
         watch.until_ended(_Child(1), service_exists=lambda: True, end=end)
     else:
+        watch = GroupWatch(_sampler(CardReadingError), CAP, FLOOR)
         watch.refuse_first(end)
 
     assert [stop.reason for stop in ended] == [StopReason.SAMPLE_FAILED]
@@ -163,7 +171,7 @@ def test_a_failed_sample_ends_the_group_before_and_after_its_service_exists(
 
 def test_a_sampler_that_raises_ends_the_group_as_a_breach_of_the_guard_itself() -> None:
     group = subprocess.Popen(["sleep", "60"])  # noqa: S607 - the test's own group
-    watch = GroupWatch(_sampler(RuntimeError), CAP, FLOOR)
+    watch = _after_a_roomy_first_sample(RuntimeError)
     ended: list[Stop] = []
 
     def end(stop: Stop) -> Kill:
@@ -317,7 +325,7 @@ def test_an_after_sample_that_fails_leaves_the_figures_derived_from_it_unmeasure
 def test_the_seconds_to_no_process_are_a_value_only_when_the_kill_ended_them_all(
     *, kill: Kill, measured: bool
 ) -> None:
-    watch = GroupWatch(_sampler(_memory(used=100, free=FLOOR - 1)), CAP, FLOOR)
+    watch = _after_a_roomy_first_sample(_memory(used=300, free=FLOOR - 1))
 
     _, stops = _watched(watch, ticks=1, kill=kill)
     record = watch.entry()[MEMORY_STOP]
@@ -336,7 +344,7 @@ def test_the_seconds_to_no_process_are_a_value_only_when_the_kill_ended_them_all
 def test_a_probe_run_that_outlives_the_kill_gives_no_status_after_a_bounded_wait() -> (
     None
 ):
-    watch = GroupWatch(_sampler(_memory(used=100, free=FLOOR - 1)), CAP, FLOOR)
+    watch = _after_a_roomy_first_sample(_memory(used=300, free=FLOOR - 1))
     child = _Lingering()
 
     status = watch.until_ended(
