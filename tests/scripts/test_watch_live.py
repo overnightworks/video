@@ -10,13 +10,15 @@ import signal
 import socket
 import sys
 import types
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 from urllib.parse import urlsplit
 
 import httpx2
 import pytest
+from websockets.exceptions import ConcurrencyError, ConnectionClosedOK
 
 import watch_live
+from card_drive import Session
 from card_supervision import CAP_SECONDS, KILL_GRACE_SECONDS
 from support.browser_support import PACKAGE_BUILD, opened
 from support.prove_card_support import (
@@ -28,10 +30,14 @@ from support.prove_card_support import (
     Run,
     write_audio,
 )
+from video_client.session_wire import ErrorEvent, SessionCreated, SessionFailure
+from video_client.wire import RefusalCode
 
 if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
+
+    from card_identity import Identity
 
 ADDRESS = re.compile(r"watch at (http://\S+)")
 IDLE_SECONDS = 2
@@ -525,3 +531,88 @@ def test_a_page_whose_tab_closed_ends_after_its_idle_time(
     status, _ = command.ended()
     assert status == 0
     assert "ended: no viewer for 5 seconds" in command.run.printed()
+
+
+class _EndingConnection:
+    """A connection whose session ends while a press is sent and the page reads.
+
+    Like a websockets connection it refuses a second `recv` while one is in progress,
+    and a send to an ended session raises `ConnectionClosed`.
+    """
+
+    def __init__(self) -> None:
+        self.sending = asyncio.Event()
+        self.reading = asyncio.Event()
+        self._send_ended = asyncio.get_running_loop().create_future()
+        self._event = asyncio.get_running_loop().create_future()
+        self._reading = False
+        self._delivered = False
+
+    async def send(self, _message: str | bytes) -> None:
+        self.sending.set()
+        await self._send_ended
+        raise ConnectionClosedOK(None, None)
+
+    async def recv(self) -> str:
+        if self._reading:
+            message = "cannot call recv while another coroutine is already running recv"
+            raise ConcurrencyError(message)
+        if self._delivered:
+            raise ConnectionClosedOK(None, None)
+        self._reading = True
+        self.reading.set()
+        try:
+            return await self._event
+        finally:
+            self._reading = False
+            self._delivered = True
+
+    def __aiter__(self) -> _EndingConnection:
+        return self
+
+    async def __anext__(self) -> str:
+        try:
+            return await self.recv()
+        except ConnectionClosedOK:
+            raise StopAsyncIteration from None
+
+    def end(self, event: str) -> None:
+        """End the session: the press wakes first, then the reader gets `event`."""
+        self._send_ended.set_result(None)
+        self._event.set_result(event)
+
+
+def test_a_press_while_the_session_ends_answers_503(tmp_path: Path) -> None:
+    error = ErrorEvent(
+        error=SessionFailure(
+            message="the session ended", type="error", code=RefusalCode.BUSY, param=None
+        )
+    ).model_dump_json()
+
+    async def scenario() -> int:
+        connection = _EndingConnection()
+        session = Session(connection, SessionCreated.model_construct())
+        ends: list[str] = []
+
+        def over(reason: str, *, failed: bool = False) -> None:  # noqa: ARG001 - the Over signature
+            ends.append(reason)
+
+        page = watch_live.LivePage(
+            httpx2.AsyncClient(), cast("Identity", None), session, {}, over
+        )
+        application = watch_live.application(page, tmp_path)
+        transport = httpx2.ASGITransport(application, raise_app_exceptions=False)
+        async with httpx2.AsyncClient(
+            transport=transport, base_url="http://127.0.0.1"
+        ) as browser:
+            reader = asyncio.create_task(watch_live.end_with_session(session, over))
+            await connection.reading.wait()
+            pressing = asyncio.create_task(browser.post("/clear"))
+            await connection.sending.wait()
+            connection.end(error)
+            answered = await pressing
+            await reader
+        assert ends
+        return answered.status_code
+
+    assert asyncio.run(scenario()) == httpx2.codes.SERVICE_UNAVAILABLE

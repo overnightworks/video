@@ -67,7 +67,7 @@ from card_supervision import (
     started_under_probe_run,
 )
 from prove_card import card_provider, checked_look_image, checked_record
-from video_client.session_wire import ErrorEvent, parse_server_event
+from video_client.session_wire import ErrorEvent
 from video_client.wire import (
     LOCATION_HEADER,
     MAX_OFFER_BYTES,
@@ -253,11 +253,10 @@ async def _end_when_unwatched(
     over(f"no viewer for {seconds:g} seconds")
 
 
-async def _end_with_session(session: Session, over: Over) -> None:
+async def end_with_session(session: Session, over: Over) -> None:
     """Read the session's events until it ends, which ends the command as a failure."""
     with suppress(ConnectionClosed):
-        async for message in session.socket:
-            event = parse_server_event(message)
+        async for event in session.watch():
             if isinstance(event, ErrorEvent):
                 over(f"the session ended with {event.error.code}", failed=True)
                 return
@@ -285,7 +284,7 @@ class _SameOrigin:
         await self._app(scope, receive, send)
 
 
-def _application(page: LivePage, package: Path) -> Starlette:
+def application(page: LivePage, package: Path) -> Starlette:
     """The page's routes, answered only for the loopback host and the page's origin."""
     return Starlette(
         routes=page.routes(package),
@@ -331,7 +330,7 @@ async def _show(
         page = LivePage(client, identity, session, audio, over)
         server = _Server(
             uvicorn.Config(
-                _application(page, arguments.package),
+                application(page, arguments.package),
                 log_config=None,
                 timeout_graceful_shutdown=PAGE_CLOSE_SECONDS,
             )
@@ -340,7 +339,7 @@ async def _show(
         with socket.create_server((HOST, 0)) as bound:
             serving = asyncio.create_task(server.serve([bound]))
             watchers = [
-                asyncio.create_task(_end_with_session(session, over)),
+                asyncio.create_task(end_with_session(session, over)),
                 asyncio.create_task(
                     _end_when_unwatched(service, page, arguments.idle_seconds, over)
                 ),
