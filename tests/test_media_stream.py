@@ -11,7 +11,6 @@ import pytest
 from aiortc.mediastreams import MediaStreamError
 from aiortc.sdp import SessionDescription
 
-from conftest import LIVE_WITHIN_SECONDS
 from support.session_support import ICE_SERVERS
 from support.viewer_support import (
     VIDEO_TICKS_PER_FRAME,
@@ -172,4 +171,4 @@ def test_a_stopped_track_refuses_the_sender_with_a_media_stream_error() -> None:
     receiving = track.recv()
 
     with pytest.raises(MediaStreamError):
-        asyncio.run(asyncio.wait_for(receiving, LIVE_WITHIN_SECONDS))
+        asyncio.run(asyncio.wait_for(receiving, WITHIN_SECONDS))
