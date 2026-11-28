@@ -288,8 +288,8 @@ def _failure(
             ProcessFailure.PROTOCOL,
         ),
         _failure(
-            "ready(); raw(struct.pack('!BI', FrameKind.FRAMES, 16) + b'abc'); "
-            "os._exit(0)",
+            "ready(); request(); "
+            "raw(struct.pack('!BI', FrameKind.FRAMES, 16) + b'abc'); os._exit(0)",
             ProcessFailure.PROTOCOL,
         ),
         _failure(
