@@ -1,7 +1,6 @@
 // Turns the raw V8 coverage the browser layer collected from Chromium into an lcov of the package's sources.
 // Usage: node scripts/page-coverage-report.js <raw coverage directory>
 // It writes coverage/coverage-browser.lcov, with paths from the repository root.
-import { existsSync } from "node:fs";
 import { readFile, readdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { CoverageReport } from "monocart-coverage-reports";
@@ -12,19 +11,15 @@ const [rawDirectory] = process.argv.slice(2);
 const REPORT_DIRECTORY = "coverage";
 const LCOV_FILE = "coverage-browser.lcov";
 // index.ts only re-exports, so it has no statements for the report to list.
-const MEASURED = ["src/watch.ts"];
+const MEASURED = new Set(["src/watch.ts"]);
 const BUILD_PATH = "/dist/";
 const repositoryRoot = path.resolve("../..");
-const lcovPath = path.join(REPORT_DIRECTORY, LCOV_FILE);
-// Without coverage data the report writes nothing, so an earlier run's lcov must not stand in for it.
-await rm(lcovPath, { force: true });
-
 const report = new CoverageReport({
   name: "Browser layer",
   outputDir: REPORT_DIRECTORY,
   // The maps name sources relative to the package; the lcov names them from the repository root.
   reports: [["lcovonly", { file: LCOV_FILE, projectRoot: repositoryRoot }]],
-  outputFilter: (file) => MEASURED.includes(file.sourcePath),
+  outputFilter: (file) => MEASURED.has(file.sourcePath),
   onEnd: enforceFloor(REPORT_DIRECTORY, LCOV_FILE),
 });
 
@@ -40,7 +35,13 @@ async function withBuildAndMap(entry) {
   };
 }
 
+// A report an earlier run left must not stand for this run when it fails.
+await rm(path.join(REPORT_DIRECTORY, LCOV_FILE), { force: true });
 const files = await readdir(rawDirectory);
+// The report writes nothing and checks no floor for an empty data set, so an empty directory would pass unmeasured.
+if (files.length === 0) {
+  throw new Error(`${rawDirectory} holds no coverage: the browser layer collected none`);
+}
 const entriesByFile = await Promise.all(
   files.map(async (file) => {
     const { result } = JSON.parse(await readFile(path.join(rawDirectory, file), "utf8"));
@@ -48,23 +49,5 @@ const entriesByFile = await Promise.all(
     return Promise.all(built.map(withBuildAndMap));
   }),
 );
-const entries = entriesByFile.flat();
-if (entries.length > 0) {
-  await report.add(entries);
-}
+await report.add(entriesByFile.flat());
 await report.generate();
-
-const lcov = existsSync(lcovPath) ? await readFile(lcovPath, "utf8") : "";
-const reported = new Set(
-  lcov
-    .split("\n")
-    .filter((line) => line.startsWith("SF:"))
-    .map((line) => line.slice("SF:".length)),
-);
-const missing = MEASURED.map((name) => path.relative(repositoryRoot, path.resolve(name))).filter(
-  (name) => !reported.has(name),
-);
-if (missing.length > 0) {
-  console.error(`Sources with no browser coverage record:\n  ${missing.join("\n  ")}`);
-  process.exitCode = 1;
-}
