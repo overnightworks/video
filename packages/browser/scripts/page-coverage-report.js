@@ -1,7 +1,7 @@
 // Turns the raw V8 coverage the browser layer collected from Chromium into an lcov of the package's sources.
 // Usage: node scripts/page-coverage-report.js <raw coverage directory>
 // It writes coverage/coverage-browser.lcov, with paths from the repository root.
-import { readFile, readdir } from "node:fs/promises";
+import { readFile, readdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { CoverageReport } from "monocart-coverage-reports";
 import { enforceFloor } from "../mcr.config.js";
@@ -35,7 +35,13 @@ async function withBuildAndMap(entry) {
   };
 }
 
+// A report an earlier run left must not stand for this run when it fails.
+await rm(path.join(REPORT_DIRECTORY, LCOV_FILE), { force: true });
 const files = await readdir(rawDirectory);
+// The report writes nothing and checks no floor for an empty data set, so an empty directory would pass unmeasured.
+if (files.length === 0) {
+  throw new Error(`${rawDirectory} holds no coverage: the browser layer collected none`);
+}
 const entriesByFile = await Promise.all(
   files.map(async (file) => {
     const { result } = JSON.parse(await readFile(path.join(rawDirectory, file), "utf8"));

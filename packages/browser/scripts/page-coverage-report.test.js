@@ -81,4 +81,14 @@ describe("page-coverage-report.js", () => {
     assert.notEqual(result.status, 0);
     assert.ok(existsSync(lcovOf(packageDirectory)));
   });
+
+  it("fails and leaves no lcov when the raw directory is empty, also over a stale lcov", async () => {
+    const packageDirectory = await fixturePackage();
+    await mkdir(path.join(packageDirectory, "coverage"));
+    await writeFile(lcovOf(packageDirectory), "SF:stale\nend_of_record\n");
+    const result = runScript(packageDirectory, await temporaryDirectory());
+
+    assert.notEqual(result.status, 0);
+    assert.ok(!existsSync(lcovOf(packageDirectory)));
+  });
 });
