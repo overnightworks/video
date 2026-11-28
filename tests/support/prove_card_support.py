@@ -34,6 +34,9 @@ GONE_WITHIN_SECONDS: Final = 15
 POLL_SECONDS: Final = 0.05
 AUDIO_RATE: Final = 16000
 AUDIO_SECONDS: Final = 2
+MAX_QUEUED_AUDIO_SECONDS: Final = Settings.model_fields[
+    "max_queued_audio_seconds"
+].default
 DEFAULT_LAG_MS: Final = Settings.model_fields["max_lag_ms"].default
 # The group a run without `--lag-ms` starts first.
 LAG_SERVICE: Final = f"lag-{DEFAULT_LAG_MS}"
@@ -156,15 +159,20 @@ BELOW_THE_FLOOR: Final = f"{USED_MB}, {FLOOR_MB - 1}, 24576"
 
 
 def write_audio(
-    path: Path, *, seconds: float, channels: int = 1, amplitude: int = 9000
+    path: Path,
+    *,
+    seconds: float,
+    channels: int = 1,
+    amplitude: int = 9000,
+    rate: int = AUDIO_RATE,
 ) -> None:
     """A WAV of a square wave, which a viewer hears as loud; amplitude 0 is quiet."""
     square = struct.pack("<8h", *([amplitude] * 4 + [-amplitude] * 4)) * channels
     with wave.open(str(path), "wb") as sound:
         sound.setnchannels(channels)
         sound.setsampwidth(2)
-        sound.setframerate(AUDIO_RATE)
-        sound.writeframes(square * int(AUDIO_RATE * seconds // 8))
+        sound.setframerate(rate)
+        sound.writeframes(square * int(rate * seconds // 8))
 
 
 def lines(error: str) -> list[str]:
