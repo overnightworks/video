@@ -140,7 +140,7 @@ convention = "google"
 "providers/provider-contract/tests/**" = ["S101", "D103"]
 
 [tool.coverage.report]
-# The floor is the total of a deterministic run, rounded down at two decimals: every line the tests reach runs and saves its data before its process ends.
+# The floor is the total of a run on unchanged code, rounded down at two decimals: the races that varied it (close handling, the refusal of a not-live track, the stand-in's teardown) are settled in the tests.
 precision = 2
 fail_under = 98.45
 exclude_also = ["if __name__ == .__main__.:"]
