@@ -1,0 +1,7 @@
+claim_id = "63f3678d49c04b9d8068ac201bc03034"
+agent = "Claude d8b1643a-c037-46e3-9a04-348b85359122"
+role = "builder"
+base = "a56638dd4cece7a5d1d07834bb39b6fb29bb5319"
+branch = "claude/issue-159-the-image-s-card-proof-logs-in-to-ghcr-o"
+scope = ["docs/runbooks/card-proof.md", "scripts/pull_image.py", "tests/scripts/test_pull_image.py"]
+opened_commit = "8148ecd11b476eb3dff0447b537aa9440f4169cf"
