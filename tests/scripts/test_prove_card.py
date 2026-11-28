@@ -7,6 +7,7 @@ import json
 import os
 import signal
 import subprocess
+import typing
 from pathlib import Path
 from typing import TYPE_CHECKING, Final
 
@@ -34,7 +35,9 @@ from support.prove_card_support import (
     CELLS_BY_GROUP,
     DEFAULT_LAG_MS,
     GONE_WITHIN_SECONDS,
+    HOLD_LAG_MS,
     LAG_SERVICE,
+    MAX_QUEUED_AUDIO_SECONDS,
     RUN_WITHIN_SECONDS,
     Run,
     ended,
@@ -42,6 +45,7 @@ from support.prove_card_support import (
     is_not_measured,
     write_audio,
 )
+from video_client.session_wire import PcmFormat
 from video_service.provider_process import ProcessBounds
 
 if TYPE_CHECKING:
@@ -369,6 +373,11 @@ def _stereo_audio(run: Run) -> None:
     write_audio(run.audio, seconds=2, channels=2)
 
 
+def _audio_at_a_rate_the_wire_does_not_carry(run: Run) -> None:
+    carried = typing.get_args(PcmFormat.model_fields["rate"].annotation)
+    write_audio(run.audio, seconds=AUDIO_SECONDS, rate=max(carried) + 1)
+
+
 def _text_audio(run: Run) -> None:
     run.audio.write_text("this is no sound")
 
@@ -403,6 +412,7 @@ def _record_in_a_read_only_directory(run: Run) -> None:
     [
         (_short_audio, "audio"),
         (_stereo_audio, "audio"),
+        (_audio_at_a_rate_the_wire_does_not_carry, "audio"),
         (_text_audio, "audio"),
         (_empty_audio, "audio"),
         (_audio_cut_inside_its_header, "audio"),
@@ -606,6 +616,25 @@ def test_a_failed_cell_is_recorded_with_the_later_cells_of_its_group_ended(
     assert [log.name for log in run.logs()] == ["record.wire.log"]
     assert str(run.logs()[0]) in run.printed()
     assert str(run.record) in run.printed()
+    assert run.processes() == []
+
+
+@pytest.mark.parametrize(
+    ("cell", "lag_ms"),
+    [("lag", DEFAULT_LAG_MS), ("hold", HOLD_LAG_MS)],
+)
+def test_a_session_the_service_refuses_as_too_large_fails_its_cell_and_the_command(
+    run: Run, cell: str, lag_ms: int
+) -> None:
+    write_audio(run.audio, seconds=MAX_QUEUED_AUDIO_SECONDS + 1)
+
+    status, _ = run.finish(
+        run.start("--dry-run", "--cells", cell, "--lag-ms", str(lag_ms))
+    )
+    record = json.loads(run.record.read_text())
+
+    assert status != 0
+    assert is_cell_not_measured(record, cell, Reason.CELL_FAILED)
     assert run.processes() == []
 
 

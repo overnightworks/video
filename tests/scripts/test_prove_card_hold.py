@@ -4,19 +4,22 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 from typing import TYPE_CHECKING
 
 import pytest
 from video_provider_fake import worker as fake_worker
 
+import card_drive
 import prove_card
+from support.prove_card_support import APPEARS_WITHIN_SECONDS, HOLD_LAG_MS
 
 if TYPE_CHECKING:
     from support.prove_card_support import Run
 
 _HOLD_SECONDS = "3"
-# Beyond one render of the fake at the card's cost.
-_LAG_MS = "1500"
+# Longer than the test takes to end the session.
+_LONG_HOLD = "120"
 _FIGURES = (
     "held_seconds",
     "fps",
@@ -44,7 +47,7 @@ def test_a_dry_run_hold_records_every_figure_and_leaves_no_busy_worker(
             "--hold-seconds",
             _HOLD_SECONDS,
             "--lag-ms",
-            _LAG_MS,
+            str(HOLD_LAG_MS),
             "--cpus",
             str(cpu),
             "--busy-workers",
@@ -63,6 +66,32 @@ def test_a_dry_run_hold_records_every_figure_and_leaves_no_busy_worker(
     assert run.processes() == []
 
 
+def test_a_hold_whose_provider_dies_ends_early_with_its_figures_and_exits_zero(
+    run: Run,
+) -> None:
+    command = run.start(
+        "--dry-run",
+        "--cells",
+        "hold",
+        "--hold-seconds",
+        _LONG_HOLD,
+        "--lag-ms",
+        str(HOLD_LAG_MS),
+    )
+    serving = run.wait_until(run.has_spoken, APPEARS_WITHIN_SECONDS)
+    for worker in card_drive.worker_pids(run.service_pid()):
+        os.killpg(worker, signal.SIGKILL)
+
+    status, error = run.finish(command)
+    hold = json.loads(run.record.read_text())["cells"]["hold"]
+
+    assert serving
+    assert status == 0, error
+    assert hold["ended_by"]["value"] != "none"
+    assert set(_FIGURES) <= set(hold)
+    assert run.processes() == []
+
+
 @pytest.mark.parametrize(
     "arguments",
     [
@@ -70,8 +99,19 @@ def test_a_dry_run_hold_records_every_figure_and_leaves_no_busy_worker(
         ["--cpus", "9999"],
         ["--busy-workers", "-1"],
         ["--busy-workers", "2"],
+        ["--hold-seconds", "abc"],
+        ["--cpus", "0-x"],
+        ["--busy-workers", "abc"],
     ],
-    ids=["no-seconds", "no-such-cpu", "negative-workers", "workers-without-cpus"],
+    ids=[
+        "no-seconds",
+        "no-such-cpu",
+        "negative-workers",
+        "workers-without-cpus",
+        "seconds-not-a-number",
+        "cpus-not-a-list",
+        "workers-not-a-number",
+    ],
 )
 def test_a_hold_setting_that_is_refused_ends_the_command_before_any_service(
     run: Run, arguments: list[str]

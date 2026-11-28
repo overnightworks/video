@@ -126,6 +126,13 @@ class Stop:
         }
 
 
+def _after_not_measured(reason: Reason) -> dict[str, object]:
+    return {
+        name: not_measured(reason)
+        for name in (MemoryFigure.USED_AFTER, MemoryFigure.USED_AFTER_MINUS_BEFORE)
+    }
+
+
 class GroupWatch:
     """The card as one group sees it: each sample judged, and what the samples said."""
 
@@ -223,35 +230,22 @@ class GroupWatch:
                 )
         if self.stop is not None and (blind := self.stop.blind_reason) is not None:
             figures |= {name: not_measured(blind) for name in PEAK_FIGURES}
-        figures |= self._after_figures(before)
+        if self.stop is not None:
+            figures |= _after_not_measured(self.stop.cell_reason)
+        elif self._after_taken and before is not None:
+            figures |= self._after_figures(before)
         if self.stop is not None and self.kill is not None:
             figures[MEMORY_STOP] = self.stop.record(self.kill, self._seconds)
         return figures
 
-    def _after_figures(self, before: int | None) -> dict[str, object]:
-        if self.stop is not None:
-            return {
-                name: not_measured(self.stop.cell_reason)
-                for name in (
-                    MemoryFigure.USED_AFTER,
-                    MemoryFigure.USED_AFTER_MINUS_BEFORE,
-                )
-            }
-        if not self._after_taken:
-            return {}
+    def _after_figures(self, before: int) -> dict[str, object]:
         after = self._after
         if after is None:
-            return {
-                name: not_measured(Reason.SAMPLE_FAILED)
-                for name in (
-                    MemoryFigure.USED_AFTER,
-                    MemoryFigure.USED_AFTER_MINUS_BEFORE,
-                )
-            }
-        figures = {MemoryFigure.USED_AFTER: value_of(after)}
-        if before is not None:
-            figures[MemoryFigure.USED_AFTER_MINUS_BEFORE] = value_of(after - before)
-        return figures
+            return _after_not_measured(Reason.SAMPLE_FAILED)
+        return {
+            MemoryFigure.USED_AFTER: value_of(after),
+            MemoryFigure.USED_AFTER_MINUS_BEFORE: value_of(after - before),
+        }
 
     def _stop(
         self, reason: StopReason, memory: CardMemory | None, *, refused: bool
