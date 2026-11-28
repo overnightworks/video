@@ -2,6 +2,7 @@
 
 A step of the script that is a coroutine function runs before the next message is
 handed out, so a test can wait for the session or move its clock in between.
+A server event can be held until the client event that must overtake it is handed out.
 """
 
 from __future__ import annotations
@@ -37,11 +38,23 @@ class ScriptedSocket:
         self.sent: list[ServerEvent] = []
         self.close_code: int | None = None
         self.started = asyncio.Event()
+        self.held = asyncio.Event()
         self._script = deque(script)
         self._sentences_left = sentences
         self._all_stopped = asyncio.Event()
+        self._holds: dict[type[ServerEvent], str] = {}
+        self._handed_out: dict[str, asyncio.Event] = {}
         if not sentences:
             self._all_stopped.set()
+
+    def hold(self, event: type[ServerEvent], *, until_received: str) -> None:
+        """Hold a server `event` back until a client event of that type is read.
+
+        `held` is set once one waits. The client event is handed out first, so the
+        session has taken it up when the held event arrives.
+        """
+        self._holds[event] = until_received
+        self._handed_out[until_received] = asyncio.Event()
 
     async def accept(self) -> None:
         """Take the upgrade."""
@@ -57,11 +70,16 @@ class ScriptedSocket:
         event = self._script.popleft()
         if isinstance(event, bytes):
             return {"type": "websocket.receive", "bytes": event}
+        if (gate := self._handed_out.get(str(event.get("type")))) is not None:
+            gate.set()
         return {"type": "websocket.receive", "text": json.dumps(event)}
 
     async def send_text(self, text: str) -> None:
         """Keep the server event that arrives."""
         event = parse_server_event(text)
+        if (awaited := self._holds.get(type(event))) is not None:
+            self.held.set()
+            await self._handed_out[awaited].wait()
         self.sent.append(event)
         if isinstance(event, OutputAudioBufferStarted):
             self.started.set()
