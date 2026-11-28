@@ -1,8 +1,0 @@
-claim_id = "702d6e26297d46278aecce5c41ee7bcc"
-agent = "Claude d8b1643a-c037-46e3-9a04-348b85359122"
-role = "builder"
-base = "78814ac2674c6837e92019d76b7f57aa40c66046"
-branch = "claude/issue-140-the-root-coverage-measure-is-determinist"
-scope = ["providers/provider-contract/tests/test_worker.py", "pyproject.toml", "tests/scripts/test_card_drive.py", "tests/test_media_stream.py"]
-opened_commit = "ec3131661d74ff64f3129061ecc43300d0338147"
-whole_reason = "The floor rises to the stable total only once all three races are fixed, so the three tests and the floor land together."
