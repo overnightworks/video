@@ -1,5 +1,5 @@
 [gate]
-mandatory_jobs = ["Video: lint, tests", "Video: browser package", "Video: browser layer", "Video: flashhead-lite provider", "Video: image / Test"]
+mandatory_jobs = ["Video: lint, tests", "Video: browser package", "Video: browser layer", "Video: flashhead-lite provider", "Video: image / Test", "coverage"]
 
 [[python.allow]]
 path = "providers/provider-contract/pyproject.toml"

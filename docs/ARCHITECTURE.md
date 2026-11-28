@@ -86,7 +86,9 @@ session's end nor the process's exit.
 
 The service runs on the operator's card host, from the checkout or as the release's image.
 CI runs lint, format and the tests with branch coverage over the Python packages, the
-browser package's checks, the browser layer, and then the quality gate.
+browser package's checks, the browser layer, and then the quality gate. Each measured
+run saves its raw coverage data; the `coverage` job joins them into `coverage-root.xml`
+and judges the root's floor in `pyproject.toml`.
 
 - The distributions release publishes the client at a `vX.Y.Z` tag by Git pin and the
   browser package as a tarball beside it.

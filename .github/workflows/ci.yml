@@ -46,7 +46,9 @@ jobs:
         run: uv run --locked --no-build ruff format --check
 
       - name: Test
-        run: uv run --locked --no-build pytest -n auto --cov --cov-report=xml:coverage-root.xml
+        env:
+          COVERAGE_FILE: coverage-data/video
+        run: uv run --locked --no-build coverage run -m pytest -n auto
 
       # A provider's environment may be older than the service's, so the contract's
       # own tests run on the oldest Python it supports, in an environment apart from
@@ -64,11 +66,11 @@ jobs:
           # pytest-workers: a few dozen tests in under a second, and xdist is not installed there
           "$RUNNER_TEMP/contract-env/bin/python" -m pytest -p no:cacheprovider -c providers/provider-contract/pyproject.toml providers/provider-contract/tests
 
-      - name: Upload the coverage report
+      - name: Upload the raw coverage data
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: coverage-root
-          path: coverage-root.xml
+          name: raw-coverage-video
+          path: coverage-data/
           if-no-files-found: error
 
   flashhead-lite-provider:
@@ -112,20 +114,30 @@ jobs:
           uv sync --locked --all-groups --no-build --project providers/flashhead-lite
 
       - name: Test
+        env:
+          COVERAGE_FILE: coverage-data/flashhead-lite-provider
         # pytest-workers: the suite runs in about 15 s, and xdist is not installed there
         run: uv run --locked --no-build --project providers/flashhead-lite pytest providers/flashhead-lite/tests --cov --cov-config=providers/flashhead-lite/pyproject.toml --cov-report=xml:coverage-flashhead-lite.xml
 
       - name: Start the real worker from the service without a card
         env:
           CUDA_VISIBLE_DEVICES: ""
+          COVERAGE_FILE: coverage-data/flashhead-lite-service
         # pytest-workers: one test, and xdist is not worth its start
-        run: uv run --locked --no-build pytest -m flashhead_lite tests
+        run: uv run --locked --no-build coverage run -m pytest -m flashhead_lite tests
 
       - name: Upload the coverage report
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: coverage-flashhead-lite
           path: coverage-flashhead-lite.xml
+          if-no-files-found: error
+
+      - name: Upload the raw coverage data
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: raw-coverage-flashhead-lite
+          path: coverage-data/
           if-no-files-found: error
 
   browser-package:
@@ -230,9 +242,10 @@ jobs:
         timeout-minutes: 8
         env:
           VIDEO_BROWSER_COVERAGE_DIR: ${{ runner.temp }}/browser-coverage-raw
+          COVERAGE_FILE: coverage-data/browser-layer
         # pytest-workers: one worker, the scenarios measure real-time audio and picture
         # pytest-random: the scenarios run one after another against one real browser
-        run: uv run --locked --no-build pytest -q -m browser tests
+        run: uv run --locked --no-build coverage run -m pytest -q -m browser tests
 
       - name: Convert the page coverage to lcov
         working-directory: packages/browser
@@ -256,6 +269,13 @@ jobs:
         with:
           name: coverage-browser-report
           path: packages/browser/coverage-scripts/coverage-browser-report.lcov
+          if-no-files-found: error
+
+      - name: Upload the raw coverage data
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: raw-coverage-browser-layer
+          path: coverage-data/
           if-no-files-found: error
 
   # The image is larger than the standard runner's disk holds, so its build runs on
@@ -286,6 +306,43 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
+      - name: Check out the event commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+          version: "0.10.9"
+
+      - name: Install locked dependencies
+        run: uv sync --locked --no-build
+
+      - name: Download the raw coverage data
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: raw-coverage-*
+          path: coverage-data
+          merge-multiple: true
+
+      # A directory argument matches only `joined.*`, the name of COVERAGE_FILE, so the globs name each
+      # run's data, which carries a process suffix where it measures child processes.
+      # A glob with no match fails the combine; `coverage report` judges the floor in pyproject.toml.
+      - name: Join the runs and judge the floor
+        env:
+          COVERAGE_FILE: coverage-data/joined
+        run: |
+          uv run --locked --no-build coverage combine \
+            coverage-data/video* \
+            coverage-data/browser-layer* \
+            coverage-data/flashhead-lite-provider* \
+            coverage-data/flashhead-lite-service*
+          uv run --locked --no-build coverage xml -o coverage-root.xml
+          uv run --locked --no-build coverage report
+
       - name: Download the coverage reports
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
