@@ -34,7 +34,8 @@ def run_step(
 ) -> str:
     """Run one step: its output when captured; a failure ends with one line."""
     try:
-        finished = subprocess.run(  # noqa: S603 - the operator's gh and docker with fixed arguments
+        # The operator names the image that the command passes on.
+        finished = subprocess.run(  # NOSONAR(S8705)  # noqa: S603 - gh and docker
             command,
             env=environment,
             input=standard_input,
