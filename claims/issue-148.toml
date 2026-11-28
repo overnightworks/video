@@ -1,7 +1,0 @@
-claim_id = "5b474b8801494833bee60afb76c91431"
-agent = "Claude d8b1643a-c037-46e3-9a04-348b85359122"
-role = "builder"
-base = "ef6a12b1d36ce94b1baf02784d997c3092218e68"
-branch = "claude/issue-148-a-worker-that-breaks-a-frame-and-exits-f"
-scope = ["tests/test_provider_process.py"]
-opened_commit = "44d85fd7e10a31be4307baf5147f3246a5a19ea1"
