@@ -1,0 +1,8 @@
+claim_id = "96c150b531f646bd8cc84eea36d85e8b"
+agent = "Claude d8b1643a-c037-46e3-9a04-348b85359122"
+role = "builder"
+base = "ef6a12b1d36ce94b1baf02784d997c3092218e68"
+branch = "claude/issue-145-the-root-report-counts-the-runs-made-wit"
+scope = [".github/workflows/ci.yml", "AGENTS.md", "docs/ARCHITECTURE.md", "pyproject.toml", "quality/config.toml", "uv.lock"]
+opened_commit = "6fd2581e36a12f44a026cb775318e05e0f41c38a"
+whole_reason = "The runs' raw data, the combining job, its mandatory gate and the floor it judges only work together, so they land together."
