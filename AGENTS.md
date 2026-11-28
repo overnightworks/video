@@ -6,7 +6,7 @@ Run each from the repository root.
 
 - `uv sync --locked --all-groups`: installs the workspace. After a new package directory or module appears, add `--reinstall-package <distribution>`, or its editable install stays empty.
 - `uv run --locked ruff check` and `uv run --locked ruff format --check`: lint and format.
-- `uv run --locked pytest -q <named tests>`: targeted tests; CI runs them as `coverage run -m pytest -n auto`, its `coverage` job judges the root floor, and `--no-build` to every uv command, so only `[tool.uv] no-binary-package` is built.
+- `uv run --locked pytest -q <named tests>`: targeted tests; CI runs `coverage run -m pytest -n auto`, its `coverage` job judges the root floor, and adds `--no-build` to every uv command, so only `[tool.uv] no-binary-package` is built.
 - `git submodule update --init`, then `uv sync --locked --all-groups --project providers/flashhead-lite` and `CUDA_VISIBLE_DEVICES= uv run --locked --project providers/flashhead-lite pytest -q providers/flashhead-lite/tests`: the FlashHead lite provider (Python 3.14); then `CUDA_VISIBLE_DEVICES= uv run --locked pytest -q -m flashhead_lite tests` starts its real worker through the service.
 - `uv run --locked python scripts/check_release.py [X.Y.Z]`: every `pyproject.toml` and `packages/*/package.json` stands at one version, the given one if named.
 - In `packages/browser`: `pnpm install --frozen-lockfile`, `pnpm run check` and `pnpm run build` (emits `dist` for the browser layer, build first); `node scripts/pack-release.js <empty directory>` packs the tarball and installs it into an empty project; `node --test --test-randomize scripts/*.test.js` tests them.
