@@ -292,6 +292,7 @@ def test_the_caller_file_names_the_issuer_and_the_apps(tmp_path: Path) -> None:
     [
         (caller_config_text(identity="extra = 1"), "extra"),
         (caller_config_text(apps=""), "apps"),
+        ("apps = 1\n" + caller_config_text(apps=""), "apps"),
         (
             caller_config_text(
                 apps="[apps.a]\nworkload_client = 'x'\n"
@@ -338,6 +339,7 @@ def test_the_caller_file_names_the_issuer_and_the_apps(tmp_path: Path) -> None:
     ids=[
         "unknown-key",
         "no-app",
+        "apps-not-a-table",
         "shared-client",
         "app-name",
         "app-name-with-whitespace",

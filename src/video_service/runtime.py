@@ -107,12 +107,13 @@ def in_daemon_thread[Result](work: Callable[[], Result], name: str) -> Future[Re
     """Run `work` on a daemon thread, which never holds the process back at its exit.
 
     A call on the loop's default executor would: `asyncio.run` joins it at the end.
+    The work always runs: the future is running before the thread starts, so a waiter
+    that is cancelled drops the result instead of the work.
     """
     outcome: Future[Result] = Future()
+    outcome.set_running_or_notify_cancel()
 
     def run() -> None:
-        if not outcome.set_running_or_notify_cancel():
-            return
         try:
             outcome.set_result(work())
         except Exception as error:  # noqa: BLE001 - handed to the waiting coroutine

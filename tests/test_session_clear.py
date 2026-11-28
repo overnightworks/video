@@ -15,7 +15,7 @@ from support.chunk_support import (
     waiting,
 )
 from support.clock_support import FakeClock
-from support.scripted_session import played
+from support.scripted_session import FRAME_RATE, play, played, scripted
 from support.session_support import (
     EVENT_WITHIN_SECONDS,
     failure_of,
@@ -29,6 +29,8 @@ from video_client.session_wire import (
     OutputAudioBufferCleared,
     OutputAudioBufferStarted,
     OutputAudioBufferStopped,
+    SessionCreated,
+    SessionUpdated,
 )
 from video_client.wire import RefusalCode
 
@@ -38,11 +40,13 @@ if TYPE_CHECKING:
     from fastapi.testclient import TestClient
     from starlette.testclient import WebSocketTestSession
 
+    from support.scripted_socket import ScriptedSocket
     from video_service.runtime import Runtime
 
 _LONG_MS = 10_000
 _START_UP_SECONDS = 3.0
 _SENTENCE_MS = 3840
+_ONE_FRAME_MS = 1000 // FRAME_RATE
 _CLEAR_AFTER_SECONDS = 1.5
 _AFTER_THE_CLEAR_SECONDS = 2.0
 _CLEAR = {"type": "output_audio_buffer.clear"}
@@ -239,3 +243,42 @@ def test_a_clear_while_a_chunk_renders_drops_every_frame_of_the_sentence(
     assert chunked_provider.sessions[0].clears == 1
     resumed = min(leave.at for leave in leaves if not leave.speech and leave.at > clear)
     assert resumed - clear <= ENOUGH_LAG_MS / 1000
+
+
+def test_a_clear_queued_in_front_of_a_stop_leaves_neither_stop_nor_error() -> None:
+    """WIRE-6."""
+    clock = FakeClock()
+    start, end = sentence_events("last")
+
+    async def when_the_start_is_held(socket: ScriptedSocket) -> None:
+        await socket.held.wait()
+
+    socket = scripted(
+        [
+            start,
+            pcm(_ONE_FRAME_MS),
+            end,
+            when_the_start_is_held,
+            _CLEAR,
+            waiting(clock, _AFTER_THE_CLEAR_SECONDS),
+        ],
+        sentences=0,
+    )
+    socket.hold(OutputAudioBufferStarted, until_received=_CLEAR["type"])
+
+    events = play(
+        socket,
+        provider=FakeProvider(),
+        pacing=clock.pacing,
+        worker=clock.worker(),
+        max_lag_ms=ENOUGH_LAG_MS,
+    )
+
+    assert [type(event) for event in events] == [
+        SessionCreated,
+        SessionUpdated,
+        OutputAudioBufferStarted,
+        OutputAudioBufferCleared,
+    ]
+    assert isinstance(events[-1], OutputAudioBufferCleared)
+    assert events[-1].response_id == "last"
