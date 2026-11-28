@@ -202,6 +202,7 @@ def test_a_body_over_the_cap_is_too_large_even_though_it_does_not_parse(
         "no vp8",
         "no opus",
         "no mid",
+        "one mid",
         "shared mid",
     ],
 )
@@ -222,6 +223,7 @@ def test_an_offer_that_is_not_acceptable_is_invalid_even_at_the_viewer_limit(
             "no vp8": await offer_of(video_codecs=["video/H264"]),
             "no opus": await offer_of(audio_codecs=["audio/PCMU"]),
             "no mid": re.sub(r"a=mid:.*\r\n", "", await offer_of()),
+            "one mid": re.sub(r"a=mid:.*\r\n", "", await offer_of(), count=1),
             "shared mid": re.sub(r"a=mid:.*\r\n", "a=mid:0\r\n", await offer_of()),
         }
 
