@@ -168,6 +168,7 @@ def test_a_relay_policy_gathers_no_host_or_server_reflexive_candidate(
 def test_a_stopped_track_refuses_the_sender_with_a_media_stream_error() -> None:
     track = _FeedTrack("audio", 1)
     track.stop()
+    receiving = track.recv()
 
     with pytest.raises(MediaStreamError):
-        asyncio.run(track.recv())
+        asyncio.run(receiving)
